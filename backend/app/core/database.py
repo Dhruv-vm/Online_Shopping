@@ -1,5 +1,6 @@
 import ssl
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -22,6 +23,13 @@ class Base(DeclarativeBase):
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def reset_engine() -> None:
+    """Reset cached engine and session factory (primarily for testing)."""
+    global _engine, _session_factory
+    _engine = None
+    _session_factory = None
 
 
 def get_engine() -> AsyncEngine | None:
@@ -48,13 +56,20 @@ def get_engine() -> AsyncEngine | None:
                 ssl_ctx.verify_mode = ssl.CERT_NONE
             connect_args["ssl"] = ssl_ctx
 
+    engine_kwargs: dict[str, Any] = {
+        "echo": settings.DEBUG,
+        "connect_args": connect_args,
+    }
+
+    # Only pass connection pool parameters to dialects that support QueuePool
+    if not db_url.startswith("sqlite"):
+        engine_kwargs["pool_size"] = settings.DATABASE_POOL_SIZE
+        engine_kwargs["max_overflow"] = settings.DATABASE_MAX_OVERFLOW
+        engine_kwargs["pool_pre_ping"] = True
+
     _engine = create_async_engine(
         db_url,
-        echo=settings.DEBUG,
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        pool_pre_ping=True,
-        connect_args=connect_args,
+        **engine_kwargs,
     )
     _session_factory = async_sessionmaker(
         bind=_engine,

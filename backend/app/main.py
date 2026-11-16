@@ -2,7 +2,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -103,17 +103,22 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/ready", tags=["Health"])
-    async def readiness_check() -> dict:
+    async def readiness_check(response: Response) -> dict:
         """Readiness check including database status."""
         db_check = await check_db_readiness()
 
-        # In local dev without DB configured, status is degraded but responsive
         if db_check["status"] == "connected":
             overall_status = "ready"
+            response.status_code = status.HTTP_200_OK
         elif db_check["status"] == "unconfigured":
             overall_status = "degraded"
+            if settings.is_production:
+                response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            else:
+                response.status_code = status.HTTP_200_OK
         else:
             overall_status = "not_ready"
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
         return {
             "status": overall_status,

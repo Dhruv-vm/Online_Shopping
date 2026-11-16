@@ -57,7 +57,10 @@ class ApiClient {
       if (!response.ok) {
         let errorData: ApiErrorEnvelope | null = null;
         try {
-          errorData = (await response.json()) as ApiErrorEnvelope;
+          const errorText = await response.text();
+          if (errorText && errorText.trim()) {
+            errorData = JSON.parse(errorText) as ApiErrorEnvelope;
+          }
         } catch {
           // Response body was not JSON
         }
@@ -81,7 +84,16 @@ class ApiClient {
         );
       }
 
-      return (await response.json()) as T;
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        return undefined as T;
+      }
+
+      return JSON.parse(text) as T;
     } catch (err: unknown) {
       if (err instanceof ApiClientError) {
         throw err;
@@ -104,7 +116,31 @@ class ApiClient {
     return this.request<T>(endpoint, {
       ...options,
       method: "POST",
-      body: body ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  public async patch<T>(
+    endpoint: string,
+    body?: unknown,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: "PATCH",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  public async delete<T = void>(
+    endpoint: string,
+    body?: unknown,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: "DELETE",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   }
 
