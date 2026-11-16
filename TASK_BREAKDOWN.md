@@ -35,26 +35,43 @@
 - [x] Catalogue storefront UI (Homepage showcase, Department directory, Products browsing with filters/sorting/pagination, Product detail with variant/retailer picker).
 - [x] Full quality gates passing (24/24 pytest backend tests, 10/10 frontend tests, Ruff lint/format, TypeScript type-check, Next.js build).
 
-## 4. Phase 2 — mandatory commerce vertical slice
+## 4. Phase 2 — Mandatory Commerce Engine
 
-Suggested split:
-
-Developer A:
-- [ ] Catalogue browsing and product details UI.
-- [ ] Search UI and filters.
-- [ ] Cart UI and state integration.
-- [ ] Checkout/order status UI.
-
-Developer B:
-- [ ] Catalogue and search API.
-- [ ] OpenSearch indexing and search integration.
-- [ ] Cart persistence and server-side validation.
-- [ ] Inventory reservation, checkout, orders, payment sandbox boundary.
-
-Joint:
-- [ ] End-to-end browse → search → cart → checkout → order verification.
-- [ ] Verify PostgreSQL is authoritative.
-- [ ] Verify OpenSearch is used for actual search.
+- [x] **Phase 2A — Identity, Authentication & Address Management (Backend & Frontend):**
+  - [x] Backend Models: `User`, `UserSession`, `Address` with partial unique index for single default address.
+  - [x] Backend Security: Argon2id password hashing, JWT access tokens, refresh token rotation with pessimistic row locking (`for_update=True`) and family reuse detection.
+  - [x] Session Revocation: Instantaneous access token revocation via JWT `sid` claim checked against database session revocation status.
+  - [x] Backend Protection: Sliding-window login rate limiting, double-submit CSRF protection with Origin header validation, email normalization.
+  - [x] Migration: Alembic `0003_identity_schema` with clean upgrade and downgrade.
+  - [x] Backend APIs: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, `POST /api/v1/auth/logout-all`, `GET /api/v1/users/me`.
+  - [x] Address Management APIs: `GET /api/v1/addresses`, `POST /api/v1/addresses`, `PATCH /api/v1/addresses/{id}`, `DELETE /api/v1/addresses/{id}` with 6-digit Indian PIN code validation, auto-default for first address, and fallback promotion on default deletion.
+  - [x] Frontend Auth Engine: `AuthProvider` context, secure HTTP-only cookie session handling, single-flight token refresh preventing duplicate refresh requests, automatic CSRF token injection from double-submit cookie.
+  - [x] Frontend Pages: Customer registration (`/register`), login (`/login`), account overview (`/account`), address book (`/account/addresses`).
+  - [x] Frontend Experience: Route protection (`<ProtectedRoute>`), session expiry handling, responsive address book with empty state, default badge, edit modal, delete confirmation, Indian state selector, 6-digit PIN code validation.
+  - [x] Header Integration: Dynamic customer session status, user greeting, quick links, and logout action.
+  - [x] Quality Gates: 51/51 backend pytest tests passing, 25/25 frontend tests passing, 0 Ruff errors, 0 ESLint errors, TypeScript typecheck passing, Next.js production build passing.
+- [ ] **Phase 2B — Persistent Cart Domain & Guest Migration:**
+  - [ ] Cart and cart items persistence in PostgreSQL.
+  - [ ] Guest session cookie to authenticated user cart consolidation.
+  - [ ] Cart endpoints (`GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/{id}`, `DELETE /api/v1/cart/items/{id}`).
+- [ ] **Phase 2C — Pricing, Taxes & Persistent Quotes:**
+  - [ ] Listing-level HSN tax brackets (0%, 5%, 12%, 18%, 28%) and CGST/SGST vs IGST engine.
+  - [ ] Delivery threshold logic (₹0 for $\ge$ ₹499; ₹49 for $<$ ₹499 per retailer).
+  - [ ] Immutable `checkout_quotes` model with 15-minute TTL and single-use consumption.
+- [ ] **Phase 2D — Inventory Reservations & Concurrency Protection:**
+  - [ ] Lock ordering by `listing_id` to eliminate deadlocks.
+  - [ ] Atomic conditional updates and reservation TTL.
+  - [ ] High-concurrency oversell tests.
+- [ ] **Phase 2E — Orders, Outbox & Checkout Orchestration:**
+  - [ ] Immutable order item snapshots and scoped idempotency.
+  - [ ] Decoupled checkout transaction boundaries.
+  - [ ] Transactional outbox table (`outbox_events`).
+- [ ] **Phase 2F — Razorpay Payments, Webhooks & Recovery:**
+  - [ ] Decoupled Razorpay order creation.
+  - [ ] Multi-factor server-side payment verification and raw-body webhook HMAC check.
+  - [ ] `REQUIRES_RECONCILIATION` state and recovery reconciler.
+- [ ] **Phase 2G — Storefront UI & End-to-End Verification:**
+  - [ ] Cart drawer, full cart page, multi-step checkout stepper, order tracking view.
 
 ## 5. Phase 3 — Kafka and reliability
 

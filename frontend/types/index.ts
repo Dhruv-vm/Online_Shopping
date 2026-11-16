@@ -155,3 +155,73 @@ export interface ProductFilterParams {
   page?: number;
   limit?: number;
 }
+
+// Identity, Authentication & Session Types
+export interface User {
+  id: string;
+  email: string;
+  phone?: string | null;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  user: User;
+  access_token: string;
+  refresh_token: string;
+  csrf_token: string;
+  token_type: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  csrf_token: string;
+  token_type: string;
+}
+
+export interface MessageResponse {
+  message: string;
+}
+
+// Address Management Types
+export interface Address {
+  id: string;
+  user_id: string;
+  recipient_name: string;
+  phone: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  postal_code: string;
+  landmark?: string | null;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface AddressCreatePayload {
+  recipient_name: string;
+  phone: string;
+  line1: string;
+  line2?: string | null;
+  city: string;
+  state: string;
+  postal_code: string;
+  landmark?: string | null;
+  is_default?: boolean;
+}
+
+export interface AddressUpdatePayload {
+  recipient_name?: string;
+  phone?: string;
+  line1?: string;
+  line2?: string | null;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  landmark?: string | null;
+  is_default?: boolean;
+}

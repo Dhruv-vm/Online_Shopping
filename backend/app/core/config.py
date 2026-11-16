@@ -19,9 +19,20 @@ class Settings(BaseSettings):
     PORT: int = 8000
     LOG_LEVEL: str = "INFO"
 
-    # Security
+    # Security & Auth
     SECRET_KEY: SecretStr = SecretStr(
         "insecure-default-development-key-change-in-production"
+    )
+    JWT_SECRET_KEY: SecretStr = SecretStr(
+        "insecure-jwt-secret-key-change-in-production-min-256-bit"
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    COOKIE_SECURE: bool = False
+    COOKIE_SAMESITE: str = "lax"
+    CSRF_SECRET_KEY: SecretStr = SecretStr(
+        "insecure-csrf-secret-key-change-in-production"
     )
     ALLOWED_HOSTS: list[str] = ["*"]
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]

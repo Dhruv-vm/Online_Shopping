@@ -2,8 +2,14 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.modules.catalogue.router import router as catalogue_router
+from app.modules.identity.router import address_router, auth_router, user_router
 
 api_router = APIRouter()
+
+# Mount Identity & Auth endpoints
+api_router.include_router(auth_router)
+api_router.include_router(user_router)
+api_router.include_router(address_router)
 
 # Mount Catalogue endpoints
 api_router.include_router(catalogue_router)
