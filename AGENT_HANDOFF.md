@@ -318,3 +318,110 @@ Copy this section for every new request.
 - 2G Frontend Integration and End-to-End Testing
 
 **Status:** APPROVED FOR IMPLEMENTATION
+
+---
+
+### [2026-11-16 22:45 IST] — Lead Full-Stack Engineer — Phase 2A Identity & Authentication Implemented
+
+**Related branch / PR / task:** `feature/phase2-identity-addresses` — Slice 2A Backend Foundation
+**Affected module(s):** `backend/app/modules/identity/`, Alembic migrations, Auth APIs
+
+**Work completed:**
+1. **Database Models (`backend/app/modules/identity/models.py`):**
+   - `User`: Normalized unique email, phone, full name, Argon2id hashed password, role (`customer`), active flag, and timestamps.
+   - `UserSession`: Refresh token hash (SHA-256), `family_id` (UUID), `is_revoked`, user agent, IP address, and expiry.
+   - `Address`: Recipient name, phone, line1, line2, city, state, 6-digit postal code check constraint, and partial unique index `uq_user_default_address` guaranteeing at most one default address per customer.
+2. **Alembic Migration (`backend/alembic/versions/0003_identity_schema_create_users_sessions_addresses.py`):**
+   - Single clean head: `0003_identity_schema` building on `0002_catalogue_schema`.
+   - Verified bidirectional execution: `alembic upgrade head` and `alembic downgrade -1` both pass with zero schema corruption.
+3. **Security & Authentication Engine (`backend/app/modules/identity/security.py`):**
+   - Password hashing: Argon2id (`time_cost=3`, `memory_cost=64MB`, `parallelism=4`).
+   - JWT tokens: HS256 with 256-bit secret, 15-minute access token lifespan, explicit `token_use` claim.
+   - Refresh token lifecycle: High-entropy tokens, SHA-256 storage, single-use rotation, and family-wide revocation upon reuse detection.
+   - Session invalidation: Specific session revocation on logout, all-session revocation on logout-all.
+   - Rate limiting: Sliding-window limiter enforcing 5 attempts / 60 seconds and 15-minute lockout on 10 failures.
+   - CSRF protection: Double-submit `XSRF-TOKEN` cookie validated against `X-CSRF-Token` header.
+   - Secure cookies: HTTP-only, SameSite configured, Path-scoped cookies.
+4. **FastAPI Endpoints (`backend/app/modules/identity/router.py` mounted at `/api/v1`):**
+   - `POST /api/v1/auth/register` (201 Created)
+   - `POST /api/v1/auth/login` (200 OK)
+   - `POST /api/v1/auth/refresh` (200 OK)
+   - `POST /api/v1/auth/logout` (200 OK)
+   - `POST /api/v1/auth/logout-all` (200 OK)
+   - `GET /api/v1/users/me` (200 OK)
+5. **Quality Gates & Tests (`backend/tests/test_identity.py`):**
+   - 16 new automated tests covering registration, duplicate emails, password validation, Argon2id verification, JWT expiration, refresh rotation, replay attack detection, logout invalidation, logout-all, CSRF enforcement, rate limiting, and RBAC isolation.
+   - Total backend test suite: 40/40 passing in 1.66s.
+   - Ruff lint & format: 0 errors across all 33 backend files.
+   - Unified verification gate: `scripts/verify-environment.sh` passes cleanly.
+
+**Remaining in Phase 2A:** Customer address CRUD endpoints and Address Management UI.
+**Next slice in pipeline:** Customer address endpoints, followed by Slice 2B: Persistent Cart Domain.
+
+**Status:** COMPLETE (Checkpoint 1 — Identity Backend Foundation)
+
+---
+
+### [2026-11-16 23:05 IST] — Lead Full-Stack Engineer — Phase 2A Security Audit & Address Management Backend Complete
+
+**Related branch / PR / task:** `feature/phase2-identity-addresses` — Checkpoint 2 (Security Hardening & Address CRUD)
+**Affected module(s):** `backend/app/modules/identity/`, `backend/app/api/v1/router.py`, `backend/tests/test_identity.py`
+
+**Work completed:**
+1. **Authentication Security Audit & Hardening:**
+   - **Refresh token concurrency:** Implemented pessimistic row-locking (`for_update=True` via `stmt.with_for_update()`) on `get_session_by_token_hash`. Concurrent refresh requests serialize at the database level, preventing replay race conditions.
+   - **Access-token revocation:** Added session UUID (`sid`) to JWT payload. `get_current_user` dependency performs instantaneous revocation check by validating `user_sessions.is_revoked is False`, ensuring immediate access invalidation on logout and logout-all.
+   - **CSRF & Cookie Security:** Added `Origin` / `Referer` header validation against `settings.CORS_ORIGINS` for cookie-based state-mutating requests. Hardened `verify_csrf_token` to bypass CSRF checks only when explicit `Authorization: Bearer` headers are present. Validated `HttpOnly`, `SameSite=Lax/Strict`, and path scoping (`/api/v1/auth`).
+   - **Role escalation protection:** Fixed registration service to enforce hardcoded `customer` role, rejecting any privilege escalation attempt.
+   - **Deactivated account blocking:** Inactive accounts (`is_active=False`) are blocked at login (401), session access (403), and refresh (403 with session revocation).
+2. **Customer Address Management:**
+   - Implemented address CRUD services in `IdentityService` and repository queries in `IdentityRepository`.
+   - **Single default address constraint:** Enforced at DB engine level via partial unique index `uq_user_default_address`. Handled via atomic transactions with `clear_default_addresses`.
+   - **Zero-address & first-address rules:** New accounts start with 0 addresses. The first created address automatically becomes `is_default=True`.
+   - **Promotion on deletion:** Deleting the active default address automatically promotes the oldest remaining address (`ORDER BY created_at ASC LIMIT 1`) to default. Deleting the last remaining address cleanly returns the user to 0 addresses.
+   - **Customer data isolation:** Multi-tenant address queries enforce `user_id = current_user.id`, returning 404 on any unauthorized address access or mutation attempt.
+   - **Indian postal code validation:** Enforced via Pydantic validator and DB check constraint `chk_indian_postal_code` (`^[1-9][0-9]{5}$`).
+3. **Endpoints Mounted under `/api/v1/addresses`:**
+   - `GET /api/v1/addresses` (200 OK — list user addresses, default first)
+   - `POST /api/v1/addresses` (201 Created — create address, CSRF protected)
+   - `PATCH /api/v1/addresses/{id}` (200 OK — update address, CSRF protected)
+   - `DELETE /api/v1/addresses/{id}` (200 OK — delete address, CSRF protected)
+4. **Verification Gates & Test Suite:**
+   - Added 9 new rigorous test cases to `backend/tests/test_identity.py` (total 25 identity tests).
+   - Entire backend pytest suite: **49/49 tests passing** in 2.56s.
+   - Ruff lint & format: **0 errors** across all 33 backend files.
+   - Full environment verification script (`scripts/verify-environment.sh`): **ALL GATES PASSED CLEANLY** (backend tests, Alembic discovery, TypeScript typecheck, Next.js production build).
+
+**Status:** COMPLETE (Checkpoint 2 — Identity Security Hardening & Address Management Backend)
+
+---
+
+### [2026-11-16 23:40 IST] — Lead Full-Stack Engineer — Phase 2A Customer Authentication & Address Experience Complete
+
+**Related branch / PR / task:** `feature/phase2-identity-addresses` — Phase 2A Frontend Implementation & End-to-End Verification
+**Affected module(s):** `frontend/app/`, `frontend/components/`, `frontend/lib/`, `frontend/types/`
+
+**Work completed:**
+1. **API Client & Authentication Infrastructure (`frontend/lib/api/client.ts`):**
+   - Configured `credentials: "include"` by default on all requests. All auth tokens live exclusively in secure HTTP-only cookies; zero tokens stored in `localStorage` or `sessionStorage`.
+   - Built automatic CSRF header injection: reads `XSRF-TOKEN` cookie in the browser and attaches `X-CSRF-Token` header on all state-mutating requests (`POST`, `PATCH`, `PUT`, `DELETE`).
+   - Implemented single-flight concurrency-safe token refresh: if an authenticated request returns 401, a shared `executeTokenRefresh` promise resolves `/api/v1/auth/refresh` once for all concurrent callers, retrying original requests without duplicate refresh calls.
+   - Added strongly-typed client methods: `register`, `login`, `refreshToken`, `logout`, `logoutAll`, `getProfile`, `getAddresses`, `createAddress`, `updateAddress`, `deleteAddress`.
+2. **Global Auth State & Route Protection:**
+   - `AuthProvider` (`frontend/lib/auth/auth-context.tsx`): Manages `user`, `isLoading`, and `isAuthenticated` lifecycle, automatically hydrating profile on mount.
+   - `<ProtectedRoute>` (`frontend/components/auth/protected-route.tsx`): Guards private account routes with animated loading skeleton; redirects unauthenticated visitors to `/login?redirect=...`.
+3. **Polished Storefront Pages & Components:**
+   - **Customer Registration (`/register`):** Full name, email, phone, password, and confirm password fields with client validation, password strength requirements, and 409 conflict handling.
+   - **Customer Sign In (`/login`):** Email and password inputs with password visibility toggle, 401 invalid credentials handling, and 429 rate limit cooldown messaging.
+   - **Customer Account Overview (`/account`):** Customer greeting banner, verified profile details, member-since timestamp, and security overview with "Sign out from all devices" action.
+   - **Address Book (`/account/addresses`):** Full address CRUD experience with "Default Address" badge, Indian states dropdown, 6-digit PIN code validation (`^[1-9][0-9]{5}$`), inline add/edit form, empty state, and delete confirmation.
+   - **Responsive Header (`frontend/components/shared/header.tsx`):** Displays dynamic user greeting, Account link, and Sign Out action when authenticated; Sign In and Register CTA buttons when guest.
+4. **Automated Testing & Full Verification:**
+   - Added 15 new automated frontend tests in `frontend/lib/api/auth-address.test.ts` (total 25 frontend tests across 2 test suites).
+   - All 25 frontend tests passing in Node 22+ runner.
+   - Frontend TypeScript type check (`tsc --noEmit`): 0 errors.
+   - Next.js production build (`next build`): 100% clean compilation across all 9 static and dynamic routes.
+   - Backend pytest suite: 51/51 tests passing in 2.45s.
+   - Full environment verification script (`scripts/verify-environment.sh`): **ALL GATES PASSED CLEANLY**.
+
+**Status:** COMPLETE (Phase 2A Fully Delivered — Ready for Phase 2B Cart Domain)

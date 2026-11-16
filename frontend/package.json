@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test lib/api/client.test.ts"
+    "test": "node --experimental-strip-types --test lib/api/client.test.ts lib/api/auth-address.test.ts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

@@ -1,13 +1,20 @@
 import type {
+  Address,
+  AddressCreatePayload,
+  AddressUpdatePayload,
   ApiErrorEnvelope,
   ApiInfoResponse,
+  AuthResponse,
   Category,
   HealthResponse,
+  MessageResponse,
   ProductDetail,
   ProductFilterParams,
   ProductListResponse,
   ReadyResponse,
   Retailer,
+  TokenResponse,
+  User,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -32,8 +39,15 @@ export class ApiClientError extends Error {
   }
 }
 
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(^|;\\s*)(${name})=([^;]*)`));
+  return match ? decodeURIComponent(match[3]) : null;
+}
+
 class ApiClient {
   private readonly baseUrl: string;
+  private refreshPromise: Promise<TokenResponse | null> | null = null;
 
   constructor() {
     this.baseUrl =
@@ -43,9 +57,11 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+    const method = (options.method || "GET").toUpperCase();
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -53,13 +69,35 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
+    // Attach CSRF token on state-mutating browser requests if not already set
+    if (["POST", "PATCH", "PUT", "DELETE"].includes(method) && !headers["X-CSRF-Token"]) {
+      const csrfToken = getCookie("XSRF-TOKEN");
+      if (csrfToken) {
+        headers["X-CSRF-Token"] = csrfToken;
+      }
+    }
+
     try {
       const response = await fetch(url, {
+        credentials: "include",
         ...options,
         headers,
       });
 
       if (!response.ok) {
+        // Attempt single-flight token refresh on 401 (if not already retried and not an auth route)
+        const isAuthRoute =
+          endpoint.includes("/auth/login") ||
+          endpoint.includes("/auth/register") ||
+          endpoint.includes("/auth/refresh");
+
+        if (response.status === 401 && !isRetry && !isAuthRoute) {
+          const refreshed = await this.executeTokenRefresh();
+          if (refreshed) {
+            return this.request<T>(endpoint, options, true);
+          }
+        }
+
         let errorData: ApiErrorEnvelope | null = null;
         try {
           const errorText = await response.text();
@@ -107,6 +145,20 @@ class ApiClient {
         err instanceof Error ? err.message : "Network error or server unreachable";
       throw new ApiClientError(message, 0, "NETWORK_ERROR");
     }
+  }
+
+  /**
+   * Concurrency-safe token refresh avoiding duplicate simultaneous requests.
+   */
+  private async executeTokenRefresh(): Promise<TokenResponse | null> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.post<TokenResponse>("/api/v1/auth/refresh")
+        .catch(() => null)
+        .finally(() => {
+          this.refreshPromise = null;
+        });
+    }
+    return this.refreshPromise;
   }
 
   public async get<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -196,6 +248,59 @@ class ApiClient {
 
   public async getProduct(idOrSlug: string): Promise<ProductDetail> {
     return this.get<ProductDetail>(`/api/v1/products/${encodeURIComponent(idOrSlug)}`);
+  }
+
+  // ================= Identity & Authentication =================
+  public async register(payload: {
+    email: string;
+    password: string;
+    full_name: string;
+    phone?: string | null;
+  }): Promise<AuthResponse> {
+    return this.post<AuthResponse>("/api/v1/auth/register", payload);
+  }
+
+  public async login(payload: {
+    email: string;
+    password: string;
+  }): Promise<AuthResponse> {
+    return this.post<AuthResponse>("/api/v1/auth/login", payload);
+  }
+
+  public async refreshToken(): Promise<TokenResponse> {
+    return this.post<TokenResponse>("/api/v1/auth/refresh");
+  }
+
+  public async logout(): Promise<MessageResponse> {
+    return this.post<MessageResponse>("/api/v1/auth/logout");
+  }
+
+  public async logoutAll(): Promise<MessageResponse> {
+    return this.post<MessageResponse>("/api/v1/auth/logout-all");
+  }
+
+  public async getProfile(): Promise<User> {
+    return this.get<User>("/api/v1/users/me");
+  }
+
+  // ================= Address Management =================
+  public async getAddresses(): Promise<Address[]> {
+    return this.get<Address[]>("/api/v1/addresses");
+  }
+
+  public async createAddress(payload: AddressCreatePayload): Promise<Address> {
+    return this.post<Address>("/api/v1/addresses", payload);
+  }
+
+  public async updateAddress(
+    id: string,
+    payload: AddressUpdatePayload
+  ): Promise<Address> {
+    return this.patch<Address>(`/api/v1/addresses/${encodeURIComponent(id)}`, payload);
+  }
+
+  public async deleteAddress(id: string): Promise<MessageResponse> {
+    return this.delete<MessageResponse>(`/api/v1/addresses/${encodeURIComponent(id)}`);
   }
 }
 
