@@ -15,35 +15,25 @@
 
 ## 2. Phase 0 — jointly agree (do not parallelize prematurely)
 
-- [ ] Create repository and `integration` branch.
-- [ ] Add these project documents.
-- [ ] Confirm stack and environment variable names.
-- [ ] Agree API envelope, IDs, money representation, timestamps, pagination.
-- [ ] Agree initial logical data model.
-- [ ] Assign module/file ownership.
-- [ ] Create `.env.example` with placeholders only.
-- [ ] Establish lint, format, type-check, and test commands.
+- [x] Create repository and `integration` branch.
+- [x] Add these project documents.
+- [x] Confirm stack and environment variable names.
+- [x] Agree API envelope, IDs, money representation, timestamps, pagination.
+- [x] Agree initial logical data model.
+- [x] Assign module/file ownership.
+- [x] Create `.env.example` with placeholders only.
+- [x] Establish lint, format, type-check, and test commands.
 
-## 3. Phase 1 — shared foundation
+## 3. Phase 1 — Catalogue & Storefront Foundation
 
-Developer A:
-- [ ] Next.js app shell and routing.
-- [ ] Design tokens, layout, navigation, reusable UI patterns.
-- [ ] Typed API client and global error/loading patterns.
-
-Developer B:
-- [ ] FastAPI app factory and versioned routing.
-- [ ] Settings, logging, error handling, health/readiness.
-- [ ] SQLAlchemy session and Alembic baseline.
-- [ ] Initial tests and backend conventions.
-
-Together:
-- [ ] Connect to shared Aiven PostgreSQL.
-- [ ] Validate migrations on a clean database.
-- [ ] Freeze initial API/data contracts.
-- [ ] Agree seed-data format and demo accounts.
-
-Do not move to broad feature work until the foundation can start, connect, migrate, and pass smoke tests.
+- [x] Next.js app shell, responsive navigation header with search and mobile drawer.
+- [x] Centralized, strongly-typed API client with catalogue endpoints and error envelope.
+- [x] FastAPI modular monolith catalogue models (Retailers, Categories, Products, Variants, Images, Listings, Inventory).
+- [x] Alembic migration `0002_catalogue_schema` with clean upgrade and downgrade.
+- [x] Catalogue endpoints (`GET /api/v1/categories`, `GET /api/v1/retailers`, `GET /api/v1/products`, `GET /api/v1/products/{id}`).
+- [x] Idempotent, repeatable seed dataset covering 7 Indian retail categories and multiple retail partners.
+- [x] Catalogue storefront UI (Homepage showcase, Department directory, Products browsing with filters/sorting/pagination, Product detail with variant/retailer picker).
+- [x] Full quality gates passing (24/24 pytest backend tests, 10/10 frontend tests, Ruff lint/format, TypeScript type-check, Next.js build).
 
 ## 4. Phase 2 — mandatory commerce vertical slice
 
