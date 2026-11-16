@@ -121,4 +121,75 @@ test("ApiClient methods and error handling", async (t) => {
       }
     );
   });
+
+  await t.test("getCategories() calls /api/v1/categories", async () => {
+    let capturedUrl: string | URL | Request | undefined;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify([{ id: "cat-1", name: "Electronics", slug: "electronics" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const categories = await apiClient.getCategories();
+    assert.equal(capturedUrl, "http://localhost:8000/api/v1/categories");
+    assert.equal(categories.length, 1);
+    assert.equal(categories[0].name, "Electronics");
+  });
+
+  await t.test("getProducts() formats query parameters correctly", async () => {
+    let capturedUrl: string | URL | Request | undefined;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ items: [], total: 0, page: 1, limit: 10, pages: 1 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    await apiClient.getProducts({
+      category_slug: "fashion",
+      search: "boots",
+      min_price: 100000,
+      in_stock: true,
+      sort_by: "price_asc",
+      page: 2,
+      limit: 10,
+    });
+
+    assert(typeof capturedUrl === "string");
+    assert(capturedUrl.includes("/api/v1/products?"));
+    assert(capturedUrl.includes("category_slug=fashion"));
+    assert(capturedUrl.includes("search=boots"));
+    assert(capturedUrl.includes("min_price=100000"));
+    assert(capturedUrl.includes("in_stock=true"));
+    assert(capturedUrl.includes("sort_by=price_asc"));
+    assert(capturedUrl.includes("page=2"));
+    assert(capturedUrl.includes("limit=10"));
+  });
+
+  await t.test("getProduct() encodes product identifier in url", async () => {
+    let capturedUrl: string | URL | Request | undefined;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return new Response(
+        JSON.stringify({
+          id: "prod-1",
+          name: "Sample Product",
+          slug: "sample-product",
+          variants: [],
+          images: [],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    const product = await apiClient.getProduct("sony-wh-1000xm5");
+    assert.equal(capturedUrl, "http://localhost:8000/api/v1/products/sony-wh-1000xm5");
+    assert.equal(product.slug, "sample-product");
+  });
 });

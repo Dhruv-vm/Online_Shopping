@@ -1,8 +1,13 @@
 import type {
   ApiErrorEnvelope,
   ApiInfoResponse,
+  Category,
   HealthResponse,
+  ProductDetail,
+  ProductFilterParams,
+  ProductListResponse,
   ReadyResponse,
+  Retailer,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -155,6 +160,42 @@ class ApiClient {
 
   public async getInfo(): Promise<ApiInfoResponse> {
     return this.get<ApiInfoResponse>("/api/v1/info");
+  }
+
+  // Catalogue endpoints
+  public async getCategories(): Promise<Category[]> {
+    return this.get<Category[]>("/api/v1/categories");
+  }
+
+  public async getRetailers(): Promise<Retailer[]> {
+    return this.get<Retailer[]>("/api/v1/retailers");
+  }
+
+  public async getProducts(
+    params: ProductFilterParams = {}
+  ): Promise<ProductListResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.category_slug) searchParams.set("category_slug", params.category_slug);
+    if (params.category_id) searchParams.set("category_id", params.category_id);
+    if (params.retailer_id) searchParams.set("retailer_id", params.retailer_id);
+    if (params.brand) searchParams.set("brand", params.brand);
+    if (params.search) searchParams.set("search", params.search);
+    if (params.min_price !== undefined)
+      searchParams.set("min_price", params.min_price.toString());
+    if (params.max_price !== undefined)
+      searchParams.set("max_price", params.max_price.toString());
+    if (params.in_stock !== undefined)
+      searchParams.set("in_stock", params.in_stock.toString());
+    if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+    if (params.page) searchParams.set("page", params.page.toString());
+    if (params.limit) searchParams.set("limit", params.limit.toString());
+
+    const qs = searchParams.toString();
+    return this.get<ProductListResponse>(`/api/v1/products${qs ? `?${qs}` : ""}`);
+  }
+
+  public async getProduct(idOrSlug: string): Promise<ProductDetail> {
+    return this.get<ProductDetail>(`/api/v1/products/${encodeURIComponent(idOrSlug)}`);
   }
 }
 

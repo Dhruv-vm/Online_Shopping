@@ -40,7 +40,7 @@ if [ -d "$REPO_ROOT/backend/.venv" ]; then
     echo "✓ Ruff checks passed."
 
     echo "Running backend test suite (pytest)..."
-    pytest -v "$REPO_ROOT/backend"
+    (cd "$REPO_ROOT/backend" && pytest -v)
     echo "✓ Pytest suite passed."
 
     echo "Verifying Alembic migration discovery..."
