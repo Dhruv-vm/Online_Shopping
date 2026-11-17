@@ -25,11 +25,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCart } from "@/lib/cart/cart-context";
 import { createQuote, refreshQuote } from "@/lib/api/quotes";
+import { reservationApi } from "@/lib/api/reservations";
 import { formatPrice } from "@/lib/utils";
 import type {
   CartItem,
   Quote,
   QuoteValidationIssue,
+  Reservation,
 } from "@/types";
 
 export default function CartPage() {
@@ -58,6 +60,13 @@ export default function CartPage() {
   const [validationIssues, setValidationIssues] = useState<QuoteValidationIssue[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false);
+
+  // Reservation State (Phase 2D - Inventory Reservations & Concurrency Protection)
+  const [reservation, setReservation] = useState<Reservation | null>(null);
+  const [isReserving, setIsReserving] = useState(false);
+  const [reservationError, setReservationError] = useState<string | null>(null);
+  const [reservationTimeRemaining, setReservationTimeRemaining] = useState<number | null>(null);
+  const [isReleasing, setIsReleasing] = useState(false);
 
   // Fetch or generate persistent pricing quote when cart items change
   useEffect(() => {
@@ -126,6 +135,35 @@ export default function CartPage() {
     return () => clearInterval(timerInterval);
   }, [quote]);
 
+  // TTL Countdown Timer for active inventory reservation (Phase 2D)
+  useEffect(() => {
+    if (
+      !reservation ||
+      reservation.status !== "ACTIVE" ||
+      !reservation.expires_at
+    ) {
+      setReservationTimeRemaining(null);
+      return;
+    }
+
+    const updateResTimer = () => {
+      const expires = new Date(reservation.expires_at).getTime();
+      const now = Date.now();
+      const diffSec = Math.max(0, Math.floor((expires - now) / 1000));
+      setReservationTimeRemaining(diffSec);
+
+      if (diffSec === 0) {
+        setReservation((prev) =>
+          prev ? { ...prev, status: "EXPIRED", is_expired: true } : null
+        );
+      }
+    };
+
+    updateResTimer();
+    const interval = setInterval(updateResTimer, 1000);
+    return () => clearInterval(interval);
+  }, [reservation]);
+
   const handleRefreshQuote = async () => {
     if (!quote) return;
     setIsRefreshingQuote(true);
@@ -134,12 +172,46 @@ export default function CartPage() {
       const refreshed = await refreshQuote(quote.id);
       setQuote(refreshed);
       setValidationIssues([]);
+      setReservation(null);
+      setReservationTimeRemaining(null);
     } catch (err: unknown) {
       setQuoteError(
         err instanceof Error ? err.message : "Failed to refresh pricing quote"
       );
     } finally {
       setIsRefreshingQuote(false);
+    }
+  };
+
+  const handleCreateReservation = async () => {
+    if (!quote) return;
+    setIsReserving(true);
+    setReservationError(null);
+    try {
+      const res = await reservationApi.createReservation({ quote_id: quote.id });
+      setReservation(res);
+    } catch (err: unknown) {
+      setReservationError(
+        err instanceof Error ? err.message : "Insufficient inventory available to reserve."
+      );
+    } finally {
+      setIsReserving(false);
+    }
+  };
+
+  const handleReleaseReservation = async () => {
+    if (!reservation) return;
+    setIsReleasing(true);
+    try {
+      await reservationApi.releaseReservation(reservation.id);
+      setReservation(null);
+      setReservationTimeRemaining(null);
+    } catch (err: unknown) {
+      setReservationError(
+        err instanceof Error ? err.message : "Failed to release reservation."
+      );
+    } finally {
+      setIsReleasing(false);
     }
   };
 
@@ -707,32 +779,90 @@ export default function CartPage() {
                 </span>
               </div>
 
-              {/* Proceed to Checkout CTA */}
+              {/* Reservation & Checkout Section (Phase 2D Concurrency Protection) */}
               <div className="space-y-2 pt-2">
-                <Button
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-sm"
-                  disabled={
-                    items.some((i) => !i.is_available) ||
-                    isQuoteStale ||
-                    isQuoteLoading ||
-                    isRefreshingQuote
-                  }
-                  title={
-                    items.some((i) => !i.is_available)
-                      ? "Resolve unavailable items to proceed"
-                      : isQuoteStale
-                      ? "Refresh quote to proceed"
-                      : "Proceed to Checkout (Phase 2D/2E)"
-                  }
-                  onClick={() =>
-                    alert(
-                      `Phase 2C Pricing & Guaranteed Quote ${quote?.id || ""} confirmed! Phase 2D (Inventory Reservations) and Phase 2E (Orders & Payment) will consume this quote.`
-                    )
-                  }
-                >
-                  Proceed to Checkout
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Button>
+                {reservation && reservation.status === "ACTIVE" ? (
+                  <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Badge className="bg-emerald-600 text-white flex items-center gap-1 text-[11px]">
+                        <ShieldCheck className="h-3 w-3" />
+                        Stock Reserved & Guaranteed
+                      </Badge>
+                      {reservationTimeRemaining !== null && (
+                        <span className="text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {Math.floor(reservationTimeRemaining / 60)}:
+                          {(reservationTimeRemaining % 60).toString().padStart(2, "0")}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                      All cart listings are locked in PostgreSQL for your session. Cannot be oversold to concurrent shoppers.
+                    </p>
+                    <div className="flex items-center justify-between pt-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-7 text-muted-foreground hover:text-destructive px-2"
+                        onClick={handleReleaseReservation}
+                        disabled={isReleasing}
+                      >
+                        {isReleasing ? "Releasing..." : "Release Hold"}
+                      </Button>
+                      <span className="text-[10px] text-muted-foreground">
+                        Phase 2E will consume hold
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-sm"
+                    disabled={
+                      items.some((i) => !i.is_available) ||
+                      isQuoteStale ||
+                      isQuoteLoading ||
+                      isRefreshingQuote ||
+                      isReserving
+                    }
+                    onClick={handleCreateReservation}
+                  >
+                    {isReserving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Acquiring Row Locks...
+                      </>
+                    ) : (
+                      <>
+                        Reserve Stock & Checkout
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                )}
+
+                {reservationError && (
+                  <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-300 flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-semibold">Inventory Unavailable</p>
+                      <p className="text-[11px]">{reservationError}</p>
+                    </div>
+                  </div>
+                )}
+
+                {reservation?.status === "EXPIRED" && (
+                  <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between">
+                    <span>Reservation expired. Click to re-reserve stock.</span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 text-amber-900 border-amber-300"
+                      onClick={handleCreateReservation}
+                    >
+                      Re-reserve
+                    </Button>
+                  </div>
+                )}
 
                 {isQuoteStale && (
                   <p className="text-[11px] text-center text-amber-600 font-medium">

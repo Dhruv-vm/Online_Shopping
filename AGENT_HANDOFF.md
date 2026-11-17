@@ -538,3 +538,127 @@ Copy this section for every new request.
    - Script `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
 
 **Status:** COMPLETE (Phase 2C Server-Authoritative Pricing, GST & Persistent Quotes Fully Delivered and Audited — Ready for Phase 2D Inventory Reservations & Concurrency Protection)
+
+---
+
+### [2026-11-17 18:15 IST] — Senior Database & Backend Architect — Phase 2D Inventory Reservations & Concurrency Protection Complete
+
+**Related branch / PR / task:** `feature/phase2-inventory-reservations` — Phase 2D Implementation
+**Affected module(s):** `backend/app/modules/inventory/`, `backend/alembic/`, `backend/app/core/config.py`, `backend/app/api/v1/router.py`, `backend/tests/test_reservations.py`, `frontend/app/cart/page.tsx`, `frontend/lib/api/reservations.ts`, `frontend/lib/api/reservations.test.ts`, `frontend/types/`
+
+**Work completed:**
+1. **Database Schema & Reversible Migration (`0006_inventory_reservations`):**
+   - Created `inventory_reservations` and `inventory_reservation_items` tables with configurable 10-minute TTL (`expires_at`), strict ownership check constraints (`chk_reservation_ownership`), state machine check constraints (`chk_reservation_status`: `ACTIVE`, `CONFIRMED`, `RELEASED`, `EXPIRED`), unique constraints on active quote (`uq_reservations_quote_active`), and scoped partial unique indexes for idempotency (`uq_reservations_customer_idempotency`, `uq_reservations_guest_idempotency`).
+   - Verified reversible migration: clean downgrade to `0005_pricing_quotes_schema` and upgrade back to `0006_inventory_reservations` with single Alembic head.
+2. **Deadlock-Free Atomic Multi-Retailer Reservation Engine:**
+   - Guaranteed deadlock elimination by acquiring PostgreSQL row-level write locks (`SELECT ... FOR UPDATE`) sorted in deterministic lexicographical ascending order of `listing_id`.
+   - 100% all-or-nothing atomicity across multiple listings and retailers: if any listing has insufficient stock, the transaction rolls back cleanly, returning a structured `409 INSUFFICIENT_STOCK` error with affected listing IDs, product titles, requested and available quantities. Zero stock is reserved for any retailer.
+3. **Reservation Lifecycle & Concurrency Guarantees:**
+   - Explicit state transitions: `ACTIVE` -> `CONFIRMED` (converts reserved stock to permanent on-hand deduction), `ACTIVE` -> `RELEASED` (restores stock to available inventory), `ACTIVE` -> `EXPIRED` (restores stock to available inventory).
+   - Disallows invalid transitions (`EXPIRED` -> `CONFIRMED`, `RELEASED` -> `CONFIRMED`, `CONFIRMED` -> `RELEASED`).
+   - High-concurrency race protection verified against live PostgreSQL 16: 5 concurrent requests competing for 1 remaining unit results in exactly 1 reservation created and 4 structured 409 responses with zero oversell.
+4. **Quote Integration & Phase Boundaries:**
+   - Reservations require an active, unconsumed quote. Expired quotes fail reservation with `409 QUOTE_EXPIRED`.
+   - Quote snapshots remain immutable. Quotes are NOT marked `CONSUMED` during reservation (deferred to Phase 2E Order Placement).
+   - Zero orders or payment transactions created in Phase 2D.
+5. **REST API Endpoints:**
+   - `POST /api/v1/reservations`: Create reservation from active quote (supports `Idempotency-Key` header).
+   - `GET /api/v1/reservations/{id}`: Fetch reservation details, status, and remaining hold seconds.
+   - `POST /api/v1/reservations/{id}/release`: Explicitly release an active reservation.
+   - `POST /api/v1/internal/reservations/cleanup-expired`: Internal cleanup endpoint for scheduled background expiry worker.
+6. **Frontend Experience & Cart Integration:**
+   - Modular reservation client in `frontend/lib/api/reservations.ts` and `frontend/lib/api/client.ts`.
+   - Enhanced `/cart` page with active stock reservation banner, 10-minute hold countdown timer, explicit "Release Hold" action, structured inventory shortage alert banners, and re-reservation handling upon expiration.
+7. **Quality Gates & Verification Results:**
+   - Backend Pytest Suite: **102/102 tests passing** (including 11 Phase 2D tests and high-concurrency race test) against live PostgreSQL 16.
+   - Backend Ruff: **0 lint errors**, all 60 files cleanly formatted.
+   - Frontend Test Suite: **47/47 tests passing** in Node test runner.
+   - Frontend TypeScript: `tsc --noEmit` clean (0 errors).
+   - Frontend Production Build: `next build` succeeded with clean static/dynamic route generation.
+   - Script `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
+
+**Status:** COMPLETE (Phase 2D High-Concurrency Inventory Reservations & Lifecycle Management Fully Delivered — Ready for Security & Concurrency Audit)
+
+---
+
+### [2026-11-17 21:45 IST] — Senior Database & Security Architect — Phase 2D Final Security & Concurrency Audit Complete
+
+**Related branch / PR / task:** `feature/phase2-inventory-reservations` — Final Security & Concurrency Audit
+**Affected module(s):** `backend/app/modules/inventory/`, `backend/app/core/config.py`, `backend/tests/test_reservations.py`, `API_CONTRACTS.md`
+
+**Audit Verification & Hardening Results:**
+1. **TASK 1 — Internal Cleanup Endpoint Security:**
+   - Hardened `POST /api/v1/internal/reservations/cleanup-expired` with `verify_internal_service_key` dependency utilizing constant-time comparison (`hmac.compare_digest`) against configured `INTERNAL_SERVICE_KEY`.
+   - Verified that unauthenticated calls, invalid keys, and customer accounts with valid JWT sessions are rejected with `401 UNAUTHORIZED`.
+   - Verified that no internal secret or internal endpoint is exposed in frontend source code.
+2. **TASK 2 — Confirmation Accounting & Isolation:**
+   - Confirmed reservation confirmation permanently decrements `on_hand_quantity` and `reserved_quantity` by exact requested quantities.
+   - Verified `available_quantity` remains consistent before vs after confirmation.
+   - Verified duplicate confirmation is strictly idempotent and cannot deduct stock again.
+   - Verified confirmation on `RELEASED` or `EXPIRED` reservations fails with structured `409 Conflict`.
+   - Verified confirmation is NOT exposed as an unrestricted customer HTTP route (reserved for internal Phase 2E order orchestration).
+3. **TASK 3 — Expiry & Confirmation Race Condition:**
+   - Created live PostgreSQL concurrent integration test simulating a background worker expiring a reservation while another workflow confirms it simultaneously.
+   - Verified that PostgreSQL row-level locks guarantee exactly one transition wins (`CONFIRMED` or `EXPIRED`), with zero oversell, zero double-release, zero negative inventory counters, and strict non-negative invariants.
+4. **TASK 4 — Idempotency & Quote Reuse:**
+   - Verified repeated idempotency key returns cached active reservation.
+   - Verified different idempotency key on same active quote returns active reservation.
+   - Verified retrying reservation after release creates fresh hold if stock is available.
+   - Verified retrying reservation after expiry auto-releases expired hold and creates fresh hold.
+   - Verified guest token rotation and cross-guest isolation.
+5. **TASK 5 — Inventory Invariants:**
+   - Verified $0 \le \text{reserved\_quantity} \le \text{on\_hand\_quantity}$ enforced at both database check constraint level (`chk_inventory_available_non_negative`, `chk_inventory_reserved_non_negative`, `chk_inventory_on_hand_non_negative`) and application service level.
+   - Verified listing/retailer mismatch rejected with `400 INVALID_RETAILER_LISTING_MISMATCH`.
+   - Verified duplicate items in quote are aggregated and deduplicated safely without double stock deduction.
+   - Verified multi-retailer all-or-nothing rollback leaves all retailers untouched on any shortage.
+6. **TASK 6 — Verification & Quality Gates:**
+   - Backend Pytest Suite: **107/107 tests passing** in 8.53s against live PostgreSQL 16 (0 test failures).
+   - Backend Ruff: **0 lint errors**, all 61 files cleanly formatted.
+   - Frontend Tests: **47/47 tests passing** in Node test runner.
+   - Frontend TypeScript: `tsc --noEmit` clean (0 errors).
+   - Frontend Production Build: `next build` succeeded cleanly (9/9 routes generated).
+   - Script `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
+   - Alembic Migration: Exactly 1 head (`0006_inventory_reservations (head)`), database synced.
+
+**Status:** AUDIT COMPLETE & PASSED — Awaiting developer approval for commit/push.
+
+---
+
+### [2026-11-17 22:20 IST] — Senior Database & Systems Architect — Phase 2D Final Release Blocker Review Complete
+
+**Related branch / PR / task:** `feature/phase2-inventory-reservations` — Final Release Blocker Review
+**Affected module(s):**
+- `backend/app/core/config.py`
+- `backend/app/modules/inventory/service.py`
+- `backend/app/modules/inventory/dependencies.py`
+- `backend/tests/test_reservations.py`
+- `PHASE_2_ARCHITECTURE.md`
+- `API_CONTRACTS.md`
+- `AGENT_HANDOFF.md`
+
+**Resolved Review Items:**
+1. **Idempotency Semantics & Database Agreement:**
+   - Replaying active reservation returns cached reservation cleanly (HTTP 201).
+   - Replaying spent idempotency key (`RELEASED` or `EXPIRED`) is rejected with `409 IDEMPOTENCY_KEY_ALREADY_USED`. The system will never silently create a new reservation for a replayed key.
+   - Reusing key across different quote IDs is rejected with `409 IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD`.
+   - PostgreSQL partial unique index `uq_reservations_quote_active` serializes concurrent creations for the same quote; losing transaction recovers active reservation cleanly.
+   - PostgreSQL unique index on `(customer_id/guest_token_hash, idempotency_key)` serializes concurrent requests with identical keys; losing transaction recovers created reservation cleanly.
+   - Retry policy documented: caller must submit a fresh idempotency key to retry after reservation release or expiry.
+2. **Phase 2E / Phase 2F Scope Separation:**
+   - Corrected architectural contract: Phase 2E handles Order creation, Reservation confirmation, Transactional outbox event generation, and Quote consumption in a single atomic PostgreSQL transaction. No Razorpay integration, payment capture, or webhooks in Phase 2E.
+   - Phase 2F handles external Razorpay API interaction, signature verification, payment webhooks, reconciliation, and automated refunds.
+3. **Internal Service Key Hardening:**
+   - Set `INTERNAL_SERVICE_KEY: SecretStr | None = None` (no hardcoded default).
+   - Added Pydantic `@field_validator` in production requiring $\ge 32$ character non-weak secret.
+   - Hardened `verify_internal_service_key` to fail closed with 401 if key is missing on the server.
+   - Preserved constant-time comparison `hmac.compare_digest`.
+   - Key is never exposed to frontend bundles or logged.
+4. **Test Suite & Verification Results:**
+   - Backend Pytest Suite: **111/111 tests passing** (20 reservation tests including live PostgreSQL concurrency and idempotency tests) in 9.31s.
+   - Backend Ruff: **0 lint errors**, all 61 files cleanly formatted.
+   - Frontend Test Suite: **47/47 tests passing** in Node test runner.
+   - Frontend TypeScript: `tsc --noEmit` clean (0 errors).
+   - Frontend Production Build: `next build` succeeded with clean static/dynamic route generation.
+   - `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
+
+**Status:** ALL RELEASE BLOCKERS RESOLVED — Ready for developer review and merge approval.

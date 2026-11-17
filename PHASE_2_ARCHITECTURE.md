@@ -287,15 +287,14 @@ CREATE INDEX ix_quotes_user_active ON checkout_quotes(user_id, status) WHERE sta
 
 ---
 
-## 6. Domain 2D: High-Concurrency Inventory Reservations & Race Handling
+## 6. Domain 2D: High-Concurrency Inventory Reservations & Race Handling (Implemented)
 
 ### 6.1 Deadlock-Free Lock Ordering
 To eliminate PostgreSQL transaction deadlocks during concurrent multi-item checkouts, inventory rows are always locked in **lexicographical ascending order of `listing_id`**:
 
 ```python
 # Guaranteed deadlock elimination via deterministic lock ordering
-sorted_items = sorted(quote.items, key=lambda x: str(x.listing_id))
-sorted_listing_ids = [item.listing_id for item in sorted_items]
+sorted_listing_ids = sorted(set(item.listing_id for item in quote.items))
 
 stmt = (
     select(StoreInventory)
@@ -308,89 +307,123 @@ inventories = {
     for inv in (await session.execute(stmt)).scalars().all()
 }
 
-for item in sorted_items:
+# Verify availability for all items before any mutation (All-or-Nothing)
+shortages = []
+for item in quote.items:
     inv = inventories.get(item.listing_id)
     if not inv or (inv.on_hand_quantity - inv.reserved_quantity) < item.quantity:
-        raise AppException(
-            code="INSUFFICIENT_STOCK",
-            message=f"Item {item.listing_id} is out of stock",
-            status_code=409,
-        )
-    inv.reserved_quantity += item.quantity
+        shortages.append(item)
+if shortages:
+    raise AppException(code="INSUFFICIENT_STOCK", status_code=409, details=shortages)
+
+for item in quote.items:
+    inventories[item.listing_id].reserved_quantity += item.quantity
 ```
 
 ### 6.2 Reservation State Machine & Expiry vs. Payment Race
-Reservations are governed by the `inventory_reservations` table with a 15-minute TTL:
+Reservations are governed by the `inventory_reservations` and `inventory_reservation_items` tables (`0006_inventory_reservations`) with a configurable TTL (`settings.RESERVATION_TTL_MINUTES`, default 10 minutes):
 
 ```sql
-CREATE TYPE reservation_status AS ENUM ('ACTIVE', 'CONFIRMED', 'RELEASED', 'EXPIRED');
-
 CREATE TABLE inventory_reservations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id UUID, -- Back-referenced upon order creation
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    status reservation_status NOT NULL DEFAULT 'ACTIVE',
+    customer_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    guest_token_hash VARCHAR(64),
+    quote_id UUID NOT NULL REFERENCES checkout_quotes(id) ON DELETE RESTRICT,
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    idempotency_key VARCHAR(128),
     expires_at TIMESTAMPTZ NOT NULL,
+    confirmed_at TIMESTAMPTZ,
+    released_at TIMESTAMPTZ,
+    release_reason VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_reservation_ownership CHECK (
+        (customer_id IS NOT NULL AND guest_token_hash IS NULL) OR
+        (customer_id IS NULL AND guest_token_hash IS NOT NULL)
+    ),
+    CONSTRAINT chk_reservation_status CHECK (
+        status IN ('ACTIVE', 'CONFIRMED', 'RELEASED', 'EXPIRED')
+    )
 );
 
-CREATE TABLE reservation_items (
+CREATE TABLE inventory_reservation_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reservation_id UUID NOT NULL REFERENCES inventory_reservations(id) ON DELETE CASCADE,
     listing_id UUID NOT NULL REFERENCES product_listings(id) ON DELETE RESTRICT,
+    retailer_id UUID NOT NULL REFERENCES retailers(id) ON DELETE RESTRICT,
+    variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_reservation_listing UNIQUE (reservation_id, listing_id)
 );
 ```
 
 #### Deterministic Race Resolution Protocol
-When a payment verification request and the 15-minute background expiry worker collide:
+When an authorized order confirmation request (Phase 2E) and the background cleanup worker collide:
 1. Both processes execute `SELECT ... FROM inventory_reservations WHERE id = :id FOR UPDATE`.
-2. **If Verification wins lock:** Status is `ACTIVE`. Verifier sets `status = 'CONFIRMED'`, converts reserved stock to permanent sale (`on_hand -= qty, reserved -= qty`), and commits. The expiry worker subsequently sees `CONFIRMED` and skips.
-3. **If Expiry Worker wins lock:** Expiry worker decrements `reserved_quantity`, sets `status = 'EXPIRED'`, and marks `order.status = 'CANCELLED'`.
-   - When Verifier runs next, it discovers `status == 'EXPIRED'`.
-   - **Deterministic Fallback:** 
-     1. Verifier tests stock availability. If stock is still available, it re-reserves stock, reverses the order cancellation to `CONFIRMED`, and confirms order.
-     2. If stock has already been sold to another customer, it sets `payment.status = 'REFUNDED'`, calls Razorpay Refund API, emits `order.payment_refunded` outbox event, and notifies customer.
+2. **If Confirmation wins lock:** Status is `ACTIVE`. The confirming transaction sets `status = 'CONFIRMED'`, converts reserved stock to permanent sale (`on_hand -= qty, reserved -= qty`), and commits. The expiry worker subsequently sees `CONFIRMED` and skips.
+3. **If Expiry Worker wins lock:** Expiry worker decrements `reserved_quantity`, sets `status = 'EXPIRED'`, sets `released_at = NOW()`, and commits.
+   - When Confirmation runs next, it discovers `status == 'EXPIRED'` and rejects confirmation with `409 RESERVATION_EXPIRED`. Stock is never deducted twice and cannot become negative.
+
+### 6.3 Idempotency Semantics, Database Agreement & Retry Policy
+
+The reservation system enforces strict idempotency at both the PostgreSQL constraint layer and the service layer:
+
+1. **Database Constraint Architecture:**
+   - `uq_reservations_customer_idempotency`: `UNIQUE(customer_id, idempotency_key) WHERE customer_id IS NOT NULL AND idempotency_key IS NOT NULL`.
+   - `uq_reservations_guest_idempotency`: `UNIQUE(guest_token_hash, idempotency_key) WHERE guest_token_hash IS NOT NULL AND idempotency_key IS NOT NULL`.
+   - `uq_reservations_quote_active`: `UNIQUE(quote_id) WHERE status = 'ACTIVE'`.
+2. **Service Idempotency Matrix:**
+   - **Repeated Request with Same Key & Same Quote (Active/Confirmed):** Returns cached reservation with HTTP 201. Idempotent safe replay.
+   - **Cross-Quote Replay:** Replaying a previously used idempotency key with a *different* quote ID is rejected with `409 IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD`.
+   - **Spent Key Replay:** If an idempotency key was previously associated with a reservation that is now `RELEASED` or `EXPIRED`, the service immediately rejects with `409 IDEMPOTENCY_KEY_ALREADY_USED`. It will **never** silently allocate a fresh reservation under a replayed idempotency key.
+   - **Retry Policy After Release or Expiry:** If a quote's reservation expired or was voluntarily released, the customer must submit a request with a **fresh idempotency key**.
+   - **Concurrent Identical Keys:** Two simultaneous requests with identical keys are serialized by the PostgreSQL unique index. The winner inserts the reservation; the losing transaction catches `IntegrityError`, rolls back, retrieves the winning reservation, and returns it cleanly (HTTP 201).
+   - **Concurrent Different Keys for Same Quote:** Two simultaneous requests with different keys for the same quote are serialized by `uq_reservations_quote_active`. The winner creates the active reservation; the second transaction catches `IntegrityError`, rolls back, retrieves the existing active reservation for the quote, and returns it cleanly. Inventory is held exactly once.
+
+### 6.4 Internal Service Key Security Architecture
+
+The cleanup endpoint (`POST /api/v1/internal/reservations/cleanup-expired`) is reserved for internal cron jobs and administrative orchestrators:
+1. **Zero Default Secret in Production:** `INTERNAL_SERVICE_KEY: SecretStr | None = None`. In production (`ENVIRONMENT == "production"`), the application fails to boot if `INTERNAL_SERVICE_KEY` is not explicitly configured, if it is shorter than 32 characters, or if it uses weak/predictable patterns (e.g. `password`, `changeme`, `secret`).
+2. **Fail-Closed Authorization:** If `INTERNAL_SERVICE_KEY` is not set on the server, all requests to internal endpoints are immediately rejected with `401 UNAUTHORIZED`. Missing server configuration cannot disable authentication.
+3. **Constant-Time Comparison:** Inbound keys from headers (`X-Internal-Service-Key` or `X-Internal-Token`) are compared against the configured secret using `hmac.compare_digest` to prevent timing attacks.
+4. **Credential Isolation:** The internal service key is strictly isolated from customer/guest auth tokens, is never stored in browser cookies or localStorage, and is never exposed in API response payloads or client bundles.
 
 ---
 
-## 7. Domain 2E: Order Creation, Checkout Orchestration & Idempotency
+## 7. Domain 2E: Order Creation, Reservation Confirmation, Outbox & Quote Consumption
 
-### 7.1 Decoupled Transaction Boundaries
-External Razorpay API calls are decoupled from the local database transaction:
+> [!IMPORTANT]
+> **Strict Phase 2E / Phase 2F Separation Boundary:**
+> - **Phase 2E Scope:** Validates active unexpired Quote and active Reservation, creates the authoritative `Order` and `OrderItems` records, calls `ReservationService.confirm_reservation(...)` to atomically convert reserved stock into on-hand deductions, marks the Quote consumed, and writes the `order.created` event to `outbox_events`. All of this runs inside a single, local atomic PostgreSQL transaction. **No external Razorpay API calls, payment capture, or payment verification occur in Phase 2E.**
+> - **Phase 2F Scope:** Introduces the decoupled Razorpay payment lifecycle: initiating provider orders via external HTTPS (`razorpay_client.order.create`), client signature verification, payment webhooks (`order.paid`), payment failure recovery, background reconciliation, and automated refunds.
 
+### 7.1 Phase 2E Atomic Transaction Flow
 ```text
-[Customer clicks Place Order]
-          |
-          v
-======================== LOCAL DATABASE TRANSACTION 1 (< 25ms) ========================
-1. Check idempotency record (user_id, idempotency_key). If completed, return cached response.
-2. Validate and consume checkout_quotes row (verify is_consumed=False, expires_at > NOW()).
-3. Lock and reserve store_inventory rows (sorted by listing_id).
-4. Insert inventory_reservations and reservation_items rows (status = 'ACTIVE').
-5. Insert orders and order_items rows (status = 'PENDING_PAYMENT').
-6. Insert idempotency_records row (status = 'IN_FLIGHT').
-7. Insert outbox_events row ('order.created').
-COMMIT TRANSACTION 1
-========================================================================================
-          |
-          v
-------------------- EXTERNAL NETWORK CALL (No Open DB Connection) ----------------------
-8. Call Razorpay API: `razorpay_client.order.create({ amount, currency: "INR", receipt })`
-----------------------------------------------------------------------------------------
-          |
-          +-----------------------------------+
-          | HTTPS 200 OK                      | Network Timeout / HTTP 5xx
-          v                                   v
-=================== DB TX 2A ===================   =================== DB TX 2B ===================
-9. Insert payments row:                          9. Mark payments: status = 'REQUIRES_RECONCILIATION'
-   status = 'INITIATED', provider_order_id       10. DO NOT release inventory (prevent premature free)
-10. Update idempotency_records:                  11. Return HTTP 202 Accepted with tracking status
-    status = 200, response_body                  COMMIT TX 2B
-COMMIT TX 2A                                     ================================================
-================================================
+[Customer submits Checkout / Place Order with (quote_id, reservation_id, idempotency_key)]
+                                    |
+                                    v
+==================== SINGLE ATOMIC LOCAL POSTGRESQL TRANSACTION (< 25ms) ====================
+1. Check customer idempotency record (customer_id, idempotency_key). If completed, return cached order.
+2. Select and lock active CheckoutQuote:
+   - Verify quote is not consumed (`quote.is_consumed == False`).
+   - Verify quote has not expired (`quote.expires_at > NOW()`).
+3. Select and lock active InventoryReservation:
+   - Verify reservation belongs to customer/guest.
+   - Verify reservation is `ACTIVE` and unexpired (`expires_at > NOW()`).
+   - Verify reservation `quote_id == quote.id`.
+4. Confirm Reservation (via ReservationService.confirm_reservation, internal=True):
+   - Atomically decrement `on_hand_quantity -= qty` and `reserved_quantity -= qty` across listings.
+   - Set reservation status = 'CONFIRMED', confirmed_at = NOW().
+5. Insert Order and OrderItems rows:
+   - Snapshot delivery address, retailer breakdowns, line items, and statutory GST splits.
+   - Set order.status = 'PENDING' (or 'PENDING_PAYMENT').
+6. Consume Quote:
+   - Set quote.is_consumed = True, quote.status = 'CONSUMED'.
+7. Insert Transactional Outbox Event:
+   - Insert row into outbox_events with topic 'order.created' and serialized OrderCreatedPayload.
+COMMIT TRANSACTION
+=============================================================================================
 ```
 
 ### 7.2 Orders Schema & Strict Scoped Idempotency

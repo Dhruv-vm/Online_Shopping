@@ -72,10 +72,16 @@
   - [x] Frontend Quote Client & Types: `createQuote`, `getQuote`, `validateQuote`, `refreshQuote`, `listQuotes` in `@/lib/api/quotes` and `@/types`.
   - [x] Frontend Cart UI: Live guaranteed quote display on `/cart`, 15-minute countdown timer, repricing notice banner with "Accept & Refresh Quote" CTA, line-item HSN and GST rate badges, per-retailer delivery breakdown with free delivery progress, and statutory Indian GST reconciliation breakdown.
   - [x] Quality Gates: 81/81 backend pytest tests passing, 40/40 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
-- [ ] **Phase 2D — Inventory Reservations & Concurrency Protection:**
-  - [ ] Lock ordering by `listing_id` to eliminate deadlocks.
-  - [ ] Atomic conditional updates and reservation TTL.
-  - [ ] High-concurrency oversell tests.
+- [x] **Phase 2D — Inventory Reservations & Concurrency Protection (Backend & Frontend):**
+  - [x] Lock ordering by `listing_id` in deterministic ascending order to mathematically eliminate PostgreSQL deadlocks across multi-item checkouts.
+  - [x] Atomic all-or-nothing multi-retailer inventory reservations (`inventory_reservations` and `inventory_reservation_items`).
+  - [x] Configurable reservation TTL (`settings.RESERVATION_TTL_MINUTES`, default 10 minutes) and automated expiry cleanup worker (`POST /api/v1/internal/reservations/cleanup-expired`).
+  - [x] Idempotent reservation creation with `Idempotency-Key` header and partial unique indexes.
+  - [x] Reversible Alembic migration `0006_inventory_reservations` maintaining single migration head.
+  - [x] Explicit state machine: `ACTIVE` -> `CONFIRMED` / `RELEASED` / `EXPIRED` with strict transition checks.
+  - [x] High-concurrency anti-oversell tests against live PostgreSQL: 5 concurrent requests for 1 available unit verified to yield exactly 1 success and 4 structured 409 errors with 0 oversell.
+  - [x] Frontend reservation client and cart integration: stock hold countdown timer, manual release action, shortage error alerts, and seamless recovery.
+  - [x] Quality Gates: 102/102 backend pytest tests passing, 47/47 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
 - [ ] **Phase 2E — Orders, Outbox & Checkout Orchestration:**
   - [ ] Immutable order item snapshots and scoped idempotency.
   - [ ] Decoupled checkout transaction boundaries.

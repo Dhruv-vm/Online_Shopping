@@ -389,3 +389,40 @@ export interface QuoteValidationResult {
   issues: QuoteValidationIssue[];
   quote: Quote;
 }
+
+// Phase 2D: Inventory Reservations & Concurrency Protection
+export type ReservationStatus = "ACTIVE" | "CONFIRMED" | "RELEASED" | "EXPIRED";
+
+export interface ReservationItem {
+  id: string;
+  listing_id: string;
+  retailer_id: string;
+  variant_id: string;
+  quantity: number;
+}
+
+export interface Reservation {
+  id: string;
+  quote_id: string;
+  customer_id?: string | null;
+  status: ReservationStatus;
+  idempotency_key?: string | null;
+  expires_at: string;
+  seconds_remaining: number;
+  is_expired: boolean;
+  items: ReservationItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReservationCreatePayload {
+  quote_id: string;
+  idempotency_key?: string | null;
+}
+
+export interface ReservationReleaseResponse {
+  id: string;
+  status: ReservationStatus;
+  released_at?: string | null;
+  release_reason?: string | null;
+}
