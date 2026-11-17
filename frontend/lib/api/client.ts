@@ -21,6 +21,9 @@ import type {
   Quote,
   QuoteCreatePayload,
   QuoteValidationResult,
+  Reservation,
+  ReservationCreatePayload,
+  ReservationReleaseResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -369,6 +372,33 @@ class ApiClient {
 
   public async listQuotes(): Promise<Quote[]> {
     return this.get<Quote[]>("/api/v1/quotes");
+  }
+
+  // Phase 2D: Inventory Reservations
+  public async createReservation(
+    payload: ReservationCreatePayload,
+    idempotencyKey?: string,
+  ): Promise<Reservation> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+    return this.post<Reservation>("/api/v1/reservations", payload, { headers });
+  }
+
+  public async getReservation(reservationId: string): Promise<Reservation> {
+    return this.get<Reservation>(
+      `/api/v1/reservations/${encodeURIComponent(reservationId)}`,
+    );
+  }
+
+  public async releaseReservation(
+    reservationId: string,
+  ): Promise<ReservationReleaseResponse> {
+    return this.post<ReservationReleaseResponse>(
+      `/api/v1/reservations/${encodeURIComponent(reservationId)}/release`,
+      {},
+    );
   }
 }
 

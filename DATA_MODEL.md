@@ -202,3 +202,37 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
 - `retailer_name`: VARCHAR(255) (Immutable snapshot)
 - `retailer_state`: VARCHAR(100) (Immutable snapshot)
 - `created_at`: TIMESTAMPTZ (Default `now()`)
+
+## 10. Phase 2D Inventory Reservations & Concurrency Protection Schema Specification (Implemented)
+
+### `inventory_reservations` Table (`0006_inventory_reservations`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `customer_id`: UUID (FK `users.id` ON DELETE CASCADE, nullable, indexed)
+- `guest_token_hash`: VARCHAR(64) (Nullable, SHA-256 hash of `basket_guest_cart` cookie, indexed)
+- `quote_id`: UUID (FK `checkout_quotes.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `status`: VARCHAR(32) (Default `'ACTIVE'`, Check: `status IN ('ACTIVE', 'CONFIRMED', 'RELEASED', 'EXPIRED')`, indexed)
+- `idempotency_key`: VARCHAR(128) (Nullable, indexed)
+- `expires_at`: TIMESTAMPTZ (Configurable TTL, default 10 minutes from creation, indexed)
+- `confirmed_at`: TIMESTAMPTZ (Nullable, set when transitioning to `CONFIRMED`)
+- `released_at`: TIMESTAMPTZ (Nullable, set when transitioning to `RELEASED` or `EXPIRED`)
+- `release_reason`: VARCHAR(255) (Nullable, e.g. `'USER_RELEASED'`, `'TTL_EXPIRED'`)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_reservation_ownership`: `(customer_id IS NOT NULL AND guest_token_hash IS NULL) OR (customer_id IS NULL AND guest_token_hash IS NOT NULL)`
+  - Partial unique index `uq_reservations_quote_active` on `(quote_id)` WHERE `status = 'ACTIVE'`
+  - Partial unique index `uq_reservations_customer_idempotency` on `(customer_id, idempotency_key)` WHERE `customer_id IS NOT NULL AND idempotency_key IS NOT NULL`
+  - Partial unique index `uq_reservations_guest_idempotency` on `(guest_token_hash, idempotency_key)` WHERE `guest_token_hash IS NOT NULL AND idempotency_key IS NOT NULL`
+  - Index `ix_reservations_status_expires` on `(status, expires_at)`
+
+### `inventory_reservation_items` Table (`0006_inventory_reservations`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `reservation_id`: UUID (FK `inventory_reservations.id` ON DELETE CASCADE, nullable=False, indexed)
+- `listing_id`: UUID (FK `product_listings.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `retailer_id`: UUID (FK `retailers.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `variant_id`: UUID (FK `product_variants.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `quantity`: INTEGER (Check: `quantity > 0`)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_reservation_item_quantity_positive`: `quantity > 0`
+  - `uq_reservation_listing`: UNIQUE on `(reservation_id, listing_id)`
