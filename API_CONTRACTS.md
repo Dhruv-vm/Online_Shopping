@@ -379,26 +379,82 @@ For every endpoint document:
 
 ---
 
-## 9. Order Creation & Outbox Integration (Phase 2E Scope)
+## 9. Order Creation & Outbox Integration (Phase 2E)
 
 ### `POST /api/v1/orders`
-- **Auth**: Required (`current_user` or validated checkout guest session).
+- **Auth**: Required (`current_user` or validated checkout guest session cookie/token).
 - **Headers**:
-  - `Idempotency-Key`: String (Required).
+  - `Idempotency-Key`: String (Optional in header or request body).
 - **Payload**:
   ```json
   {
     "quote_id": "uuid",
     "reservation_id": "uuid",
-    "delivery_address_id": "uuid"
+    "delivery_address_id": "uuid | null",
+    "delivery_address": {
+      "full_name": "Rahul Verma",
+      "address_line1": "123 Indiranagar 100ft Road",
+      "address_line2": "Apt 4B",
+      "city": "Bengaluru",
+      "state": "Karnataka",
+      "postal_code": "560038",
+      "phone": "+919876543210"
+    },
+    "idempotency_key": "string | null"
   }
   ```
 - **Description**: Executes within a single atomic local PostgreSQL transaction:
-  1. Validates unconsumed and unexpired `quote_id`.
+  1. Validates unconsumed and unexpired active `quote_id`.
   2. Validates active, unexpired `reservation_id` matching the quote.
-  3. Confirms reservation internally via `ReservationService.confirm_reservation(...)`, converting reserved inventory into permanent on-hand deductions (`on_hand -= qty, reserved -= qty`).
-  4. Snapshots delivery address, category line items, and statutory GST splits into `orders` and `order_items` tables with initial status `PENDING`.
+  3. Transitions reservation status to `ALLOCATED_TO_ORDER` and links `reservation.order_id = order.id`, protecting inventory holds from ordinary cleanup during the 15-minute payment window. Permanent deduction (`on_hand -= qty, reserved -= qty`) is deferred to Phase 2F upon confirmed payment.
+  4. Snapshots delivery address, category line items, and statutory GST splits into `orders` and `order_items` tables with initial status `PENDING_PAYMENT` and `payment_status = 'NOT_INITIATED'`.
   5. Marks `quote.is_consumed = TRUE` and `quote.status = 'CONSUMED'`.
-  6. Writes `order.created` event into `outbox_events` table for downstream asynchronous messaging.
+  6. Reconciles cart selectively: removes or decrements only items included in the ordered quote, preserving unquoted cart items.
+  7. Writes zero-PII `order.created` event into `outbox_events` table for downstream asynchronous messaging.
+  8. Records scoped idempotency record in `idempotency_records` with canonical SHA-256 request fingerprint.
 - **Exclusions (Phase 2E)**: No external Razorpay gateway requests, payment capture, or payment webhooks occur in Phase 2E. Those belong strictly to Phase 2F.
 - **Response**: `201 Created` (`OrderResponse`).
+
+### `GET /api/v1/orders`
+- **Auth**: Required (`current_user` or validated guest session).
+- **Query Parameters**:
+  - `limit`: Integer (Default 20, max 100).
+  - `offset`: Integer (Default 0).
+- **Description**: Lists paginated orders belonging strictly to the calling customer or guest.
+- **Response**: `200 OK`
+  ```json
+  {
+    "orders": [
+      {
+        "id": "uuid",
+        "order_number": "BSK-20261117-ABC123",
+        "customer_id": "uuid | null",
+        "is_guest": false,
+        "quote_id": "uuid",
+        "reservation_id": "uuid",
+        "delivery_address": { ... },
+        "subtotal_paise": 100000,
+        "discount_total_paise": 10000,
+        "delivery_fee_paise": 5000,
+        "cgst_paise": 8100,
+        "sgst_paise": 8100,
+        "igst_paise": 0,
+        "total_tax_paise": 16200,
+        "total_payable_paise": 111200,
+        "currency": "INR",
+        "status": "PENDING_PAYMENT",
+        "payment_status": "NOT_INITIATED",
+        "payment_window_expires_at": "2026-11-17T15:15:00Z",
+        "items": [ ... ],
+        "created_at": "2026-11-17T15:00:00Z",
+        "updated_at": "2026-11-17T15:00:00Z"
+      }
+    ],
+    "total": 1
+  }
+  ```
+
+### `GET /api/v1/orders/{order_id}`
+- **Auth**: Required (`current_user` or validated guest session).
+- **Description**: Retrieves full order details including line items, address snapshot, financial breakdown, and status history. Enforces strict tenant isolation; cross-tenant requests return `404 ORDER_NOT_FOUND`.
+- **Response**: `200 OK` (`OrderResponse`).

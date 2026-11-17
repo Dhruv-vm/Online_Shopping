@@ -5,6 +5,7 @@ from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
 from app.modules.inventory.router import router as inventory_router
+from app.modules.orders.router import router as orders_router
 from app.modules.pricing.router import router as pricing_router
 
 api_router = APIRouter()
@@ -25,6 +26,9 @@ api_router.include_router(pricing_router)
 
 # Mount Inventory Reservations endpoints (Phase 2D)
 api_router.include_router(inventory_router)
+
+# Mount Orders & Outbox endpoints (Phase 2E)
+api_router.include_router(orders_router)
 
 
 @api_router.get("/info", tags=["System"])

@@ -24,6 +24,9 @@ import type {
   Reservation,
   ReservationCreatePayload,
   ReservationReleaseResponse,
+  Order,
+  CreateOrderRequest,
+  OrderListResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -398,6 +401,28 @@ class ApiClient {
     return this.post<ReservationReleaseResponse>(
       `/api/v1/reservations/${encodeURIComponent(reservationId)}/release`,
       {},
+    );
+  }
+
+  // ================= Orders & Checkout (Phase 2E) =================
+  public async createOrder(
+    payload: CreateOrderRequest,
+    idempotencyKey?: string,
+  ): Promise<Order> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+    return this.post<Order>("/api/v1/orders", payload, { headers });
+  }
+
+  public async getOrder(orderId: string): Promise<Order> {
+    return this.get<Order>(`/api/v1/orders/${encodeURIComponent(orderId)}`);
+  }
+
+  public async listOrders(limit = 20, offset = 0): Promise<OrderListResponse> {
+    return this.get<OrderListResponse>(
+      `/api/v1/orders?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`,
     );
   }
 }

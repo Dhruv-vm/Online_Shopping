@@ -391,12 +391,12 @@ The cleanup endpoint (`POST /api/v1/internal/reservations/cleanup-expired`) is r
 
 ---
 
-## 7. Domain 2E: Order Creation, Reservation Confirmation, Outbox & Quote Consumption
+## 7. Domain 2E: Order Creation, Reservation Allocation, Outbox & Quote Consumption (Implemented)
 
 > [!IMPORTANT]
 > **Strict Phase 2E / Phase 2F Separation Boundary:**
-> - **Phase 2E Scope:** Validates active unexpired Quote and active Reservation, creates the authoritative `Order` and `OrderItems` records, calls `ReservationService.confirm_reservation(...)` to atomically convert reserved stock into on-hand deductions, marks the Quote consumed, and writes the `order.created` event to `outbox_events`. All of this runs inside a single, local atomic PostgreSQL transaction. **No external Razorpay API calls, payment capture, or payment verification occur in Phase 2E.**
-> - **Phase 2F Scope:** Introduces the decoupled Razorpay payment lifecycle: initiating provider orders via external HTTPS (`razorpay_client.order.create`), client signature verification, payment webhooks (`order.paid`), payment failure recovery, background reconciliation, and automated refunds.
+> - **Phase 2E Scope:** Validates active unexpired Quote and active Reservation, creates the authoritative `Order` (`PENDING_PAYMENT`, `NOT_INITIATED`) and `OrderItems` snapshot records, transitions reservation status to `ALLOCATED_TO_ORDER` and sets `reservation.order_id = order.id` (protecting the hold from ordinary cleanup during the 15-minute checkout window), marks the Quote consumed, performs selective cart reconciliation, and writes the zero-PII `order.created` event to `outbox_events`. All of this runs inside a single, local atomic PostgreSQL transaction. Permanent stock deduction (`on_hand -= qty, reserved -= qty`) is explicitly deferred to confirmed payment in Phase 2F. **No external Razorpay API calls, payment capture, or payment verification occur in Phase 2E.**
+> - **Phase 2F Scope:** Introduces the decoupled Razorpay payment lifecycle: initiating provider orders via external HTTPS (`razorpay_client.order.create`), client signature verification, payment webhooks (`order.paid`), transitioning reservation to `CONFIRMED` and executing permanent on-hand deduction, payment failure recovery, background reconciliation, and automated refunds.
 
 ### 7.1 Phase 2E Atomic Transaction Flow
 ```text
@@ -404,97 +404,148 @@ The cleanup endpoint (`POST /api/v1/internal/reservations/cleanup-expired`) is r
                                     |
                                     v
 ==================== SINGLE ATOMIC LOCAL POSTGRESQL TRANSACTION (< 25ms) ====================
-1. Check customer idempotency record (customer_id, idempotency_key). If completed, return cached order.
-2. Select and lock active CheckoutQuote:
+1. Canonical Request Fingerprinting:
+   - Compute SHA-256 hash over {caller, quote_id, reservation_id, delivery_address}.
+   - Pre-lock check in `idempotency_records`: if matching key and hash exist, return cached order.
+2. Select and lock active CheckoutQuote (FOR UPDATE):
+   - Re-check idempotency record post-lock (handles concurrent requests serialized by row lock).
    - Verify quote is not consumed (`quote.is_consumed == False`).
    - Verify quote has not expired (`quote.expires_at > NOW()`).
-3. Select and lock active InventoryReservation:
-   - Verify reservation belongs to customer/guest.
+   - Verify quote status is ACTIVE.
+3. Select and lock active InventoryReservation (FOR UPDATE):
+   - Verify reservation belongs to caller (`customer_id` or `guest_token_hash`).
    - Verify reservation is `ACTIVE` and unexpired (`expires_at > NOW()`).
    - Verify reservation `quote_id == quote.id`.
-4. Confirm Reservation (via ReservationService.confirm_reservation, internal=True):
-   - Atomically decrement `on_hand_quantity -= qty` and `reserved_quantity -= qty` across listings.
-   - Set reservation status = 'CONFIRMED', confirmed_at = NOW().
-5. Insert Order and OrderItems rows:
-   - Snapshot delivery address, retailer breakdowns, line items, and statutory GST splits.
-   - Set order.status = 'PENDING' (or 'PENDING_PAYMENT').
+4. Insert Order and OrderItems rows:
+   - Generate human-readable order number (e.g. BSK-YYYYMMDD-XXXXXX).
+   - Snapshot delivery address, line items, and statutory GST splits.
+   - Set order.status = 'PENDING_PAYMENT', payment_status = 'NOT_INITIATED'.
+   - Explicit intermediate session flush to establish order.id primary key in DB.
+5. Allocate Reservation to Order:
+   - Set reservation.status = 'ALLOCATED_TO_ORDER'.
+   - Set reservation.order_id = order.id.
+   - (Ordinary cleanup only deletes status='ACTIVE'; order holds remain protected during payment window).
 6. Consume Quote:
-   - Set quote.is_consumed = True, quote.status = 'CONSUMED'.
-7. Insert Transactional Outbox Event:
-   - Insert row into outbox_events with topic 'order.created' and serialized OrderCreatedPayload.
+   - Set quote.is_consumed = True, quote.status = 'CONSUMED', quote.consumed_at = NOW().
+7. Selective Cart Reconciliation:
+   - Query and lock active cart items.
+   - Selectively delete or decrement items present in the ordered quote.
+   - Preserves unquoted cart items added post-quote.
+8. Insert Zero-PII Transactional Outbox Event:
+   - Insert row into outbox_events with topic 'order.created' and non-PII financial and line-item payload.
+9. Record Idempotency:
+   - Insert record into idempotency_records with 24-hour TTL.
 COMMIT TRANSACTION
 =============================================================================================
 ```
 
-### 7.2 Orders Schema & Strict Scoped Idempotency
+### 7.2 Orders Schema & Strict Scoped Idempotency (Implemented in `0007_orders_outbox_schema`)
 ```sql
-CREATE TYPE order_status AS ENUM (
-    'PENDING_PAYMENT',
-    'CONFIRMED',
-    'PAYMENT_FAILED',
-    'CANCELLED',
-    'SHIPPED',
-    'DELIVERED'
-);
-
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_number VARCHAR(32) UNIQUE NOT NULL, -- e.g. BSK-20261116-A8F2
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    order_number VARCHAR(64) UNIQUE NOT NULL, -- e.g. BSK-20261117-ABC123
+    customer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    guest_token_hash VARCHAR(64),
     quote_id UUID UNIQUE NOT NULL REFERENCES checkout_quotes(id) ON DELETE RESTRICT,
+    reservation_id UUID NOT NULL REFERENCES inventory_reservations(id) ON DELETE RESTRICT,
     delivery_address_snapshot JSONB NOT NULL,
     subtotal_paise BIGINT NOT NULL CHECK (subtotal_paise >= 0),
+    discount_total_paise BIGINT NOT NULL DEFAULT 0 CHECK (discount_total_paise >= 0),
     delivery_fee_paise BIGINT NOT NULL DEFAULT 0 CHECK (delivery_fee_paise >= 0),
     cgst_paise BIGINT NOT NULL DEFAULT 0 CHECK (cgst_paise >= 0),
     sgst_paise BIGINT NOT NULL DEFAULT 0 CHECK (sgst_paise >= 0),
     igst_paise BIGINT NOT NULL DEFAULT 0 CHECK (igst_paise >= 0),
     total_tax_paise BIGINT NOT NULL DEFAULT 0 CHECK (total_tax_paise >= 0),
-    total_amount_paise BIGINT NOT NULL CHECK (total_amount_paise >= 0),
+    total_payable_paise BIGINT NOT NULL CHECK (total_payable_paise >= 0),
     currency VARCHAR(3) NOT NULL DEFAULT 'INR',
-    status order_status NOT NULL DEFAULT 'PENDING_PAYMENT',
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING_PAYMENT',
+    payment_status VARCHAR(32) NOT NULL DEFAULT 'NOT_INITIATED',
+    idempotency_key VARCHAR(128),
+    payment_window_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_order_ownership CHECK (
+        (customer_id IS NOT NULL AND guest_token_hash IS NULL) OR
+        (customer_id IS NULL AND guest_token_hash IS NOT NULL)
+    ),
+    CONSTRAINT chk_order_tax_reconciliation CHECK (
+        cgst_paise + sgst_paise + igst_paise = total_tax_paise
+    ),
+    CONSTRAINT chk_order_payable_reconciliation CHECK (
+        subtotal_paise - discount_total_paise + delivery_fee_paise + total_tax_paise = total_payable_paise
+    )
 );
 
 CREATE TABLE order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     listing_id UUID NOT NULL REFERENCES product_listings(id) ON DELETE RESTRICT,
+    variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE RESTRICT,
     retailer_id UUID NOT NULL REFERENCES retailers(id) ON DELETE RESTRICT,
     product_title VARCHAR(255) NOT NULL,
-    variant_name VARCHAR(255) NOT NULL,
-    seller_name VARCHAR(255) NOT NULL,
-    hsn_code VARCHAR(16) NOT NULL,
-    unit_base_price_paise BIGINT NOT NULL,
-    unit_selling_price_paise BIGINT NOT NULL,
+    variant_title VARCHAR(255),
+    sku VARCHAR(100),
+    hsn_code VARCHAR(20),
+    gst_rate_basis_points INTEGER NOT NULL CHECK (gst_rate_basis_points >= 0),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
-    total_price_paise BIGINT NOT NULL CHECK (total_price_paise >= 0),
-    cgst_paise BIGINT NOT NULL DEFAULT 0,
-    sgst_paise BIGINT NOT NULL DEFAULT 0,
-    igst_paise BIGINT NOT NULL DEFAULT 0,
-    total_tax_paise BIGINT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    unit_original_price_paise BIGINT NOT NULL CHECK (unit_original_price_paise >= 0),
+    unit_selling_price_paise BIGINT NOT NULL CHECK (unit_selling_price_paise >= 0),
+    unit_discount_paise BIGINT NOT NULL DEFAULT 0 CHECK (unit_discount_paise >= 0),
+    unit_discounted_price_paise BIGINT NOT NULL CHECK (unit_discounted_price_paise >= 0),
+    total_selling_price_paise BIGINT NOT NULL CHECK (total_selling_price_paise >= 0),
+    taxable_base_paise BIGINT NOT NULL DEFAULT 0 CHECK (taxable_base_paise >= 0),
+    cgst_paise BIGINT NOT NULL DEFAULT 0 CHECK (cgst_paise >= 0),
+    sgst_paise BIGINT NOT NULL DEFAULT 0 CHECK (sgst_paise >= 0),
+    igst_paise BIGINT NOT NULL DEFAULT 0 CHECK (igst_paise >= 0),
+    total_tax_paise BIGINT NOT NULL DEFAULT 0 CHECK (total_tax_paise >= 0),
+    retailer_name VARCHAR(255) NOT NULL,
+    retailer_state VARCHAR(100) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_order_item_tax_reconciliation CHECK (
+        cgst_paise + sgst_paise + igst_paise = total_tax_paise
+    ),
+    CONSTRAINT chk_order_item_base_reconciliation CHECK (
+        taxable_base_paise + total_tax_paise = total_selling_price_paise
+    ),
+    CONSTRAINT uq_order_item_listing UNIQUE (order_id, listing_id)
 );
 
 CREATE TABLE order_status_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    from_status order_status,
-    to_status order_status NOT NULL,
+    from_status VARCHAR(32),
+    to_status VARCHAR(32) NOT NULL,
     reason VARCHAR(255),
+    metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Requirement 7: Scoped Idempotency Table
-CREATE TABLE idempotency_records (
-    key VARCHAR(128) NOT NULL,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    request_hash VARCHAR(64) NOT NULL,
-    status_code INTEGER,
-    response_body JSONB,
+CREATE TABLE outbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    aggregate_type VARCHAR(64) NOT NULL,
+    aggregate_id UUID NOT NULL,
+    event_type VARCHAR(128) NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    payload JSONB NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    published_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
-    PRIMARY KEY (user_id, key)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE idempotency_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope VARCHAR(64) NOT NULL,
+    customer_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    guest_token_hash VARCHAR(64),
+    idempotency_key VARCHAR(128) NOT NULL,
+    request_hash VARCHAR(64) NOT NULL,
+    order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+    response_payload JSONB,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
 

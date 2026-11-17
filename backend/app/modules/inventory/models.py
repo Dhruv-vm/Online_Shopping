@@ -20,6 +20,7 @@ from app.core.database import Base
 
 class ReservationStatus(enum.StrEnum):
     ACTIVE = "ACTIVE"
+    ALLOCATED_TO_ORDER = "ALLOCATED_TO_ORDER"
     CONFIRMED = "CONFIRMED"
     RELEASED = "RELEASED"
     EXPIRED = "EXPIRED"
@@ -44,6 +45,12 @@ class InventoryReservation(Base):
         Uuid(as_uuid=True),
         ForeignKey("checkout_quotes.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     status: Mapped[str] = mapped_column(
@@ -87,7 +94,7 @@ class InventoryReservation(Base):
             name="chk_reservation_ownership",
         ),
         CheckConstraint(
-            "status IN ('ACTIVE', 'CONFIRMED', 'RELEASED', 'EXPIRED')",
+            "status IN ('ACTIVE', 'ALLOCATED_TO_ORDER', 'CONFIRMED', 'RELEASED', 'EXPIRED')",
             name="chk_reservation_status",
         ),
         Index("ix_reservations_status_expires", "status", "expires_at"),
