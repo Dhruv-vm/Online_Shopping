@@ -662,3 +662,56 @@ Copy this section for every new request.
    - `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
 
 **Status:** ALL RELEASE BLOCKERS RESOLVED — Ready for developer review and merge approval.
+
+---
+
+### [2026-11-17 23:15 IST] — Senior Backend Architect & Full-Stack Engineer — Phase 2E Implementation Complete
+
+**Related branch / PR / task:** `feature/phase2-orders-outbox` — Phase 2E: Orders, Checkout Orchestration & Transactional Outbox
+**Affected module(s):**
+- `backend/alembic/versions/0007_orders_outbox_schema_create_orders_and_outbox.py`
+- `backend/app/modules/orders/models.py`
+- `backend/app/modules/orders/schemas.py`
+- `backend/app/modules/orders/repository.py`
+- `backend/app/modules/orders/service.py`
+- `backend/app/modules/orders/router.py`
+- `backend/app/modules/inventory/models.py`
+- `backend/app/modules/inventory/service.py`
+- `backend/app/api/v1/router.py`
+- `backend/tests/test_orders.py`
+- `frontend/types/index.ts`
+- `frontend/lib/api/orders.ts`
+- `frontend/lib/api/orders.test.ts`
+- `frontend/lib/api/client.ts`
+- `frontend/package.json`
+
+**Key Decisions & Architectural Safeguards Implemented:**
+1. **Unpaid Order & Inventory Compensation Lifecycle:**
+   - Decoupled order placement (`PENDING_PAYMENT`, `NOT_INITIATED`) from financial fulfillment (`CONFIRMED`).
+   - Transitioned reservation status to `ALLOCATED_TO_ORDER` and populated `order_id` within the atomic transaction.
+   - `get_expired_active_reservations` strictly filters by `ReservationStatus.ACTIVE`, preventing premature release of order-linked inventory holds during the 15-minute checkout payment window.
+   - Preserved Phase 2E/2F boundary: zero Razorpay API calls, payment capture, or webhooks.
+2. **Canonical Request Fingerprinting & Idempotency:**
+   - Canonical SHA-256 fingerprinting covers quote ID, reservation ID, recipient snapshot, and caller identity.
+   - Dual-layer idempotency defense: pre-lock check and post-lock re-check before evaluating quote consumption.
+   - Concurrent identical idempotency requests serialize safely over row locks and return the winning order (HTTP 201).
+   - Reusing idempotency keys with altered payloads triggers `409 IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD`.
+3. **Circular Foreign Key Transaction Ordering:**
+   - Order primary key is generated and flushed before assigning `res.order_id` and updating reservation status.
+   - Prevents foreign key constraint violations while maintaining referential integrity across `orders` and `inventory_reservations`.
+4. **Selective Cart Reconciliation:**
+   - Selectively removes or decrements only items included in the ordered quote. Any unquoted listings added concurrently remain safe in the customer's cart.
+5. **Zero-PII Transactional Outbox (`outbox_events`):**
+   - Outbox payload includes only non-PII financial totals, item lines, HSN/GST rates, and aggregate UUIDs. Customer personal identity, address lines, phone numbers, and tokens are omitted.
+6. **Strict Anti-IDOR Tenant Isolation:**
+   - Orders are scoped strictly by `customer_id` or `guest_token_hash`. Cross-tenant or unauthorized retrieval requests are rejected with `404 ORDER_NOT_FOUND`.
+7. **Verification & Quality Gate Results:**
+   - Backend Pytest Suite: **136/136 tests passing** (25 comprehensive order tests) in 15.18s.
+   - Backend Ruff: **0 lint errors**, all 70 files cleanly formatted.
+   - Alembic Migrations: Clean single head (`0007_orders_outbox_schema (head)`), downgrade and upgrade verified.
+   - Frontend Test Suite: **53/53 tests passing** (including 5 new order client tests) in Node test runner.
+   - Frontend TypeScript: `tsc --noEmit` clean (0 errors).
+   - Frontend Production Build: `next build` succeeded with clean static/dynamic route generation.
+   - `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
+
+**Status:** IMPLEMENTATION COMPLETE & VERIFIED — Ready for developer review.

@@ -267,6 +267,91 @@ class ReservationService:
             ) from None
         return reservation
 
+    async def allocate_reservation_to_order(
+        self,
+        reservation_id: uuid.UUID,
+        order_id: uuid.UUID,
+        customer_id: uuid.UUID | None = None,
+        guest_token_hash: str | None = None,
+        internal: bool = False,
+    ) -> InventoryReservation:
+        """Transitions ACTIVE reservation to ALLOCATED_TO_ORDER and links order_id."""
+        res = await self.repo.lock_reservation_for_update(reservation_id)
+        if not res:
+            raise AppException(
+                code="RESERVATION_NOT_FOUND",
+                message="Reservation was not found.",
+                status_code=404,
+            )
+
+        if not internal:
+            if customer_id:
+                if res.customer_id != customer_id:
+                    raise AppException(
+                        code="RESERVATION_NOT_FOUND",
+                        message="Reservation was not found.",
+                        status_code=404,
+                    )
+            elif guest_token_hash:
+                if (
+                    res.guest_token_hash != guest_token_hash
+                    or res.customer_id is not None
+                ):
+                    raise AppException(
+                        code="RESERVATION_NOT_FOUND",
+                        message="Reservation was not found.",
+                        status_code=404,
+                    )
+            else:
+                raise AppException(
+                    code="RESERVATION_NOT_FOUND",
+                    message="Reservation was not found.",
+                    status_code=404,
+                )
+
+        if res.status == ReservationStatus.CONFIRMED.value:
+            raise AppException(
+                code="RESERVATION_ALREADY_CONFIRMED",
+                message="Cannot allocate a confirmed reservation.",
+                status_code=409,
+            )
+
+        if res.status == ReservationStatus.EXPIRED.value:
+            raise AppException(
+                code="RESERVATION_EXPIRED",
+                message="Cannot allocate an expired reservation.",
+                status_code=409,
+            )
+
+        if res.status == ReservationStatus.RELEASED.value:
+            raise AppException(
+                code="RESERVATION_RELEASED",
+                message="Cannot allocate a released reservation.",
+                status_code=409,
+            )
+
+        # Check TTL
+        now = datetime.now(UTC)
+        exp = res.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=UTC)
+        if exp < now:
+            await self.release_reservation(
+                reservation_id=res.id,
+                reason="TTL_EXPIRED",
+                internal=True,
+            )
+            raise AppException(
+                code="RESERVATION_EXPIRED",
+                message="Reservation has expired.",
+                status_code=409,
+            )
+
+        res.status = ReservationStatus.ALLOCATED_TO_ORDER.value
+        res.order_id = order_id
+        await self.session.flush()
+        return res
+
     async def get_reservation(
         self,
         reservation_id: uuid.UUID,

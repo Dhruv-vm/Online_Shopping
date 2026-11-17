@@ -391,7 +391,12 @@ export interface QuoteValidationResult {
 }
 
 // Phase 2D: Inventory Reservations & Concurrency Protection
-export type ReservationStatus = "ACTIVE" | "CONFIRMED" | "RELEASED" | "EXPIRED";
+export type ReservationStatus =
+  | "ACTIVE"
+  | "ALLOCATED_TO_ORDER"
+  | "CONFIRMED"
+  | "RELEASED"
+  | "EXPIRED";
 
 export interface ReservationItem {
   id: string;
@@ -425,4 +430,111 @@ export interface ReservationReleaseResponse {
   status: ReservationStatus;
   released_at?: string | null;
   release_reason?: string | null;
+}
+
+// Phase 2E: Orders, Checkout Orchestration & Transactional Outbox
+export type OrderStatus =
+  | "PENDING_PAYMENT"
+  | "CONFIRMED"
+  | "PROCESSING"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "CANCELLED";
+
+export type PaymentStatus =
+  | "NOT_INITIATED"
+  | "PENDING"
+  | "PAID"
+  | "FAILED"
+  | "REFUNDED";
+
+export interface DeliveryAddressSnapshot {
+  full_name: string;
+  address_line1: string;
+  address_line2?: string | null;
+  city: string;
+  state: string;
+  postal_code: string;
+  phone: string;
+}
+
+export interface OrderItem {
+  id: string;
+  listing_id: string;
+  variant_id: string;
+  retailer_id: string;
+  product_title: string;
+  variant_title?: string | null;
+  sku?: string | null;
+  hsn_code?: string | null;
+  gst_rate_basis_points: number;
+  quantity: number;
+  unit_original_price_paise: number;
+  unit_selling_price_paise: number;
+  unit_discount_paise: number;
+  unit_discounted_price_paise: number;
+  total_selling_price_paise: number;
+  taxable_base_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_tax_paise: number;
+  retailer_name: string;
+  retailer_state: string;
+  created_at: string;
+}
+
+export interface OrderStatusHistoryEntry {
+  id: string;
+  from_status?: string | null;
+  to_status: string;
+  reason?: string | null;
+  created_at: string;
+}
+
+export interface Order {
+  id: string;
+  order_number: string;
+  customer_id?: string | null;
+  is_guest: boolean;
+  quote_id: string;
+  reservation_id: string;
+  delivery_address: DeliveryAddressSnapshot;
+  subtotal_paise: number;
+  discount_total_paise: number;
+  delivery_fee_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_tax_paise: number;
+  total_payable_paise: number;
+  currency: string;
+  status: OrderStatus;
+  payment_status: PaymentStatus;
+  payment_window_expires_at?: string | null;
+  items: OrderItem[];
+  status_history?: OrderStatusHistoryEntry[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateOrderRequest {
+  quote_id: string;
+  reservation_id: string;
+  delivery_address_id?: string | null;
+  delivery_address?: {
+    full_name: string;
+    address_line1: string;
+    address_line2?: string | null;
+    city: string;
+    state: string;
+    postal_code: string;
+    phone: string;
+  } | null;
+  idempotency_key?: string | null;
+}
+
+export interface OrderListResponse {
+  orders: Order[];
+  total: number;
 }

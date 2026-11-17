@@ -82,10 +82,16 @@
   - [x] High-concurrency anti-oversell tests against live PostgreSQL: 5 concurrent requests for 1 available unit verified to yield exactly 1 success and 4 structured 409 errors with 0 oversell.
   - [x] Frontend reservation client and cart integration: stock hold countdown timer, manual release action, shortage error alerts, and seamless recovery.
   - [x] Quality Gates: 102/102 backend pytest tests passing, 47/47 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
-- [ ] **Phase 2E — Orders, Outbox & Checkout Orchestration:**
-  - [ ] Immutable order item snapshots and scoped idempotency.
-  - [ ] Decoupled checkout transaction boundaries.
-  - [ ] Transactional outbox table (`outbox_events`).
+- [x] **Phase 2E — Orders, Outbox & Checkout Orchestration:**
+  - [x] Immutable order item snapshots and scoped idempotency (`idempotency_records`).
+  - [x] Decoupled checkout transaction boundaries with unpaid order lifecycle (`PENDING_PAYMENT`, `NOT_INITIATED`) and reservation allocation (`ALLOCATED_TO_ORDER`).
+  - [x] Circular foreign key flush sequencing between `orders` and `inventory_reservations`.
+  - [x] Selective cart reconciliation preserving unquoted cart items.
+  - [x] Transactional outbox table (`outbox_events`) with zero-PII event payloads (`order.created`).
+  - [x] Scoped order retrieval (`GET /api/v1/orders`, `GET /api/v1/orders/{id}`) with strict anti-IDOR isolation for customers and guests.
+  - [x] Alembic migration `0007_orders_outbox_schema` with clean upgrade and downgrade.
+  - [x] Frontend order client (`@/lib/api/orders`), types (`@/types`), and test suite (`lib/api/orders.test.ts`).
+  - [x] Quality Gates: 136/136 backend pytest tests passing, 53/53 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
 - [ ] **Phase 2F — Razorpay Payments, Webhooks & Recovery:**
   - [ ] Decoupled Razorpay order creation.
   - [ ] Multi-factor server-side payment verification and raw-body webhook HMAC check.

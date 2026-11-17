@@ -236,3 +236,113 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
 - **Constraints & Indexes**:
   - `chk_reservation_item_quantity_positive`: `quantity > 0`
   - `uq_reservation_listing`: UNIQUE on `(reservation_id, listing_id)`
+
+## 11. Phase 2E Orders, Outbox & Idempotency Schema Specification (Implemented)
+
+### `orders` Table (`0007_orders_outbox_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `order_number`: VARCHAR(64) (UNIQUE, indexed, format: `BSK-YYYYMMDD-XXXXXX`)
+- `customer_id`: UUID (FK `users.id` ON DELETE SET NULL, nullable, indexed)
+- `guest_token_hash`: VARCHAR(64) (Nullable, SHA-256 hash of guest session, indexed)
+- `quote_id`: UUID (FK `checkout_quotes.id` ON DELETE RESTRICT, nullable=False, UNIQUE, indexed)
+- `reservation_id`: UUID (FK `inventory_reservations.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `delivery_address_snapshot`: JSONB (Immutable snapshot of recipient name, address lines, city, state, postal code, phone)
+- `subtotal_paise`: BIGINT (Check: `>= 0`)
+- `discount_total_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `delivery_fee_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `cgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `sgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `igst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_tax_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_payable_paise`: BIGINT (Check: `>= 0`)
+- `currency`: VARCHAR(3) (Default `'INR'`)
+- `status`: VARCHAR(32) (Default `'PENDING_PAYMENT'`, Check: `status IN ('PENDING_PAYMENT', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED')`, indexed)
+- `payment_status`: VARCHAR(32) (Default `'NOT_INITIATED'`, Check: `payment_status IN ('NOT_INITIATED', 'PENDING', 'PAID', 'FAILED', 'REFUNDED')`, indexed)
+- `idempotency_key`: VARCHAR(128) (Nullable, indexed)
+- `payment_window_expires_at`: TIMESTAMPTZ (Nullable, indexed, default 15 minutes hold)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_order_ownership`: `(customer_id IS NOT NULL AND guest_token_hash IS NULL) OR (customer_id IS NULL AND guest_token_hash IS NOT NULL)`
+  - `chk_order_tax_reconciliation`: `cgst_paise + sgst_paise + igst_paise = total_tax_paise`
+  - `chk_order_payable_reconciliation`: `subtotal_paise - discount_total_paise + delivery_fee_paise + total_tax_paise = total_payable_paise`
+  - `uq_orders_quote_id`: UNIQUE on `(quote_id)`
+  - Index `ix_orders_customer_created`: `(customer_id, created_at DESC)`
+  - Index `ix_orders_guest_created`: `(guest_token_hash, created_at DESC)`
+  - Index `ix_orders_status_payment_window`: `(status, payment_window_expires_at)`
+
+### `order_items` Table (`0007_orders_outbox_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `order_id`: UUID (FK `orders.id` ON DELETE CASCADE, nullable=False, indexed)
+- `listing_id`: UUID (FK `product_listings.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `variant_id`: UUID (FK `product_variants.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `retailer_id`: UUID (FK `retailers.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `product_title`: VARCHAR(255) (Immutable snapshot)
+- `variant_title`: VARCHAR(255) (Nullable, immutable snapshot)
+- `sku`: VARCHAR(100) (Nullable, immutable snapshot)
+- `hsn_code`: VARCHAR(20) (Nullable, immutable snapshot)
+- `gst_rate_basis_points`: INTEGER (Check: `>= 0`)
+- `quantity`: INTEGER (Check: `quantity > 0`)
+- `unit_original_price_paise`: BIGINT (Check: `>= 0`)
+- `unit_selling_price_paise`: BIGINT (Check: `>= 0`)
+- `unit_discount_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `unit_discounted_price_paise`: BIGINT (Check: `>= 0`)
+- `total_selling_price_paise`: BIGINT (Check: `>= 0`)
+- `taxable_base_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `cgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `sgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `igst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_tax_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `retailer_name`: VARCHAR(255) (Immutable snapshot)
+- `retailer_state`: VARCHAR(100) (Immutable snapshot)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_order_item_tax_reconciliation`: `cgst_paise + sgst_paise + igst_paise = total_tax_paise`
+  - `chk_order_item_base_reconciliation`: `taxable_base_paise + total_tax_paise = total_selling_price_paise`
+  - `uq_order_item_listing`: UNIQUE on `(order_id, listing_id)`
+
+### `order_status_history` Table (`0007_orders_outbox_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `order_id`: UUID (FK `orders.id` ON DELETE CASCADE, nullable=False, indexed)
+- `from_status`: VARCHAR(32) (Nullable)
+- `to_status`: VARCHAR(32) (Nullable=False)
+- `reason`: VARCHAR(255) (Nullable)
+- `metadata`: JSONB (Default `{}`)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+
+### `outbox_events` Table (`0007_orders_outbox_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `aggregate_type`: VARCHAR(64) (Nullable=False, indexed, e.g. `'order'`)
+- `aggregate_id`: UUID (Nullable=False, indexed)
+- `event_type`: VARCHAR(128) (Nullable=False, indexed, e.g. `'order.created'`)
+- `schema_version`: INTEGER (Default `1`)
+- `payload`: JSONB (Zero-PII event payload, containing financial breakdown, item summary, and non-PII IDs)
+- `status`: VARCHAR(32) (Default `'PENDING'`, Check: `status IN ('PENDING', 'PUBLISHED', 'FAILED')`, indexed)
+- `retry_count`: INTEGER (Default `0`, Check: `>= 0`)
+- `last_error`: TEXT (Nullable)
+- `published_at`: TIMESTAMPTZ (Nullable)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Indexes**:
+  - `ix_outbox_status_created`: `(status, created_at)`
+
+### `idempotency_records` Table (`0007_orders_outbox_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `scope`: VARCHAR(64) (Nullable=False, indexed, e.g. `'order_placement'`)
+- `customer_id`: UUID (FK `users.id` ON DELETE CASCADE, nullable, indexed)
+- `guest_token_hash`: VARCHAR(64) (Nullable, indexed)
+- `idempotency_key`: VARCHAR(128) (Nullable=False, indexed)
+- `request_hash`: VARCHAR(64) (Nullable=False, SHA-256 canonical hash of payload)
+- `order_id`: UUID (FK `orders.id` ON DELETE SET NULL, nullable, indexed)
+- `response_payload`: JSONB (Nullable)
+- `expires_at`: TIMESTAMPTZ (Nullable=False, indexed, 24-hour TTL)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - Partial unique index `uq_idempotency_customer`: `(scope, customer_id, idempotency_key)` WHERE `customer_id IS NOT NULL`
+  - Partial unique index `uq_idempotency_guest`: `(scope, guest_token_hash, idempotency_key)` WHERE `guest_token_hash IS NOT NULL`
+  - Index `ix_idempotency_expires`: `(expires_at)`
+
+### `inventory_reservations` Table Alterations (`0007_orders_outbox_schema`)
+- Added column `order_id`: UUID (FK `orders.id` ON DELETE SET NULL, nullable, indexed)
+- Updated status check constraint to include `'ALLOCATED_TO_ORDER'`:
+  `status IN ('ACTIVE', 'ALLOCATED_TO_ORDER', 'CONFIRMED', 'RELEASED', 'EXPIRED')`
