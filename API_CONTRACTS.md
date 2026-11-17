@@ -90,3 +90,118 @@ For every endpoint document:
 5. Implement on a feature branch.
 6. Add tests and update examples.
 7. Include the contract change in the PR description.
+
+## 7. Universal Shopping Cart Contracts (Phase 2B Implemented)
+
+### `GET /api/v1/cart`
+- **Auth**: Optional (Authenticated via session/bearer token or Guest via `basket_guest_cart` cookie / `X-Guest-Cart-Token` header).
+- **Description**: Returns active cart with dynamically calculated prices, inventory availability, multi-retailer groupings, and warnings.
+- **Response**: `CartResponse` (`200 OK`)
+  ```json
+  {
+    "id": "uuid",
+    "status": "ACTIVE",
+    "currency": "INR",
+    "items": [
+      {
+        "id": "uuid",
+        "listing_id": "uuid",
+        "variant_id": "uuid",
+        "product_id": "uuid",
+        "product_name": "String",
+        "product_slug": "String",
+        "variant_name": "String",
+        "attributes": {},
+        "primary_image_url": "String",
+        "retailer_id": "uuid",
+        "retailer_name": "String",
+        "retailer_rating": 4.8,
+        "unit_price_paise": 199900,
+        "quantity": 2,
+        "subtotal_paise": 399800,
+        "available_stock": 10,
+        "is_available": true,
+        "validation_message": null,
+        "created_at": "ISO-8601",
+        "updated_at": "ISO-8601"
+      }
+    ],
+    "item_count": 1,
+    "total_quantity": 2,
+    "subtotal_paise": 399800,
+    "retailers": [
+      {
+        "retailer_id": "uuid",
+        "retailer_name": "String",
+        "item_count": 1,
+        "subtotal_paise": 399800
+      }
+    ],
+    "warnings": [],
+    "created_at": "ISO-8601",
+    "updated_at": "ISO-8601"
+  }
+  ```
+
+### `POST /api/v1/cart/items`
+- **Auth**: Optional (Guest or Customer).
+- **CSRF**: Enforced if authenticated via cookie.
+- **Request Body**:
+  ```json
+  {
+    "listing_id": "uuid",
+    "quantity": 1
+  }
+  ```
+- **Validation**:
+  - `quantity`: 1 to 10 inclusive.
+  - Cumulative item quantity in cart cannot exceed 10 (`MAX_QUANTITY_EXCEEDED`).
+  - Requested quantity cannot exceed available stock (`INSUFFICIENT_STOCK`).
+  - Listing, variant, product, and retailer must all be active (`ITEM_UNAVAILABLE`).
+- **Response**: `CartResponse` (`200 OK`)
+
+### `PATCH /api/v1/cart/items/{item_id}`
+- **Auth**: Optional (Guest or Customer).
+- **CSRF**: Enforced if authenticated via cookie.
+- **Request Body**:
+  ```json
+  {
+    "quantity": 3
+  }
+  ```
+- **Validation**:
+  - `quantity`: 1 to 10 inclusive.
+  - Cannot exceed available inventory.
+  - Item must belong to the active cart.
+- **Response**: `CartResponse` (`200 OK`)
+
+### `DELETE /api/v1/cart/items/{item_id}`
+- **Auth**: Optional (Guest or Customer).
+- **CSRF**: Enforced if authenticated via cookie.
+- **Response**: `CartResponse` (`200 OK`)
+
+### `DELETE /api/v1/cart`
+- **Auth**: Optional (Guest or Customer).
+- **CSRF**: Enforced if authenticated via cookie.
+- **Description**: Clears all items in the active cart.
+- **Response**: `CartResponse` (`200 OK`)
+
+### `POST /api/v1/cart/merge`
+- **Auth**: Required (`current_user`).
+- **CSRF**: Enforced if cookie-authenticated.
+- **Request Body**:
+  ```json
+  {
+    "guest_token": "optional-string"
+  }
+  ```
+  *(If omitted in body, resolves from `basket_guest_cart` cookie or `X-Guest-Cart-Token` header)*.
+- **Description**: Atomically merges guest cart into customer cart with pessimistic locking. Duplicates combine quantities capped at `min(10, available_stock)`. Marks guest cart `MERGED` and clears `basket_guest_cart` cookie.
+- **Response**: `CartMergeResponse` (`200 OK`)
+  ```json
+  {
+    "cart": { ... },
+    "migrated_items_count": 2,
+    "warnings": []
+  }
+  ```

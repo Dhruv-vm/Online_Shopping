@@ -225,3 +225,67 @@ export interface AddressUpdatePayload {
   landmark?: string | null;
   is_default?: boolean;
 }
+
+// Cart types
+export interface CartItem {
+  id: string;
+  listing_id: string;
+  variant_id: string;
+  product_id: string;
+  product_name: string;
+  product_slug: string;
+  variant_name?: string | null;
+  attributes: Record<string, unknown>;
+  primary_image_url?: string | null;
+  retailer_id: string;
+  retailer_name: string;
+  retailer_rating?: number | null;
+  unit_price_paise: number;
+  quantity: number;
+  subtotal_paise: number;
+  available_stock: number;
+  is_available: boolean;
+  validation_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CartRetailerSummary {
+  retailer_id: string;
+  retailer_name: string;
+  item_count: number;
+  subtotal_paise: number;
+}
+
+export interface Cart {
+  id: string;
+  status: string;
+  currency: string;
+  items: CartItem[];
+  item_count: number;
+  total_quantity: number;
+  subtotal_paise: number;
+  retailers: CartRetailerSummary[];
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CartItemAddPayload {
+  listing_id: string;
+  quantity?: number;
+}
+
+export interface CartItemUpdatePayload {
+  quantity: number;
+}
+
+export interface CartMergePayload {
+  guest_token?: string;
+}
+
+export interface CartMergeResponse {
+  cart: Cart;
+  migrated_items_count: number;
+  warnings: string[];
+}

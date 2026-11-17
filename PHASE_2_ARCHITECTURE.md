@@ -205,6 +205,9 @@ When an unauthenticated guest logs in:
    - Deletes the guest `carts` row (cascading any orphaned rows).
 3. The response instructs the client to clear the `basket_cart_session` cookie.
 
+### 4.3 Inventory Availability vs. Reservation Boundary
+Cart operations in Domain 2B only perform read-only inspection of live stock availability (`max(0, on_hand_quantity - reserved_quantity)`). Cart items do not reserve inventory or mutate `store_inventory.reserved_quantity`. Formal multi-item inventory reservations, deterministic lock ordering by `listing_id`, and overselling protection are strictly scoped to Domain 2D (Inventory Reservations & Concurrency Locks).
+
 ---
 
 ## 5. Domain 2C: Configurable Indian GST & Persistent Quotes

@@ -5,6 +5,9 @@ import type {
   ApiErrorEnvelope,
   ApiInfoResponse,
   AuthResponse,
+  Cart,
+  CartItem,
+  CartMergeResponse,
   Category,
   HealthResponse,
   MessageResponse,
@@ -301,6 +304,41 @@ class ApiClient {
 
   public async deleteAddress(id: string): Promise<MessageResponse> {
     return this.delete<MessageResponse>(`/api/v1/addresses/${encodeURIComponent(id)}`);
+  }
+
+  // ================= Cart Management =================
+  public async getCart(): Promise<Cart> {
+    return this.get<Cart>("/api/v1/cart");
+  }
+
+  public async addToCart(listingId: string, quantity = 1): Promise<Cart> {
+    return this.post<Cart>("/api/v1/cart/items", {
+      listing_id: listingId,
+      quantity,
+    });
+  }
+
+  public async updateCartItemQuantity(
+    itemId: string,
+    quantity: number
+  ): Promise<Cart> {
+    return this.patch<Cart>(`/api/v1/cart/items/${encodeURIComponent(itemId)}`, {
+      quantity,
+    });
+  }
+
+  public async removeCartItem(itemId: string): Promise<Cart> {
+    return this.delete<Cart>(`/api/v1/cart/items/${encodeURIComponent(itemId)}`);
+  }
+
+  public async clearCart(): Promise<Cart> {
+    return this.delete<Cart>("/api/v1/cart");
+  }
+
+  public async mergeCart(guestToken?: string): Promise<CartMergeResponse> {
+    return this.post<CartMergeResponse>("/api/v1/cart/merge", {
+      guest_token: guestToken,
+    });
   }
 }
 

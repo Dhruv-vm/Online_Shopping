@@ -13,15 +13,18 @@ import {
   User,
   LogOut,
   MapPin,
+  ShoppingCart,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useCart } from "@/lib/cart/cart-context";
 
 export function Header() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading, logout } = useAuth();
+  const { totalQuantity } = useCart();
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -100,6 +103,23 @@ export function Header() {
             Retailers
           </Link>
 
+          {/* Cart Icon Link (Desktop) */}
+          <Link
+            href="/cart"
+            className="relative flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+            aria-label="Shopping Cart"
+          >
+            <div className="relative">
+              <ShoppingCart className="h-5 w-5" />
+              {totalQuantity > 0 && (
+                <span className="absolute -top-2 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                  {totalQuantity > 99 ? "99+" : totalQuantity}
+                </span>
+              )}
+            </div>
+            <span>Cart</span>
+          </Link>
+
           {/* Desktop User Authentication Controls */}
           {!isLoading && (
             <div className="flex items-center gap-2.5 pl-2 border-l border-muted">
@@ -148,8 +168,17 @@ export function Header() {
           )}
         </nav>
 
-        {/* Mobile menu trigger */}
-        <div className="flex items-center lg:hidden gap-2">
+        {/* Mobile triggers */}
+        <div className="flex items-center lg:hidden gap-1.5">
+          <Link href="/cart" className="relative p-2 text-foreground" aria-label="Shopping Cart">
+            <ShoppingCart className="h-5 w-5" />
+            {totalQuantity > 0 && (
+              <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                {totalQuantity > 99 ? "99+" : totalQuantity}
+              </span>
+            )}
+          </Link>
+
           {isAuthenticated && (
             <Link href="/account" className="sm:hidden">
               <Button
@@ -189,6 +218,21 @@ export function Header() {
           </form>
 
           <nav className="flex flex-col space-y-1 text-sm font-medium pt-1">
+            <Link
+              href="/cart"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4 text-emerald-600" />
+                Shopping Cart
+              </div>
+              {totalQuantity > 0 && (
+                <Badge className="bg-emerald-600 text-white text-xs">
+                  {totalQuantity} {totalQuantity === 1 ? "item" : "items"}
+                </Badge>
+              )}
+            </Link>
             <Link
               href="/products"
               onClick={() => setMobileMenuOpen(false)}
