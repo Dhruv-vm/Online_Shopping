@@ -34,6 +34,8 @@ class Retailer(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     rating: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, index=True, nullable=False
     )
@@ -233,6 +235,14 @@ class ProductListing(Base):
     original_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     selling_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
+    hsn_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    gst_rate_basis_points: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tax_classification_source: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    is_tax_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, index=True, nullable=False
     )

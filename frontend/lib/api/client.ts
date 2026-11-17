@@ -18,6 +18,9 @@ import type {
   Retailer,
   TokenResponse,
   User,
+  Quote,
+  QuoteCreatePayload,
+  QuoteValidationResult,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -339,6 +342,33 @@ class ApiClient {
     return this.post<CartMergeResponse>("/api/v1/cart/merge", {
       guest_token: guestToken,
     });
+  }
+
+  // ================= Quotes & Pricing (Phase 2C) =================
+  public async createQuote(payload: QuoteCreatePayload = {}): Promise<Quote> {
+    return this.post<Quote>("/api/v1/quotes", payload);
+  }
+
+  public async getQuote(quoteId: string): Promise<Quote> {
+    return this.get<Quote>(`/api/v1/quotes/${encodeURIComponent(quoteId)}`);
+  }
+
+  public async validateQuote(quoteId: string): Promise<QuoteValidationResult> {
+    return this.post<QuoteValidationResult>(
+      `/api/v1/quotes/${encodeURIComponent(quoteId)}/validate`,
+      {}
+    );
+  }
+
+  public async refreshQuote(quoteId: string): Promise<Quote> {
+    return this.post<Quote>(
+      `/api/v1/quotes/${encodeURIComponent(quoteId)}/refresh`,
+      {}
+    );
+  }
+
+  public async listQuotes(): Promise<Quote[]> {
+    return this.get<Quote[]>("/api/v1/quotes");
   }
 }
 

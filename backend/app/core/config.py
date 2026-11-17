@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     DATABASE_MAX_OVERFLOW: int = 5
     DATABASE_SSL_MODE: str = "require"
 
+    # Commerce Delivery Policy (Configurable in Phase 2C)
+    # NOTE: ₹49.00 standard fee and ₹499.00 free delivery threshold are provisional baseline
+    # defaults for development and demonstration, NOT approved universal platform business policies.
+    # Production systems should configure these via environment variables or per-retailer contracts.
+    DEFAULT_DELIVERY_FEE_PAISE: int = 4900  # ₹49.00 (Provisional baseline)
+    DEFAULT_FREE_DELIVERY_THRESHOLD_PAISE: int = 49900  # ₹499.00 (Provisional baseline)
+
     # Kafka (Aiven Kafka)
     KAFKA_BOOTSTRAP_SERVERS: str | None = None
     KAFKA_SECURITY_PROTOCOL: str = "SSL"

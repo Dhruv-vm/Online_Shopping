@@ -289,3 +289,103 @@ export interface CartMergeResponse {
   migrated_items_count: number;
   warnings: string[];
 }
+
+// Pricing & Quote Types (Phase 2C)
+export type QuoteStatus = 'ACTIVE' | 'CONSUMED' | 'EXPIRED' | 'SUPERSEDED';
+
+export interface TaxBreakdown {
+  hsn_code: string;
+  gst_rate_basis_points: number;
+  gst_rate_percentage: number;
+  taxable_base_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_tax_paise: number;
+  is_intra_state: boolean;
+}
+
+export interface RetailerPricingBreakdown {
+  retailer_id: string;
+  retailer_name: string;
+  retailer_state: string;
+  subtotal_paise: number;
+  delivery_fee_paise: number;
+  free_delivery_threshold_paise: number;
+  qualifies_for_free_delivery: boolean;
+  amount_needed_for_free_delivery_paise: number;
+}
+
+export interface QuoteItem {
+  id: string;
+  listing_id: string;
+  variant_id: string;
+  retailer_id: string;
+  product_title: string;
+  variant_title: string;
+  sku?: string | null;
+  hsn_code: string;
+  gst_rate_basis_points: number;
+  quantity: number;
+  unit_original_price_paise: number;
+  unit_selling_price_paise: number;
+  unit_discount_paise: number;
+  unit_discounted_price_paise: number;
+  total_selling_price_paise: number;
+  taxable_base_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_tax_paise: number;
+  retailer_name: string;
+  retailer_state: string;
+  created_at: string;
+}
+
+export interface Quote {
+  id: string;
+  customer_id?: string | null;
+  cart_id?: string | null;
+  delivery_address_id?: string | null;
+  delivery_state?: string | null;
+  subtotal_paise: number;
+  discount_total_paise: number;
+  delivery_fee_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_tax_paise: number;
+  total_payable_paise: number;
+  currency: string;
+  status: QuoteStatus;
+  is_consumed: boolean;
+  consumed_at?: string | null;
+  expires_at: string;
+  superseded_by_quote_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  items: QuoteItem[];
+  retailer_breakdowns: RetailerPricingBreakdown[];
+}
+
+export interface QuoteCreatePayload {
+  delivery_address_id?: string | null;
+  delivery_state?: string | null;
+}
+
+export interface QuoteValidationIssue {
+  code: string;
+  message: string;
+  listing_id?: string | null;
+  previous_value?: unknown;
+  current_value?: unknown;
+}
+
+export interface QuoteValidationResult {
+  valid: boolean;
+  reason?: string | null;
+  message: string;
+  can_refresh: boolean;
+  issues: QuoteValidationIssue[];
+  quote: Quote;
+}

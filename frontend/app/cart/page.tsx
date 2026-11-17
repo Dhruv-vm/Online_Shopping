@@ -1,26 +1,36 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Info,
   Loader2,
   Minus,
   Plus,
+  Receipt,
+  RefreshCw,
+  ShieldCheck,
   ShoppingBasket,
   Store,
   Trash2,
+  Truck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCart } from "@/lib/cart/cart-context";
+import { createQuote, refreshQuote } from "@/lib/api/quotes";
 import { formatPrice } from "@/lib/utils";
-import type { CartItem } from "@/types";
+import type {
+  CartItem,
+  Quote,
+  QuoteValidationIssue,
+} from "@/types";
 
 export default function CartPage() {
   const {
@@ -40,6 +50,98 @@ export default function CartPage() {
 
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+
+  // Quote State (Phase 2C - Server-Authoritative Pricing & Persistent Quotes)
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [isQuoteLoading, setIsQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [validationIssues, setValidationIssues] = useState<QuoteValidationIssue[]>([]);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [isRefreshingQuote, setIsRefreshingQuote] = useState(false);
+
+  // Fetch or generate persistent pricing quote when cart items change
+  useEffect(() => {
+    if (!items || items.length === 0) {
+      setQuote(null);
+      setValidationIssues([]);
+      return;
+    }
+
+    let isMounted = true;
+    const loadQuote = async () => {
+      setIsQuoteLoading(true);
+      setQuoteError(null);
+      try {
+        const newQuote = await createQuote();
+        if (isMounted) {
+          setQuote(newQuote);
+          setValidationIssues([]);
+        }
+      } catch (err: unknown) {
+        if (isMounted) {
+          setQuoteError(
+            err instanceof Error ? err.message : "Failed to calculate guaranteed quote"
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsQuoteLoading(false);
+        }
+      }
+    };
+
+    loadQuote();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [items]);
+
+  // TTL Countdown Timer for the active quote (15-minute guarantee)
+  useEffect(() => {
+    if (!quote || quote.status !== "ACTIVE" || !quote.expires_at) {
+      setTimeRemaining(null);
+      return;
+    }
+
+    const updateTimer = () => {
+      const expires = new Date(quote.expires_at).getTime();
+      const now = Date.now();
+      const diffSec = Math.max(0, Math.floor((expires - now) / 1000));
+      setTimeRemaining(diffSec);
+
+      if (diffSec === 0) {
+        setValidationIssues([
+          {
+            code: "QUOTE_EXPIRED",
+            message:
+              "Your 15-minute price guarantee has expired. Please refresh to lock in current live prices and GST rates.",
+          },
+        ]);
+      }
+    };
+
+    updateTimer();
+    const timerInterval = setInterval(updateTimer, 1000);
+    return () => clearInterval(timerInterval);
+  }, [quote]);
+
+  const handleRefreshQuote = async () => {
+    if (!quote) return;
+    setIsRefreshingQuote(true);
+    setQuoteError(null);
+    try {
+      const refreshed = await refreshQuote(quote.id);
+      setQuote(refreshed);
+      setValidationIssues([]);
+    } catch (err: unknown) {
+      setQuoteError(
+        err instanceof Error ? err.message : "Failed to refresh pricing quote"
+      );
+    } finally {
+      setIsRefreshingQuote(false);
+    }
+  };
 
   const handleQuantityChange = async (itemId: string, newQty: number) => {
     if (newQty < 1 || newQty > 10) return;
@@ -74,6 +176,12 @@ export default function CartPage() {
     } finally {
       setClearing(false);
     }
+  };
+
+  const formatCountdown = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
   };
 
   if (isLoading) {
@@ -123,6 +231,13 @@ export default function CartPage() {
     return acc;
   }, {});
 
+  // Check if quote is currently stale or expired
+  const isQuoteStale =
+    validationIssues.length > 0 ||
+    (timeRemaining !== null && timeRemaining <= 0) ||
+    quote?.status === "SUPERSEDED" ||
+    quote?.status === "EXPIRED";
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl space-y-6">
       {/* Breadcrumb & Header */}
@@ -165,6 +280,45 @@ export default function CartPage() {
         </div>
       </div>
 
+      {/* Repricing & Quote Expiry Warning Banner (Phase 2C Acceptance) */}
+      {isQuoteStale && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-amber-900 dark:text-amber-200">
+              <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-amber-950 dark:text-amber-100">
+                  Pricing Quote Update Required
+                </p>
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  {validationIssues.length > 0
+                    ? validationIssues.map((i) => i.message).join(". ")
+                    : "Your 15-minute price guarantee has expired. Retailer catalogue prices and GST calculations must be refreshed before checkout."}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={handleRefreshQuote}
+              disabled={isRefreshingQuote}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shrink-0 h-9"
+            >
+              {isRefreshingQuote ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Accept & Refresh Quote
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Cart Warnings / Alerts */}
       {warnings && warnings.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-2 text-xs text-amber-900 dark:text-amber-200">
@@ -180,10 +334,10 @@ export default function CartPage() {
         </div>
       )}
 
-      {error && (
+      {(error || quoteError) && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
           <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>{error}</span>
+          <span>{error || quoteError}</span>
         </div>
       )}
 
@@ -209,6 +363,10 @@ export default function CartPage() {
               <CardContent className="p-0 divide-y">
                 {retailerItems.map((item) => {
                   const isBusy = isMutating && activeItemId === item.id;
+                  const quoteItem = quote?.items.find(
+                    (qi) => qi.listing_id === item.listing_id
+                  );
+
                   return (
                     <div
                       key={item.id}
@@ -262,6 +420,30 @@ export default function CartPage() {
                               </div>
                             )}
 
+                          {/* Phase 2C GST & Taxable Snapshot Breakdown per Item */}
+                          {quoteItem && (
+                            <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
+                              <span className="bg-muted/70 px-1.5 py-0.5 rounded font-mono font-medium text-foreground">
+                                HSN: {quoteItem.hsn_code}
+                              </span>
+                              <span className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded font-medium">
+                                {quoteItem.gst_rate_basis_points / 100}% GST
+                              </span>
+                              <span>
+                                Taxable:{" "}
+                                <strong className="text-foreground">
+                                  {formatPrice(quoteItem.taxable_base_paise)}
+                                </strong>
+                              </span>
+                              <span>
+                                Tax:{" "}
+                                <strong className="text-foreground">
+                                  {formatPrice(quoteItem.total_tax_paise)}
+                                </strong>
+                              </span>
+                            </div>
+                          )}
+
                           {/* Availability / Stock Notice */}
                           {!item.is_available && (
                             <div className="flex items-center gap-1 text-xs text-red-600 font-semibold pt-0.5">
@@ -282,10 +464,19 @@ export default function CartPage() {
                         {/* Unit & Subtotal Price */}
                         <div className="text-left sm:text-right">
                           <div className="text-base font-extrabold text-foreground">
-                            {formatPrice(item.subtotal_paise)}
+                            {formatPrice(
+                              quoteItem
+                                ? quoteItem.total_selling_price_paise
+                                : item.subtotal_paise
+                            )}
                           </div>
                           <div className="text-[11px] text-muted-foreground">
-                            {formatPrice(item.unit_price_paise)} each
+                            {formatPrice(
+                              quoteItem
+                                ? quoteItem.unit_selling_price_paise
+                                : item.unit_price_paise
+                            )}{" "}
+                            each (incl. GST)
                           </div>
                         </div>
 
@@ -348,13 +539,28 @@ export default function CartPage() {
           ))}
         </div>
 
-        {/* Right Column: Order Summary & Retailer Breakdown */}
+        {/* Right Column: Order Summary & Retailer Delivery Breakdown */}
         <div className="lg:col-span-4 space-y-4">
           <Card className="border shadow-xs">
             <CardHeader className="pb-3 border-b bg-muted/20">
-              <CardTitle className="text-base font-bold">
-                Order Summary
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <Receipt className="h-4 w-4 text-emerald-600" />
+                  Order Summary
+                </CardTitle>
+                {isQuoteLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                ) : timeRemaining !== null && timeRemaining > 0 && !isQuoteStale ? (
+                  <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    <Clock className="h-3 w-3" />
+                    Locked for {formatCountdown(timeRemaining)}
+                  </span>
+                ) : isQuoteStale ? (
+                  <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    Quote Stale
+                  </span>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="p-5 space-y-4">
               {/* Line item tallies */}
@@ -366,61 +572,138 @@ export default function CartPage() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Catalogue Subtotal</span>
+                  <span>Subtotal (MRP/Catalogue)</span>
                   <span className="font-semibold text-foreground">
-                    {formatPrice(subtotalPaise)}
+                    {formatPrice(quote ? quote.subtotal_paise : subtotalPaise)}
                   </span>
                 </div>
+
+                {quote && quote.discount_total_paise > 0 && (
+                  <div className="flex justify-between text-emerald-600 font-medium">
+                    <span>Active Promotional Discounts</span>
+                    <span>-{formatPrice(quote.discount_total_paise)}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between">
-                  <span>Delivery & Handling</span>
-                  <span className="text-emerald-700 dark:text-emerald-400 font-medium">
-                    Calculated at Checkout
+                  <span className="flex items-center gap-1">
+                    <Truck className="h-3 w-3" />
+                    Delivery Charges
                   </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Taxes (GST)</span>
-                  <span className="text-muted-foreground">
-                    Calculated at Checkout
+                  <span
+                    className={
+                      (quote ? quote.delivery_fee_paise : 0) === 0
+                        ? "text-emerald-700 dark:text-emerald-400 font-bold"
+                        : "font-semibold text-foreground"
+                    }
+                  >
+                    {quote
+                      ? quote.delivery_fee_paise === 0
+                        ? "FREE"
+                        : formatPrice(quote.delivery_fee_paise)
+                      : "Calculating..."}
                   </span>
                 </div>
               </div>
 
-              {/* Retailer Breakdown Summary */}
-              {cart && cart.retailers && cart.retailers.length > 0 && (
-                <div className="pt-3 border-t space-y-2">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                    Multi-Seller Subtotals
+              {/* Retailer Delivery Breakdown with Free Delivery Threshold Progress */}
+              {quote && quote.retailer_breakdowns && quote.retailer_breakdowns.length > 0 && (
+                <div className="pt-3 border-t space-y-2.5">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                    <span>Retailer Delivery Rules</span>
+                    <span className="text-[10px] text-muted-foreground font-normal">
+                      Free above ₹499/seller
+                    </span>
                   </div>
-                  <div className="space-y-1.5">
-                    {cart.retailers.map((ret) => (
+                  <div className="space-y-2">
+                    {quote.retailer_breakdowns.map((ret) => (
                       <div
                         key={ret.retailer_id}
-                        className="flex justify-between text-xs items-center bg-muted/40 p-2 rounded-lg"
+                        className="bg-muted/40 p-2.5 rounded-lg space-y-1.5 text-xs"
                       >
-                        <span className="truncate max-w-[160px] font-medium text-foreground">
-                          {ret.retailer_name}
-                        </span>
-                        <div className="text-right">
-                          <span className="font-semibold text-foreground">
-                            {formatPrice(ret.subtotal_paise)}
+                        <div className="flex justify-between items-baseline">
+                          <span className="font-semibold text-foreground truncate max-w-[170px]">
+                            {ret.retailer_name} ({ret.retailer_state})
                           </span>
-                          <span className="text-[10px] text-muted-foreground block">
-                            {ret.item_count} {ret.item_count === 1 ? "item" : "items"}
+                          <span className="font-bold text-foreground">
+                            {ret.qualifies_for_free_delivery ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                Free Delivery
+                              </span>
+                            ) : (
+                              formatPrice(ret.delivery_fee_paise)
+                            )}
                           </span>
                         </div>
+                        <div className="flex justify-between text-[11px] text-muted-foreground">
+                          <span>Seller Subtotal</span>
+                          <span>{formatPrice(ret.subtotal_paise)}</span>
+                        </div>
+                        {!ret.qualifies_for_free_delivery &&
+                          ret.amount_needed_for_free_delivery_paise > 0 && (
+                            <div className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">
+                              Add {formatPrice(ret.amount_needed_for_free_delivery_paise)} more from {ret.retailer_name} for FREE delivery
+                            </div>
+                          )}
                       </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Grand Subtotal */}
+              {/* GST Tax Breakdown Section (Deterministic Intra/Inter-state) */}
+              {quote && (
+                <div className="pt-3 border-t space-y-2 text-xs">
+                  <div className="flex justify-between items-center text-muted-foreground">
+                    <span className="font-semibold text-foreground">
+                      Included Indian GST
+                    </span>
+                    <span className="font-bold text-foreground">
+                      {formatPrice(quote.total_tax_paise)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1 bg-muted/30 p-2 rounded-lg text-center text-[10px] text-muted-foreground">
+                    <div>
+                      <div className="font-bold text-foreground">
+                        {formatPrice(quote.cgst_paise)}
+                      </div>
+                      <div>CGST</div>
+                    </div>
+                    <div>
+                      <div className="font-bold text-foreground">
+                        {formatPrice(quote.sgst_paise)}
+                      </div>
+                      <div>SGST</div>
+                    </div>
+                    <div>
+                      <div className="font-bold text-foreground">
+                        {formatPrice(quote.igst_paise)}
+                      </div>
+                      <div>IGST</div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    GST is calculated strictly at statutory HSN rates. CGST + SGST apply for intra-state delivery; IGST applies for inter-state delivery.
+                  </p>
+                </div>
+              )}
+
+              {/* Grand Total Payable */}
               <div className="pt-3 border-t flex justify-between items-baseline">
-                <span className="text-sm font-bold text-foreground">
-                  Estimated Total
-                </span>
+                <div>
+                  <span className="text-sm font-bold text-foreground block">
+                    Total Payable
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Inclusive of all taxes & delivery
+                  </span>
+                </div>
                 <span className="text-2xl font-extrabold text-foreground">
-                  {formatPrice(subtotalPaise)}
+                  {formatPrice(
+                    quote
+                      ? quote.total_payable_paise
+                      : subtotalPaise
+                  )}
                 </span>
               </div>
 
@@ -428,21 +711,34 @@ export default function CartPage() {
               <div className="space-y-2 pt-2">
                 <Button
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-sm"
-                  disabled={items.some((i) => !i.is_available)}
+                  disabled={
+                    items.some((i) => !i.is_available) ||
+                    isQuoteStale ||
+                    isQuoteLoading ||
+                    isRefreshingQuote
+                  }
                   title={
                     items.some((i) => !i.is_available)
                       ? "Resolve unavailable items to proceed"
-                      : "Proceed to Checkout (Phase 2C)"
+                      : isQuoteStale
+                      ? "Refresh quote to proceed"
+                      : "Proceed to Checkout (Phase 2D/2E)"
                   }
                   onClick={() =>
                     alert(
-                      "Phase 2B Universal Cart is complete! Checkout state machine and payment integration will activate in Phase 2C."
+                      `Phase 2C Pricing & Guaranteed Quote ${quote?.id || ""} confirmed! Phase 2D (Inventory Reservations) and Phase 2E (Orders & Payment) will consume this quote.`
                     )
                   }
                 >
                   Proceed to Checkout
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
+
+                {isQuoteStale && (
+                  <p className="text-[11px] text-center text-amber-600 font-medium">
+                    Please refresh your quote before proceeding to checkout.
+                  </p>
+                )}
 
                 {items.some((i) => !i.is_available) && (
                   <p className="text-[11px] text-center text-red-600">
@@ -451,15 +747,19 @@ export default function CartPage() {
                 )}
               </div>
 
-              {/* Security & Authenticity guarantees */}
+              {/* Server-Authoritative Guarantees */}
               <div className="pt-3 border-t space-y-1 text-[11px] text-muted-foreground">
                 <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span>Server-authoritative live prices & stock</span>
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Server-authoritative pricing & immutable quote snapshot</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>Zero frontend-trusted price or tax calculations</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span>Single unified cart across all verified sellers</span>
+                  <span>Statutory Indian GST reconciliation guaranteed</span>
                 </div>
               </div>
             </CardContent>

@@ -129,3 +129,76 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
 - Live inventory availability is calculated dynamically as `max(0, on_hand_quantity - reserved_quantity)`.
 - If an item's listing is deactivated or inventory is insufficient, the item remains visible in the cart with `is_available: false` and informative validation banners, blocking checkout until resolved.
 - **Phase Boundary Clarification**: In Phase 2B, cart operations validate available quantity via read-only inspection of `store_inventory`. Cart additions and updates do not reserve inventory or mutate `store_inventory.reserved_quantity`. Multi-item inventory reservations with deterministic lock ordering (`listing_id`) and reservation TTL belong to Phase 2D (Inventory Reservations & Concurrency Protection).
+
+## 9. Phase 2C Pricing Engine, GST & Persistent Quotes Schema Specification (Implemented)
+
+### Catalogue Additions (`0005_pricing_quotes_schema`)
+- `retailers.state`: VARCHAR(100) (Default `'KA'`, nullable=False) — Retailer origin state used for intra-state vs inter-state GST determination.
+- `product_listings.hsn_code`: VARCHAR(16) (Default `'8518'`, nullable=False) — Statutory Indian Harmonized System of Nomenclature code.
+- `product_listings.gst_rate_basis_points`: INTEGER (Default `1800`, nullable=False) — Statutory GST rate in basis points (`1800 = 18.00%`).
+
+### `discounts` Table
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `listing_id`: UUID (FK `product_listings.id` ON DELETE CASCADE, indexed)
+- `discount_type`: VARCHAR(32) (`PERCENTAGE` or `FIXED_AMOUNT`, Check: `discount_type IN ('PERCENTAGE', 'FIXED_AMOUNT')`)
+- `discount_value`: INTEGER (Check: `discount_value > 0`) — Basis points for percentage (e.g. 1000 = 10%) or minor paise for fixed amount.
+- `max_discount_paise`: INTEGER (Nullable, Check: `max_discount_paise IS NULL OR max_discount_paise > 0`) — Optional cap for percentage discounts.
+- `valid_from`: TIMESTAMPTZ (Default `now()`)
+- `valid_until`: TIMESTAMPTZ (Nullable)
+- `is_active`: BOOLEAN (Default `True`)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+
+### `checkout_quotes` Table
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `customer_id`: UUID (FK `users.id` ON DELETE CASCADE, nullable)
+- `session_id`: VARCHAR(64) (Nullable, SHA-256 hash of guest token)
+- `cart_id`: UUID (FK `carts.id` ON DELETE SET NULL, nullable, indexed)
+- `delivery_address_id`: UUID (FK `addresses.id` ON DELETE SET NULL, nullable, indexed)
+- `delivery_state`: VARCHAR(100) (Nullable, e.g. `'KA'`)
+- `subtotal_paise`: BIGINT (Check: `>= 0`)
+- `discount_total_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `delivery_fee_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `cgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `sgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `igst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_tax_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_payable_paise`: BIGINT (Check: `>= 0`)
+- `currency`: VARCHAR(3) (Default `'INR'`)
+- `status`: VARCHAR(32) (Default `'ACTIVE'`, Check: `status IN ('ACTIVE', 'CONSUMED', 'EXPIRED', 'SUPERSEDED')`)
+- `is_consumed`: BOOLEAN (Default `False`)
+- `consumed_at`: TIMESTAMPTZ (Nullable)
+- `expires_at`: TIMESTAMPTZ (15-minute guarantee from creation)
+- `superseded_by_quote_id`: UUID (FK `checkout_quotes.id` ON DELETE SET NULL, nullable)
+- `created_at`: TIMESTAMPTZ (Default `now()`)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_quote_ownership`: `(customer_id IS NOT NULL AND session_id IS NULL) OR (customer_id IS NULL AND session_id IS NOT NULL)`
+  - Partial index `ix_quotes_customer_active` on `(customer_id, status)` WHERE `status = 'ACTIVE' AND customer_id IS NOT NULL`
+  - Partial index `ix_quotes_guest_active` on `(session_id, status)` WHERE `status = 'ACTIVE' AND session_id IS NOT NULL`
+
+### `checkout_quote_items` Table
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `quote_id`: UUID (FK `checkout_quotes.id` ON DELETE CASCADE, indexed)
+- `listing_id`: UUID (FK `product_listings.id` ON DELETE RESTRICT, indexed)
+- `variant_id`: UUID (FK `product_variants.id` ON DELETE RESTRICT, indexed)
+- `retailer_id`: UUID (FK `retailers.id` ON DELETE RESTRICT, indexed)
+- `product_title`: VARCHAR(255) (Immutable snapshot)
+- `variant_title`: VARCHAR(255) (Immutable snapshot)
+- `sku`: VARCHAR(100) (Nullable)
+- `hsn_code`: VARCHAR(16)
+- `gst_rate_basis_points`: INTEGER
+- `quantity`: INTEGER (Check: `quantity > 0`)
+- `unit_original_price_paise`: BIGINT (Check: `>= 0`)
+- `unit_selling_price_paise`: BIGINT (Check: `>= 0`)
+- `unit_discount_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `unit_discounted_price_paise`: BIGINT (Check: `>= 0`)
+- `total_selling_price_paise`: BIGINT (Check: `>= 0`)
+- `taxable_base_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `cgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `sgst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `igst_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `total_tax_paise`: BIGINT (Default `0`, Check: `>= 0`)
+- `retailer_name`: VARCHAR(255) (Immutable snapshot)
+- `retailer_state`: VARCHAR(100) (Immutable snapshot)
+- `created_at`: TIMESTAMPTZ (Default `now()`)

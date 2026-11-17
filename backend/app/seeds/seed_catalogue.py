@@ -22,6 +22,7 @@ RETAILERS_DATA = [
         "description": "India's leading consumer electronics and home appliances destination.",
         "logo_url": "https://images.unsplash.com/photo-1550009158-9ebf69173e03?auto=format&fit=crop&w=200&q=80",
         "rating": 4.8,
+        "state": "MH",
     },
     {
         "name": "Croma",
@@ -29,6 +30,7 @@ RETAILERS_DATA = [
         "description": "Tata's premier multi-brand electronics megastore with guaranteed authenticity.",
         "logo_url": "https://images.unsplash.com/photo-1526738549149-8e07eca6c147?auto=format&fit=crop&w=200&q=80",
         "rating": 4.7,
+        "state": "KA",
     },
     {
         "name": "Tata CLiQ Luxury",
@@ -36,6 +38,7 @@ RETAILERS_DATA = [
         "description": "Curated lifestyle, apparel, and premium fashion brands delivered across India.",
         "logo_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=200&q=80",
         "rating": 4.6,
+        "state": "MH",
     },
     {
         "name": "Nature's Basket",
@@ -43,6 +46,7 @@ RETAILERS_DATA = [
         "description": "Pioneering gourmet grocery, fresh farm staples, and organic artisanal foods.",
         "logo_url": "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=200&q=80",
         "rating": 4.9,
+        "state": "MH",
     },
     {
         "name": "FabIndia",
@@ -50,6 +54,7 @@ RETAILERS_DATA = [
         "description": "Celebrated handcrafted apparel, home decor, and heritage lifestyle goods.",
         "logo_url": "https://images.unsplash.com/photo-1506152983158-b4a74a01c721?auto=format&fit=crop&w=200&q=80",
         "rating": 4.7,
+        "state": "DL",
     },
     {
         "name": "Decathlon India",
@@ -57,6 +62,7 @@ RETAILERS_DATA = [
         "description": "Comprehensive sporting equipment, outdoor gear, and fitness apparel.",
         "logo_url": "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=200&q=80",
         "rating": 4.8,
+        "state": "KA",
     },
     {
         "name": "Crossword Bookstore",
@@ -64,8 +70,24 @@ RETAILERS_DATA = [
         "description": "India's beloved chain for bestsellers, literary classics, and premium stationery.",
         "logo_url": "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=200&q=80",
         "rating": 4.9,
+        "state": "MH",
     },
 ]
+
+# Statutory Indian GST Tax brackets per product category
+# 0% = Books & educational printed material (HSN 4901)
+# 5% = Food grains, rice, basic garments (HSN 1006, 6109)
+# 12% = Processed dairy/ghee, fitness gear, luxury ethnic wear (HSN 0405, 9506, 6204)
+# 18% = Electronics, computing, personal care, furniture (HSN 8518, 8471, 3304, 9403)
+CATEGORY_STATUTORY_TAX_MAP: dict[str, tuple[str, int]] = {
+    "electronics": ("8518", 1800),
+    "fashion": ("6109", 500),
+    "groceries": ("1006", 500),
+    "beauty": ("3304", 1800),
+    "home-furniture": ("9403", 1800),
+    "sports-fitness": ("9506", 1200),
+    "books-stationery": ("4901", 0),
+}
 
 CATEGORIES_DATA = [
     {
@@ -639,11 +661,16 @@ async def seed_database() -> None:
                     description=r_data["description"],
                     logo_url=r_data["logo_url"],
                     rating=r_data["rating"],
+                    state=r_data["state"],
+                    state_source="PROVISIONAL_SEED",
                     is_active=True,
                 )
                 session.add(retailer)
                 await session.flush()
                 logger.info("Created retailer: %s", retailer.name)
+            else:
+                if r_data.get("state") and retailer.state != r_data["state"]:
+                    retailer.state = r_data["state"]
             retailer_map[retailer.slug] = retailer
 
         # 2. Seed Categories
@@ -729,6 +756,13 @@ async def seed_database() -> None:
                     # Listings & Inventory
                     for l_data in v_data.get("listings", []):
                         retailer = retailer_map[l_data["retailer_slug"]]
+                        default_hsn, default_gst = CATEGORY_STATUTORY_TAX_MAP.get(
+                            category.slug, ("8518", 1800)
+                        )
+                        hsn_code = l_data.get("hsn_code", default_hsn)
+                        gst_rate_basis_points = l_data.get(
+                            "gst_rate_basis_points", default_gst
+                        )
                         listing = ProductListing(
                             id=uuid.uuid4(),
                             retailer_id=retailer.id,
@@ -737,6 +771,10 @@ async def seed_database() -> None:
                             original_price_paise=l_data["original_price_paise"],
                             selling_price_paise=l_data["selling_price_paise"],
                             currency="INR",
+                            hsn_code=hsn_code,
+                            gst_rate_basis_points=gst_rate_basis_points,
+                            tax_classification_source="PROVISIONAL_SEED",
+                            is_tax_verified=True,
                             is_active=True,
                         )
                         session.add(listing)
@@ -749,6 +787,28 @@ async def seed_database() -> None:
                             reserved_quantity=l_data.get("reserved", 0),
                         )
                         session.add(inv)
+
+        # Synchronize statutory HSN and GST rates across all existing listings
+        for cat_slug, (
+            statutory_hsn,
+            statutory_gst,
+        ) in CATEGORY_STATUTORY_TAX_MAP.items():
+            cat_obj = category_map.get(cat_slug)
+            if cat_obj:
+                update_stmt = (
+                    select(ProductListing)
+                    .join(
+                        ProductVariant, ProductListing.variant_id == ProductVariant.id
+                    )
+                    .join(Product, ProductVariant.product_id == Product.id)
+                    .where(Product.category_id == cat_obj.id)
+                )
+                res_listings = await session.execute(update_stmt)
+                for existing_l in res_listings.scalars().all():
+                    existing_l.hsn_code = statutory_hsn
+                    existing_l.gst_rate_basis_points = statutory_gst
+                    existing_l.tax_classification_source = "PROVISIONAL_SEED"
+                    existing_l.is_tax_verified = True
 
         await session.commit()
         logger.info("Catalogue seed operation completed successfully!")
