@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
+from app.modules.pricing.router import router as pricing_router
 
 api_router = APIRouter()
 
@@ -17,6 +18,9 @@ api_router.include_router(catalogue_router)
 
 # Mount Cart endpoints
 api_router.include_router(cart_router)
+
+# Mount Pricing & Quotes endpoints
+api_router.include_router(pricing_router)
 
 
 @api_router.get("/info", tags=["System"])

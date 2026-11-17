@@ -480,3 +480,61 @@ Copy this section for every new request.
    - Next.js production build (`next build`): **100% clean production build** with `/cart` static/dynamic route generation.
 
 **Status:** COMPLETE (Phase 2B Universal Persistent Shopping Cart Domain Fully Delivered)
+
+---
+
+### [2026-11-17 15:15 IST] — Lead Full-Stack Architect — Phase 2C Pricing Engine, Indian GST & Persistent Quotes Complete
+
+**Related branch / PR / task:** `feature/phase2-pricing-quotes` — Phase 2C Implementation
+**Affected module(s):** `backend/app/modules/pricing/`, `backend/alembic/`, `backend/tests/test_pricing.py`, `backend/tests/test_quotes.py`, `backend/app/seeds/seed_catalogue.py`, `frontend/app/cart/`, `frontend/lib/api/quotes.ts`, `frontend/lib/api/quotes.test.ts`, `frontend/types/`
+
+**Work completed:**
+1. **Database Schema & Safe Migration (`backend/alembic/versions/0005_pricing_quotes_schema_create_discounts_and_quotes.py`):**
+   - Added `hsn_code VARCHAR(16)` and `gst_rate_basis_points INTEGER` as nullable columns without hardcoded schema-level defaults to prevent universal fallback.
+   - Added `state VARCHAR(100)` to `retailers` as nullable column without hardcoded 'KA' universal default.
+   - Safe migration backfill: Existing seed listings are populated with category-specific statutory rates (Books: 0%, Groceries: 5%, Fashion: 5%/12%, Sports: 12%, Electronics: 18%, Beauty: 18%, Furniture: 18%), and retailers populated with authentic registered origin states (Reliance/Tata/Nature's Basket/Crossword in MH, FabIndia in DL, Croma/Decathlon in KA).
+   - Created `discounts` table supporting percentage basis points and fixed minor paise discounts, validity windows, and non-negative price floors.
+   - Created `checkout_quotes` and `checkout_quote_items` tables with 15-minute TTL (`expires_at`), ownership check constraints (`chk_quote_ownership`), status checks (`ACTIVE`, `CONSUMED`, `EXPIRED`, `SUPERSEDED`), and partial active indexes (`ix_quotes_customer_active`, `ix_quotes_guest_active`).
+   - Verified reversible migration upgrade and downgrade against live PostgreSQL 16. Single Alembic head maintained: `0005_pricing_quotes_schema`.
+2. **Deterministic Indian GST Calculation & Strict Classification Engine:**
+   - Statutory validation: Valid rates restricted to approved Indian GST brackets `{0, 500, 1200, 1800, 2800}`.
+   - Non-universal guarantee: Missing or fabricated HSN or GST rates immediately fail quote generation with `422 INVALID_TAX_CLASSIFICATION`.
+   - Display-inclusive pricing calculation:
+     $$\text{Taxable Base Paise} = \text{round}\left(\frac{\text{Selling Price Paise} \times 10000}{10000 + \text{gst\_rate\_basis\_points}}\right)$$
+     $$\text{Total Tax Paise} = \text{Selling Price Paise} - \text{Taxable Base Paise}$$
+   - Intra-state rule (`retailer_state == delivery_state`): $\text{CGST} = \text{round}(\text{Total Tax} / 2)$, $\text{SGST} = \text{Total Tax} - \text{CGST}$, $\text{IGST} = 0$.
+   - Inter-state rule (`retailer_state != delivery_state`): $\text{IGST} = \text{Total Tax}$, $\text{CGST} = 0$, $\text{SGST} = 0$.
+   - Mathematical reconciliation: $\text{Taxable Base} + \text{Total Tax} == \text{Selling Price}$ and $\text{CGST} + \text{SGST} + \text{IGST} == \text{Total Tax}$ exact to 0 paise drift across all brackets including 0% books and odd paise prices.
+3. **Retailer State Validation & Explicit Error Handling:**
+   - `validate_state_code`: Normalizes all Indian states/UTs to 2-letter uppercase codes and validates against `VALID_INDIAN_STATE_CODES`.
+   - Missing or unrecognized retailer state fails with `422 MISSING_STATE` or `422 INVALID_STATE`.
+   - Missing or invalid client-supplied delivery state fails with `422 INVALID_STATE`.
+4. **Configurable Delivery Policy:**
+   - Decoupled from product pricing and GST. Configured via `settings.DEFAULT_DELIVERY_FEE_PAISE` (₹49) and `settings.DEFAULT_FREE_DELIVERY_THRESHOLD_PAISE` (₹499) with `DeliveryPolicy` supporting per-retailer threshold and fee overrides.
+5. **Guest Quote Security & Ownership Isolation:**
+   - Guest quotes strictly bound to SHA-256 hash of `basket_guest_cart` cookie (`guest_token_hash`).
+   - Zero trust in client-supplied session IDs; unauthenticated requests without cookies return 404.
+   - Cross-guest access (Guest A vs Guest B) returns 404. Customer accessing guest quote or other customer's quote returns 404.
+6. **Persistent Quotes & Lifecycle Guarantees:**
+   - 15-minute TTL (`expires_at`).
+   - Line snapshots immutable against subsequent catalogue price or tax changes.
+   - Refresh transitions previous quote to `SUPERSEDED` and maintains audit link without deleting history.
+   - `CONSUMED` is strictly a quote state; no inventory reservation or order is created in Phase 2C.
+7. **REST API Endpoints:**
+   - `POST /api/v1/quotes` & `POST /api/v1/checkout/quote`
+   - `GET /api/v1/quotes/{id}`
+   - `POST /api/v1/quotes/{id}/validate`
+   - `POST /api/v1/quotes/{id}/refresh`
+   - `GET /api/v1/quotes`
+8. **Frontend Experience & Cart Integration:**
+   - Modular Quote API client in `frontend/lib/api/quotes.ts` and `frontend/lib/api/client.ts`.
+   - Enhanced `/cart` page with live guaranteed quote summary: 15-minute countdown timer badge, repricing banner with "Accept & Refresh Quote" CTA, line-item HSN & GST rate badges, per-retailer delivery breakdown with free delivery progress, and statutory Indian GST reconciliation.
+9. **Quality Gates & Verification Results:**
+   - Backend Pytest Suite: **90/90 tests passing** in 6.02s against live PostgreSQL 16.
+   - Backend Ruff: **0 lint errors**, all 52 files cleanly formatted.
+   - Frontend Test Suite: **40/40 tests passing** in Node test runner.
+   - Frontend TypeScript: `tsc --noEmit` exited 0.
+   - Frontend Production Build: `next build` succeeded with clean static/dynamic route generation.
+   - Script `./scripts/verify-environment.sh`: **ALL VERIFICATION GATES PASSED CLEANLY**.
+
+**Status:** COMPLETE (Phase 2C Server-Authoritative Pricing, GST & Persistent Quotes Fully Delivered and Audited — Ready for Phase 2D Inventory Reservations & Concurrency Protection)

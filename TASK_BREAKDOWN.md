@@ -61,10 +61,17 @@
   - [x] Frontend Cart Page: `/cart` with multi-retailer grouping, item thumbnail and attributes, stock warnings, quantity stepper, clear cart confirmation, and order summary breakdown.
   - [x] Header & Catalogue Integration: Real-time cart quantity badge in desktop and mobile header navigation, quantity selector and "Add to Basket" controls on product detail page.
   - [x] Quality Gates: 60/60 backend pytest tests passing, 33/33 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
-- [ ] **Phase 2C — Pricing, Taxes & Persistent Quotes:**
-  - [ ] Listing-level HSN tax brackets (0%, 5%, 12%, 18%, 28%) and CGST/SGST vs IGST engine.
-  - [ ] Delivery threshold logic (₹0 for $\ge$ ₹499; ₹49 for $<$ ₹499 per retailer).
-  - [ ] Immutable `checkout_quotes` model with 15-minute TTL and single-use consumption.
+- [x] **Phase 2C — Pricing, Taxes & Persistent Quotes (Backend & Frontend):**
+  - [x] Listing-level HSN tax brackets (0%, 5%, 12%, 18%, 28%) and CGST/SGST vs IGST engine with deterministic integer paise rounding reconciliation (`cgst + sgst + igst == total_tax`, `taxable_base + total_tax == selling_price`).
+  - [x] Extensible discount engine (`discounts` table with listing-level fixed amount or percentage basis points, validity window, and non-negative price floor).
+  - [x] Delivery threshold logic (₹0 for $\ge$ ₹499; ₹49 for $<$ ₹499 per retailer) with multi-retailer aggregation.
+  - [x] Immutable `checkout_quotes` and `checkout_quote_items` models with 15-minute TTL, ownership check constraints, and single-use consumption guarantee.
+  - [x] Quote validation & repricing: detects expired quotes, price changes, GST updates, and stock deficits; supersedes stale quotes without deleting historical audit trail.
+  - [x] Alembic migration `0005_pricing_quotes_schema` adding `hsn_code` and `gst_rate_basis_points` to `product_listings`, `state` to `retailers`, and creating `discounts`, `checkout_quotes`, `checkout_quote_items`.
+  - [x] Quote APIs: `POST /api/v1/quotes`, `GET /api/v1/quotes/{id}`, `POST /api/v1/quotes/{id}/validate`, `POST /api/v1/quotes/{id}/refresh`, `GET /api/v1/quotes`, `POST /api/v1/checkout/quote`.
+  - [x] Frontend Quote Client & Types: `createQuote`, `getQuote`, `validateQuote`, `refreshQuote`, `listQuotes` in `@/lib/api/quotes` and `@/types`.
+  - [x] Frontend Cart UI: Live guaranteed quote display on `/cart`, 15-minute countdown timer, repricing notice banner with "Accept & Refresh Quote" CTA, line-item HSN and GST rate badges, per-retailer delivery breakdown with free delivery progress, and statutory Indian GST reconciliation breakdown.
+  - [x] Quality Gates: 81/81 backend pytest tests passing, 40/40 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
 - [ ] **Phase 2D — Inventory Reservations & Concurrency Protection:**
   - [ ] Lock ordering by `listing_id` to eliminate deadlocks.
   - [ ] Atomic conditional updates and reservation TTL.
