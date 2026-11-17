@@ -17,12 +17,14 @@ import {
   PackageX,
   ShieldCheck,
   ShoppingBag,
+  ShoppingBasket,
   Sparkles,
   Star,
   Store,
   Tag,
   Truck,
 } from "lucide-react";
+import { useCart } from "@/lib/cart/cart-context";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -31,12 +33,37 @@ interface ProductPageProps {
 export default function ProductDetailPage({ params }: ProductPageProps) {
   const resolvedParams = use(params);
   const productIdOrSlug = resolvedParams.id;
+  const { addItem } = useCart();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantDetail | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [quantity, setQuantity] = useState(1);
+  const [isAdding, setIsAdding] = useState(false);
+  const [addSuccess, setAddSuccess] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [activeAddingListingId, setActiveAddingListingId] = useState<string | null>(null);
+
+  const handleAddToCart = async (listingId: string, qty = 1) => {
+    setIsAdding(true);
+    setActiveAddingListingId(listingId);
+    setAddError(null);
+    setAddSuccess(false);
+    try {
+      await addItem(listingId, qty);
+      setAddSuccess(true);
+      setTimeout(() => setAddSuccess(false), 4000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to add to basket";
+      setAddError(msg);
+    } finally {
+      setIsAdding(false);
+      setActiveAddingListingId(null);
+    }
+  };
 
   useEffect(() => {
     async function fetchDetail() {
@@ -212,21 +239,105 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
 
           {/* Pricing & Key Summary */}
           {bestListing ? (
-            <div className="flex items-baseline gap-3 p-4 rounded-xl bg-muted/40 border">
-              <div>
-                <span className="text-3xl font-extrabold text-foreground">
-                  {formatPrice(bestListing.selling_price_paise, bestListing.currency)}
-                </span>
-                {bestListing.original_price_paise > bestListing.selling_price_paise && (
-                  <span className="text-sm text-muted-foreground line-through ml-2.5">
-                    {formatPrice(bestListing.original_price_paise, bestListing.currency)}
+            <div className="space-y-4">
+              <div className="flex items-baseline gap-3 p-4 rounded-xl bg-muted/40 border">
+                <div>
+                  <span className="text-3xl font-extrabold text-foreground">
+                    {formatPrice(bestListing.selling_price_paise, bestListing.currency)}
                   </span>
+                  {bestListing.original_price_paise > bestListing.selling_price_paise && (
+                    <span className="text-sm text-muted-foreground line-through ml-2.5">
+                      {formatPrice(bestListing.original_price_paise, bestListing.currency)}
+                    </span>
+                  )}
+                </div>
+                {discountPercent > 0 && (
+                  <Badge variant="outline" className="text-emerald-700 border-emerald-600/40 text-xs font-semibold">
+                    Save {formatPrice(bestListing.original_price_paise - bestListing.selling_price_paise, bestListing.currency)}
+                  </Badge>
                 )}
               </div>
-              {discountPercent > 0 && (
-                <Badge variant="outline" className="text-emerald-700 border-emerald-600/40 text-xs font-semibold">
-                  Save {formatPrice(bestListing.original_price_paise - bestListing.selling_price_paise, bestListing.currency)}
-                </Badge>
+
+              {/* Add to Basket Control */}
+              {bestListing.is_in_stock ? (
+                <div className="p-4 rounded-xl border bg-card space-y-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center border rounded-lg overflow-hidden bg-background">
+                      <button
+                        type="button"
+                        onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                        disabled={quantity <= 1 || isAdding}
+                        aria-label="Decrease quantity"
+                        className="px-3 py-2 hover:bg-muted text-sm font-bold disabled:opacity-40"
+                      >
+                        -
+                      </button>
+                      <span className="px-3 py-2 text-sm font-semibold min-w-8 text-center">
+                        {quantity}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setQuantity((q) =>
+                            Math.min(
+                              Math.min(10, bestListing.available_quantity),
+                              q + 1
+                            )
+                          )
+                        }
+                        disabled={
+                          quantity >=
+                            Math.min(10, bestListing.available_quantity) ||
+                          isAdding
+                        }
+                        aria-label="Increase quantity"
+                        className="px-3 py-2 hover:bg-muted text-sm font-bold disabled:opacity-40"
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    <Button
+                      onClick={() => handleAddToCart(bestListing.id, quantity)}
+                      disabled={isAdding}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 shadow-xs text-sm"
+                    >
+                      {isAdding && activeAddingListingId === bestListing.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Adding to Basket...
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingBasket className="h-4 w-4 mr-2" />
+                          Add to Basket • {formatPrice(bestListing.selling_price_paise * quantity, bestListing.currency)}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {addSuccess && (
+                    <div className="flex items-center justify-between text-xs text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-600/30">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                        Added {quantity} unit(s) to your basket!
+                      </span>
+                      <Link href="/cart" className="font-bold underline hover:text-emerald-800 shrink-0">
+                        View Cart →
+                      </Link>
+                    </div>
+                  )}
+
+                  {addError && (
+                    <div className="text-xs text-red-600 bg-red-50 dark:bg-red-950/40 p-2.5 rounded-lg border border-red-600/30">
+                      {addError}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Button disabled className="w-full bg-muted text-muted-foreground h-11">
+                  Out of Stock
+                </Button>
               )}
             </div>
           ) : (
@@ -318,15 +429,35 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-base font-extrabold text-foreground">
-                        {formatPrice(listing.selling_price_paise, listing.currency)}
-                      </div>
-                      {listing.original_price_paise > listing.selling_price_paise && (
-                        <div className="text-[11px] text-muted-foreground line-through">
-                          {formatPrice(listing.original_price_paise, listing.currency)}
+                    <div className="flex items-center gap-3 text-right">
+                      <div>
+                        <div className="text-base font-extrabold text-foreground">
+                          {formatPrice(listing.selling_price_paise, listing.currency)}
                         </div>
-                      )}
+                        {listing.original_price_paise > listing.selling_price_paise && (
+                          <div className="text-[11px] text-muted-foreground line-through">
+                            {formatPrice(listing.original_price_paise, listing.currency)}
+                          </div>
+                        )}
+                      </div>
+
+                      <Button
+                        size="sm"
+                        variant={index === 0 ? "default" : "outline"}
+                        disabled={isAdding || listing.available_quantity <= 0}
+                        onClick={() => handleAddToCart(listing.id, 1)}
+                        className={`h-9 px-3 text-xs font-semibold ${
+                          index === 0
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                            : "border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                        }`}
+                      >
+                        {isAdding && activeAddingListingId === listing.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          "Add"
+                        )}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -338,9 +469,9 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
           <div className="rounded-xl border border-dashed border-emerald-600/30 bg-emerald-600/5 p-4 flex gap-3 text-xs text-emerald-950 dark:text-emerald-200">
             <Info className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <span className="font-bold">Phase 1 Catalogue Milestone</span>
+              <span className="font-bold">Phase 2 Universal Shopping Basket</span>
               <p className="text-muted-foreground">
-                Authoritative catalogue browsing and live retailer price/inventory comparisons are fully operational. Transactional cart reservations and checkout flows unlock in Phase 2 per <code className="font-mono text-[11px]">PROJECT_CHARTER.md</code>.
+                Multi-retailer persistent cart is live. Add items across diverse sellers, variants, and categories in a single unified basket.
               </p>
             </div>
           </div>

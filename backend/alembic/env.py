@@ -12,6 +12,7 @@ from alembic import context
 # Ensure app is discoverable on python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import app.modules.cart.models  # noqa: F401
 import app.modules.catalogue.models  # noqa: F401
 import app.modules.identity.models  # noqa: F401
 from app.core.config import settings

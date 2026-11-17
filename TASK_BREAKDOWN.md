@@ -50,10 +50,17 @@
   - [x] Frontend Experience: Route protection (`<ProtectedRoute>`), session expiry handling, responsive address book with empty state, default badge, edit modal, delete confirmation, Indian state selector, 6-digit PIN code validation.
   - [x] Header Integration: Dynamic customer session status, user greeting, quick links, and logout action.
   - [x] Quality Gates: 51/51 backend pytest tests passing, 25/25 frontend tests passing, 0 Ruff errors, 0 ESLint errors, TypeScript typecheck passing, Next.js production build passing.
-- [ ] **Phase 2B — Persistent Cart Domain & Guest Migration:**
-  - [ ] Cart and cart items persistence in PostgreSQL.
-  - [ ] Guest session cookie to authenticated user cart consolidation.
-  - [ ] Cart endpoints (`GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/{id}`, `DELETE /api/v1/cart/items/{id}`).
+- [x] **Phase 2B — Persistent Cart Domain & Guest Migration (Backend & Frontend):**
+  - [x] Backend Models: `Cart` and `CartItem` in PostgreSQL with `chk_cart_ownership`, `chk_cart_status`, `chk_cart_item_quantity`, partial unique index `uq_cart_customer_active`, and unique index `uq_cart_listing`.
+  - [x] Guest Token Lifecycle: 256-bit cryptographically secure token (`secrets.token_urlsafe(32)`), stored only as SHA-256 hash in DB, delivered via HTTP-only cookie `basket_guest_cart` (30-day expiry).
+  - [x] Dynamic Pricing & Live Inventory: Unit prices and subtotals derived dynamically from catalogue listings; live available stock calculated as `max(0, on_hand - reserved)`. Cart validates availability read-only without reserving stock (inventory reservations belong to Phase 2D).
+  - [x] Migration: Alembic `0004_cart_schema` with clean upgrade, downgrade, and re-upgrade verification.
+  - [x] Cart APIs: `GET /api/v1/cart`, `POST /api/v1/cart/items`, `PATCH /api/v1/cart/items/{id}`, `DELETE /api/v1/cart/items/{id}`, `DELETE /api/v1/cart`, `POST /api/v1/cart/merge`.
+  - [x] Atomicity & Concurrency: Pessimistic row locking (`with_for_update()`) on Cart mutations; transactional guest-to-customer cart migration with conflict resolution policy (capping combined quantity to 10 or available stock).
+  - [x] Frontend Cart Engine: `CartProvider` context, automatic guest cart cookie sync, background auto-merge on customer login/register, live totals, quantity updates, item removal, cart clearance.
+  - [x] Frontend Cart Page: `/cart` with multi-retailer grouping, item thumbnail and attributes, stock warnings, quantity stepper, clear cart confirmation, and order summary breakdown.
+  - [x] Header & Catalogue Integration: Real-time cart quantity badge in desktop and mobile header navigation, quantity selector and "Add to Basket" controls on product detail page.
+  - [x] Quality Gates: 60/60 backend pytest tests passing, 33/33 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
 - [ ] **Phase 2C — Pricing, Taxes & Persistent Quotes:**
   - [ ] Listing-level HSN tax brackets (0%, 5%, 12%, 18%, 28%) and CGST/SGST vs IGST engine.
   - [ ] Delivery threshold logic (₹0 for $\ge$ ₹499; ₹49 for $<$ ₹499 per retailer).

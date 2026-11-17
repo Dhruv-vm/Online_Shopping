@@ -425,3 +425,58 @@ Copy this section for every new request.
    - Full environment verification script (`scripts/verify-environment.sh`): **ALL GATES PASSED CLEANLY**.
 
 **Status:** COMPLETE (Phase 2A Fully Delivered — Ready for Phase 2B Cart Domain)
+
+---
+
+### [2026-11-17 13:15 IST] — Lead Full-Stack Engineer — Phase 2B Persistent Universal Shopping Cart Complete
+
+**Related branch / PR / task:** `feature/phase2-persistent-cart` — Phase 2B Implementation
+**Affected module(s):** `backend/app/modules/cart/`, `backend/alembic/`, `backend/tests/test_cart.py`, `frontend/app/cart/`, `frontend/lib/cart/`, `frontend/components/shared/header.tsx`, `frontend/app/products/[id]/`
+
+**Work completed:**
+1. **Database Schema & Migration (`backend/alembic/versions/0004_cart_schema_create_carts_and_cart_items.py`):**
+   - Implemented `carts` table with UUID primary key, `customer_id` (FK to `users.id`), `guest_token_hash` (VARCHAR(64)), status, currency, version, `expires_at`, timestamps.
+   - Implemented `cart_items` table with `cart_id`, `listing_id`, `variant_id`, `retailer_id`, quantity (1..10), timestamps.
+   - Constraints & Indexes:
+     - `chk_cart_ownership`: Guarantees either `customer_id` OR `guest_token_hash` is present, never both or neither.
+     - `chk_cart_status`: Limits status to `'ACTIVE'`, `'MERGED'`, `'ABANDONED'`, `'CONVERTED'`.
+     - `uq_cart_customer_active`: Partial unique index on `(customer_id, currency)` WHERE `customer_id IS NOT NULL AND status = 'ACTIVE'`.
+     - `uq_cart_listing`: Unique index on `(cart_id, listing_id)`.
+     - `chk_cart_item_quantity`: Quantity must be between 1 and 10 inclusive.
+   - Verified reversible migration upgrade and downgrade against live PostgreSQL 16.
+2. **Guest Token Security & Lifecycle:**
+   - 256-bit cryptographically secure token generated using `secrets.token_urlsafe(32)`.
+   - Stored strictly as SHA-256 hex digest in DB (`guest_token_hash`). Raw token never touches persistent storage.
+   - Delivered via HTTP-only cookie `basket_guest_cart` (SameSite=Lax, Path=/, 30-day max-age).
+   - Automatic new guest cart generation on demand when cookie is absent or expired.
+3. **Dynamic Pricing & Live Inventory Validation:**
+   - Zero prices stored in `cart_items`. All unit prices and subtotals calculated dynamically at response serialization time from catalogue `ProductListing.selling_price_paise * quantity`.
+   - Server-authoritative stock calculation: `available_stock = max(0, on_hand_quantity - reserved_quantity)`.
+   - Active status checked across all parent entities (listing, variant, product, retailer).
+   - Informative item availability flags and validation messages (`is_available`, `validation_message`, `available_stock`).
+   - **Phase Boundary Clarification**: In Phase 2B, cart operations validate available quantity via read-only inspection of `store_inventory`. Cart additions and updates do NOT reserve inventory or mutate `store_inventory.reserved_quantity`. Formal inventory reservations with deterministic lock ordering (`listing_id`), reservation TTL, and overselling protection belong to Phase 2D (Inventory Reservations & Concurrency Protection).
+4. **Transactional Guest-to-Customer Cart Consolidation:**
+   - `POST /api/v1/cart/merge` endpoint with pessimistic locking (`with_for_update()`) on both user and guest carts.
+   - Conflict resolution policy: combines quantities for identical listings capped at `min(10, available_stock)`.
+   - Adds non-matching guest items capped at stock and limit 10.
+   - Marks guest cart as `'MERGED'` and clears the `basket_guest_cart` cookie (`max-age=0`).
+5. **Cart Endpoints (`/api/v1/cart`):**
+   - `GET /api/v1/cart` (active cart retrieval with multi-retailer breakdown)
+   - `POST /api/v1/cart/items` (add item with stock check & 10-unit limit)
+   - `PATCH /api/v1/cart/items/{id}` (quantity update)
+   - `DELETE /api/v1/cart/items/{id}` (remove item)
+   - `DELETE /api/v1/cart` (clear cart)
+   - `POST /api/v1/cart/merge` (guest-to-customer cart migration)
+6. **Frontend Experience & State Management:**
+   - `CartProvider` (`frontend/lib/cart/cart-context.tsx`): Manages cart state, live count badges, mutator actions, and automatic guest cart merge on customer login/registration.
+   - Cart Page (`frontend/app/cart/page.tsx`): Grouped multi-retailer cards, item thumbnails, variant attributes, stock warning alerts, quantity steppers, clear cart modal, order summary sidebar with multi-seller breakdown.
+   - Real-Time Header Badge (`frontend/components/shared/header.tsx`): Responsive cart counter in desktop navigation, mobile action bar, and mobile drawer.
+   - Catalogue Integration (`frontend/app/products/[id]/page.tsx`): Quantity stepper and "Add to Basket" buttons on primary offer and alternative seller comparison cards.
+7. **Verification Gates & Quality Results:**
+   - Backend pytest suite: **60/60 tests passing** in 3.92s against live PostgreSQL 16.
+   - Backend linting/formatting: **0 Ruff errors**, 100% formatted.
+   - Frontend test suite: **33/33 tests passing** in Node test runner.
+   - Frontend TypeScript check (`tsc --noEmit`): **0 errors**.
+   - Next.js production build (`next build`): **100% clean production build** with `/cart` static/dynamic route generation.
+
+**Status:** COMPLETE (Phase 2B Universal Persistent Shopping Cart Domain Fully Delivered)
