@@ -17,6 +17,7 @@ import app.modules.catalogue.models  # noqa: F401
 import app.modules.identity.models  # noqa: F401
 import app.modules.inventory.models  # noqa: F401
 import app.modules.orders.models  # noqa: F401
+import app.modules.payments.models  # noqa: F401
 import app.modules.pricing.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base

@@ -92,10 +92,75 @@
   - [x] Alembic migration `0007_orders_outbox_schema` with clean upgrade and downgrade.
   - [x] Frontend order client (`@/lib/api/orders`), types (`@/types`), and test suite (`lib/api/orders.test.ts`).
   - [x] Quality Gates: 136/136 backend pytest tests passing, 53/53 frontend tests passing, 0 Ruff errors, TypeScript typecheck passing, Next.js production build passing.
-- [ ] **Phase 2F — Razorpay Payments, Webhooks & Recovery:**
-  - [ ] Decoupled Razorpay order creation.
-  - [ ] Multi-factor server-side payment verification and raw-body webhook HMAC check.
-  - [ ] `REQUIRES_RECONCILIATION` state and recovery reconciler.
+- [x] **Phase 2F — Razorpay Payments, Capture Ledger, Webhooks, Multi-Refund & Reconciliation (Architecture v3.1.4 Master Specification):**
+  - [x] **Slice A: Configuration & Async HTTPX Razorpay Client:**
+    - Settings with `SecretStr` for `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `INTERNAL_SERVICE_SECRET`.
+    - Native `RazorpayClient` (`modules/payments/client.py`) with Basic Auth, timeouts (5s connect, 10s read), constant-time HMAC-SHA256 signature verification over raw ASGI bytes.
+    - Verified Razorpay REST API endpoints including `GET /v1/orders?receipt={receipt}` and `POST /v1/payments/{id}/refund` with `X-Refund-Idempotency`.
+  - [x] **Slice B: Database Schema & Migration `0008` (Capture Ledger Architecture & Single Source of Truth):**
+    - Tables: `payments`, `payment_captures`, `payment_refunds`, `webhook_events`.
+    - Retention & Constraints: `customer_id UUID REFERENCES users(id) ON DELETE RESTRICT` across all financial tables; `uq_payments_id_order UNIQUE (id, order_id)`.
+    - Capture Ledger: `payment_captures` recording every distinct provider capture (`uq_payment_captures_provider_payment` on `provider_payment_id`).
+    - Capture Ledger & Eligibility Immutability: PostgreSQL trigger `trg_payment_captures_protect_immutable` disallowing DELETE and disallowing UPDATE of core captured facts and eligibility (`provider`, `provider_payment_id`, `order_id`, `payment_id`, `amount_paise`, `currency`, `captured_at`, `is_fulfillment_eligible`).
+    - Fulfillment Single Source of Truth: `orders.fulfilling_capture_id UUID UNIQUE` with composite foreign key `CONSTRAINT fk_orders_fulfilling_capture_same_order FOREIGN KEY (fulfilling_capture_id, id) REFERENCES payment_captures(id, order_id) ON DELETE RESTRICT`.
+    - Dual INSERT/UPDATE Fulfillment Trigger: PostgreSQL trigger `trg_orders_fulfilling_capture_immutable` running `BEFORE INSERT OR UPDATE ON orders`, preventing inserting with ineligible/foreign captures, overwriting, clearing, or assigning non-eligible captures.
+    - Composite foreign keys for refunds: `fk_refunds_capture_same_order` and `fk_refunds_payment_same_order`.
+    - `webhook_events` claim & lease columns: `claimed_by`, `claim_expires_at`.
+    - Reversible Alembic downgrade script.
+  - [x] **Slice C: Payment Initiation Service & API:**
+    - Pre-gateway two-transaction pattern: Transaction 1 inserts `CREATING` row, attempt number, and locks order; Transaction 2 associates `provider_order_id` and sets `PENDING`.
+    - Ambiguous creation protection: network timeouts / lost responses mark `CREATION_AMBIGUOUS` and block all retries until provider reconciliation. Empty search results NEVER trigger automatic failure; operational review SLA of 60m holds quarantined stock in `ALLOCATED_TO_ORDER`.
+    - Enforce unique constraints `uq_payments_order_idempotency` and `uq_payments_order_attempt`.
+    - Deterministic receipt format: `{order_number}-{attempt_number}`.
+    - Expose `POST /api/v1/orders/{order_id}/payments` with customer/guest authorization.
+  - [x] **Slice D: Signature Verification, Server-Side Capture & Order Confirmation:**
+    - Validate signature, amount, currency against order record.
+    - Automated server-side capture workflow for `status == 'authorized'`.
+    - Enforce single fulfillment: insert/update `payment_captures` (`is_fulfillment_eligible = TRUE`), set `orders.fulfilling_capture_id = capture.id`, `orders.status = CONFIRMED`, and `inventory_reservations.status = CONFIRMED` in one transaction.
+    - Partial capture rejection: record `payment_captures` (`reconciliation_status = 'PARTIAL_CAPTURE_REJECTED'`), cancel order, dispatch automated full refund, refuse stock confirmation.
+    - Expose `POST /api/v1/orders/{order_id}/payments/verify`.
+  - [x] **Slice E: Three-Phase Claim-and-Process Webhook Ingestion & Processing:**
+    - Phase 1 (Ingestion): raw ASGI body HMAC verification, payload sanitization (scrub card/CVV), deduplication on `x-razorpay-event-id`, durable insert to `webhook_events` (`status = PENDING`), return HTTP 200. Return HTTP 200 on duplicate (`ALREADY_INGESTED`).
+    - Phase 2A (Claiming): lease claiming via short transaction with `claim_expires_at = NOW() + 30s` and `SKIP LOCKED`, releasing webhook row lock before business logic.
+    - Phase 2B (Business Execution): downward lock hierarchy (`orders` $\rightarrow$ `payments` $\rightarrow$ `payment_captures` $\rightarrow$ `payment_refunds` $\rightarrow$ `res` $\rightarrow$ `inv`), idempotent state transitions.
+    - Phase 2C (Acknowledgment): separate short transaction marking `status = 'PROCESSED'`.
+    - Duplicate capture handling: record in `payment_captures` as `OVERPAYMENT_ANOMALY`, dispatch automated full refund, never confirm stock twice or alter `orders.fulfilling_capture_id`.
+    - Worker crash recovery: post-commit crash proven idempotent; expired leases reclaimed safely.
+    - Expose `POST /api/v1/payments/webhook`.
+  - [x] **Slice F: Multi-Refund Engine & Late-Capture Protection:**
+    - `PaymentService.create_refund` with row-level capture lock and atomic balance validation `sum(active) + amount <= capture.amount_paise`.
+    - Official header `X-Refund-Idempotency: {refund.id}` and body `receipt`.
+    - Late capture automated full refund when reservation is `RELEASED`.
+    - Expose `POST /api/v1/orders/{order_id}/refunds`.
+  - [x] **Slice G: Background Reconciliation Service & Internal API:**
+    - Reconciler for ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`, pending payments older than 5m, and expired webhook leases.
+    - Administrative endpoint `POST /api/v1/internal/payments/{id}/resolve-ambiguity` with audit logging for manual review action (`CONFIRM_ABSENT` vs `LINK_PROVIDER_ORDER`).
+    - Automated 75-minute fail-safe quarantine escalation job: cancels order (`AMBIGUITY_SLA_EXPIRED`), fails attempts (`OPERATIONAL_SLA_EXPIRED`), releases reservations exactly once, and leaves order permanently cancelled.
+    - Expose `POST /api/v1/internal/payments/reconcile-pending` protected by `X-Internal-Service-Key`.
+  - [x] **Slice H: Frontend Integration & Test Suite:**
+    - Dynamic script loader for `checkout.js`, modal configuration, customer/guest checkout flows, polling fallback.
+    - Comprehensive pytest suite in `tests/test_payments.py` covering:
+      - Scenario A: One exact successful capture (one ledger record, one fulfillment, one inventory deduction).
+      - Scenario B: Duplicate webhook for same capture (one ledger record, no duplicate side effects).
+      - Scenario C: Two distinct provider captures for same order (both persist in ledger, first fulfills, second auto-refunded as overpayment anomaly).
+      - Scenario D: Database failure after capture (reconciler recovers capture into ledger).
+      - Scenario E: Unexpected second capture after order confirmed (recorded and refunded without touching inventory).
+      - Scenario F: Partial capture (recorded in ledger, order cancelled, auto-refunded, stock released).
+      - Scenario G: Multiple partial refunds against capture (sum of refunds strictly bounded by capture amount).
+      - Scenario H: Capture fact and eligibility immutability trigger blocks SQL UPDATE or DELETE on core financial facts or `is_fulfillment_eligible`.
+      - Scenario I: Order fulfillment single source of truth trigger blocks re-assignment, clearing, or non-eligible capture linkage on UPDATE.
+      - Scenario J: Order INSERT with ineligible capture (`is_fulfillment_eligible = FALSE`) is rejected by database trigger.
+      - Scenario K: Order INSERT with another order's capture is rejected by composite foreign key / trigger.
+      - Scenario L: Updating a selected capture's eligibility from TRUE to FALSE is rejected by capture immutability trigger.
+      - Scenario M: Refund and reconciliation updates on `payment_captures` / `payment_refunds` do not erase or invalidate historical fulfillment relationship in `orders`.
+      - Scenario N: Concurrent capture processors (modal callback vs webhook) serialize via order row lock and produce at most one fulfilling capture.
+      - Scenario O: Terminal 75-minute SLA job releases stock, and subsequent late capture triggers 100% auto-refund without order re-activation.
+      - Ambiguous order creation timeout and 60m quarantine hold.
+      - Customer account anonymization & session revocation test.
+      - Webhook worker crash after business commit but before completion (idempotent recovery).
+      - Older authorized event arriving after capture.
+      - `payment.failed` followed by `payment.captured`.
+      - Refund request timeout and retry without duplicate refund.
 - [ ] **Phase 2G — Storefront UI & End-to-End Verification:**
   - [ ] Cart drawer, full cart page, multi-step checkout stepper, order tracking view.
 

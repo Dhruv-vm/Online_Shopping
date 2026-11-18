@@ -445,8 +445,9 @@ export type PaymentStatus =
   | "NOT_INITIATED"
   | "PENDING"
   | "PAID"
-  | "FAILED"
-  | "REFUNDED";
+  | "PARTIALLY_REFUNDED"
+  | "REFUNDED"
+  | "FAILED";
 
 export interface DeliveryAddressSnapshot {
   full_name: string;
@@ -537,4 +538,106 @@ export interface CreateOrderRequest {
 export interface OrderListResponse {
   orders: Order[];
   total: number;
+}
+
+// Phase 2F: Razorpay Payments, Capture & Refunds
+export type PaymentAttemptStatus =
+  | "CREATING"
+  | "PENDING"
+  | "AUTHORIZED"
+  | "CAPTURED"
+  | "FAILED"
+  | "UNKNOWN"
+  | "REQUIRES_RECONCILIATION";
+
+export type CaptureStatus = "CAPTURED" | "FAILED" | "ANOMALOUS";
+
+export type RefundStatus = "PENDING" | "PROCESSED" | "FAILED";
+
+export interface PaymentInitiateResponse {
+  payment_id: string;
+  order_id: string;
+  provider_order_id: string;
+  amount_paise: number;
+  currency: string;
+  razorpay_key_id: string;
+  attempt_status: PaymentAttemptStatus;
+  notes?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface PaymentVerifyRequest {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+export interface PaymentVerifyResponse {
+  payment_id: string;
+  order_id: string;
+  status: PaymentAttemptStatus;
+  order_status: OrderStatus;
+  amount_paise: number;
+  currency: string;
+  message: string;
+}
+
+export interface PaymentRefundRequest {
+  amount_paise: number;
+  reason?: string | null;
+}
+
+export interface PaymentRefundResponse {
+  refund_id: string;
+  payment_id: string;
+  order_id: string;
+  provider_refund_id?: string | null;
+  amount_paise: number;
+  currency: string;
+  status: RefundStatus;
+  reason?: string | null;
+  created_at: string;
+}
+
+export interface RazorpayPaymentSuccessResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+export interface RazorpayErrorResponse {
+  code: string;
+  description: string;
+  source: string;
+  step: string;
+  reason: string;
+  metadata: {
+    order_id: string;
+    payment_id: string;
+  };
+}
+
+export interface RazorpayCheckoutOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description?: string;
+  image?: string;
+  order_id: string;
+  handler?: (response: RazorpayPaymentSuccessResponse) => void;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  notes?: Record<string, unknown>;
+  theme?: {
+    color?: string;
+  };
+  modal?: {
+    ondismiss?: () => void;
+    escape?: boolean;
+    backdropclose?: boolean;
+  };
 }

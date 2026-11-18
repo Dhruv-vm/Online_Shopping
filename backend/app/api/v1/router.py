@@ -6,6 +6,8 @@ from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.orders.router import router as orders_router
+from app.modules.payments.router import internal_router as internal_payments_router
+from app.modules.payments.router import router as payments_router
 from app.modules.pricing.router import router as pricing_router
 
 api_router = APIRouter()
@@ -29,6 +31,10 @@ api_router.include_router(inventory_router)
 
 # Mount Orders & Outbox endpoints (Phase 2E)
 api_router.include_router(orders_router)
+
+# Mount Payments & Gateway endpoints (Phase 2F)
+api_router.include_router(payments_router)
+api_router.include_router(internal_payments_router)
 
 
 @api_router.get("/info", tags=["System"])

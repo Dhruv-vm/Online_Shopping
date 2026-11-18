@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     # Must be set via environment variable. No hardcoded default is permitted in production.
     INTERNAL_SERVICE_KEY: SecretStr | None = None
 
+    # Razorpay Payment Gateway (Phase 2F Sandbox)
+    RAZORPAY_KEY_ID: SecretStr | None = SecretStr("rzp_test_basket_mock_key_id")
+    RAZORPAY_KEY_SECRET: SecretStr | None = SecretStr(
+        "mock_secret_key_at_least_16_chars"
+    )
+    RAZORPAY_WEBHOOK_SECRET: SecretStr | None = SecretStr(
+        "mock_webhook_secret_at_least_16_chars"
+    )
+    RAZORPAY_BASE_URL: str = "https://api.razorpay.com/v1"
+    RAZORPAY_CONNECT_TIMEOUT_SECONDS: float = 5.0
+    RAZORPAY_READ_TIMEOUT_SECONDS: float = 10.0
+
     # Kafka (Aiven Kafka)
     KAFKA_BOOTSTRAP_SERVERS: str | None = None
     KAFKA_SECURITY_PROTOCOL: str = "SSL"

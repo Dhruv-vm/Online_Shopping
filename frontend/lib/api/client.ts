@@ -27,6 +27,11 @@ import type {
   Order,
   CreateOrderRequest,
   OrderListResponse,
+  PaymentInitiateResponse,
+  PaymentVerifyRequest,
+  PaymentVerifyResponse,
+  PaymentRefundRequest,
+  PaymentRefundResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -423,6 +428,48 @@ class ApiClient {
   public async listOrders(limit = 20, offset = 0): Promise<OrderListResponse> {
     return this.get<OrderListResponse>(
       `/api/v1/orders?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`,
+    );
+  }
+
+  // ================= Payments & Refunds (Phase 2F) =================
+  public async initiatePayment(
+    orderId: string,
+    idempotencyKey?: string,
+  ): Promise<PaymentInitiateResponse> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+    return this.post<PaymentInitiateResponse>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/payments`,
+      {},
+      { headers },
+    );
+  }
+
+  public async verifyPayment(
+    orderId: string,
+    payload: PaymentVerifyRequest,
+  ): Promise<PaymentVerifyResponse> {
+    return this.post<PaymentVerifyResponse>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/payments/verify`,
+      payload,
+    );
+  }
+
+  public async requestRefund(
+    orderId: string,
+    payload: PaymentRefundRequest,
+    idempotencyKey?: string,
+  ): Promise<PaymentRefundResponse> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
+    return this.post<PaymentRefundResponse>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/refunds`,
+      payload,
+      { headers },
     );
   }
 }

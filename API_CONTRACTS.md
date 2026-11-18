@@ -458,3 +458,169 @@ For every endpoint document:
 - **Auth**: Required (`current_user` or validated guest session).
 - **Description**: Retrieves full order details including line items, address snapshot, financial breakdown, and status history. Enforces strict tenant isolation; cross-tenant requests return `404 ORDER_NOT_FOUND`.
 - **Response**: `200 OK` (`OrderResponse`).
+
+---
+
+## 7. Payments & Gateway Integration (Phase 2F)
+
+### `POST /api/v1/orders/{order_id}/payments`
+- **Auth**: Required (`current_user` or validated guest session via `basket_guest_cart` cookie hash).
+- **Headers**:
+  - `Idempotency-Key`: String (Required, UUID v4 format recommended).
+- **Description**: Initiates a payment attempt for an order in `PENDING_PAYMENT` state. Uses a two-transaction pre-gateway pattern to insert an intermediate `CREATING` record before contacting Razorpay. If network timeout or ambiguity occurs, marks `CREATION_AMBIGUOUS` and strictly blocks all retries until authoritative provider lookup via `GET /v1/orders?receipt={receipt}` completes.
+- **Request Body**: None (order details, total payable, and currency are derived securely from the database record).
+- **Response `201 Created`**:
+  ```json
+  {
+    "payment_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "order_id": "4a2c1b8d-9c3f-4e5a-8b1d-7e9f2a3c4b5d",
+    "order_number": "BSK-20261118-A7B2C9",
+    "provider": "RAZORPAY_SANDBOX",
+    "provider_order_id": "order_NXv8Y123456789",
+    "razorpay_key_id": "rzp_test_1234567890ABCD",
+    "amount_paise": 111200,
+    "currency": "INR",
+    "attempt_number": 1,
+    "payment_window_expires_at": "2026-11-18T15:15:00Z"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `ORDER_ALREADY_CONFIRMED` or `ORDER_CANCELLED`.
+  - `404 Not Found`: `ORDER_NOT_FOUND`.
+  - `409 Conflict`: `PAYMENT_ATTEMPT_AMBIGUOUS` (Active `CREATING` or `CREATION_AMBIGUOUS` attempt requires reconciliation before any retry).
+  - `410 Gone`: `PAYMENT_WINDOW_EXPIRED` (Checkout window elapsed; inventory released).
+  - `502 Bad Gateway`: `GATEWAY_UNAVAILABLE` (External Razorpay call failed).
+  - `504 Gateway Timeout`: `PAYMENT_CREATION_AMBIGUOUS` (Request timed out; reconciliation in progress).
+
+### `POST /api/v1/orders/{order_id}/payments/verify`
+- **Auth**: Required (`current_user` or validated guest session via `basket_guest_cart` cookie hash).
+- **Description**: Verifies customer payment signature returned by the Razorpay Checkout modal. Enforces server-side capture if payment is `authorized`, records capture in `payment_captures` (`is_fulfillment_eligible = TRUE`), updates order to `CONFIRMED` and sets `orders.fulfilling_capture_id = capture.id` (the single authoritative source of truth for fulfillment), confirms inventory, and publishes outbox events in a single atomic transaction. Rejects partial captures by cancelling order and dispatching automated full refund. Unexpected duplicate captures are durably recorded in `payment_captures` as `OVERPAYMENT_ANOMALY` and fully refunded without touching inventory.
+- **Request Body**:
+  ```json
+  {
+    "payment_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "razorpay_payment_id": "pay_NXv8Z987654321",
+    "razorpay_order_id": "order_NXv8Y123456789",
+    "razorpay_signature": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+  ```
+- **Response `200 OK`**:
+  ```json
+  {
+    "status": "CONFIRMED",
+    "payment_status": "SUCCEEDED",
+    "order_id": "4a2c1b8d-9c3f-4e5a-8b1d-7e9f2a3c4b5d",
+    "order_number": "BSK-20261118-A7B2C9",
+    "fulfilling_capture_id": "3c1e2b4d-5a6f-4a3b-9c1d-8e7f6a5b4c3d",
+    "amount_paid_paise": 111200,
+    "confirmed_at": "2026-11-18T15:05:22Z"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `INVALID_PAYMENT_SIGNATURE` or `PARTIAL_CAPTURE_REJECTED`.
+  - `409 Conflict`: `ORDER_ALREADY_CONFIRMED`.
+
+### `POST /api/v1/payments/webhook`
+- **Auth**: Public provider endpoint, verified via `x-razorpay-signature` HMAC-SHA256 header.
+- **Headers**:
+  - `x-razorpay-signature`: String (Required).
+  - `x-razorpay-event-id`: String (Required, used as unique event deduplication key).
+- **Description**: Three-phase claim-and-process webhook receiver. Phase 1 (Ingestion) verifies raw ASGI body signature, sanitizes payload (scrub PAN/CVV), and commits durable receipt in `webhook_events`. Phase 2 claims event with a 30s lease and processes business logic with downward row locking. Records capture in `payment_captures`. Duplicate `x-razorpay-event-id` returns `HTTP 200 OK`.
+- **Response `200 OK`**:
+  ```json
+  {
+    "status": "ok",
+    "event_id": "c1f7b8a3-2d4e-4f5a-9b1c-8e7d6a5c4b3a"
+  }
+  ```
+- **Duplicate Response `200 OK`**:
+  ```json
+  {
+    "status": "ignored",
+    "reason": "ALREADY_INGESTED"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `MISSING_WEBHOOK_SIGNATURE` or `INVALID_WEBHOOK_SIGNATURE`.
+  - `503 Service Unavailable`: Database unreachable (triggers provider exponential retry).
+
+### `POST /api/v1/internal/payments/reconcile-pending`
+- **Auth**: Protected by internal service secret header.
+- **Headers**:
+  - `X-Internal-Service-Key`: String (Required).
+- **Description**: Internal maintenance and reconciliation endpoint. Resolves ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`, checks status of lagging `PENDING` payments against Razorpay REST API, and reclaims expired webhook leases with bounded batches.
+- **Request Body**:
+  ```json
+  {
+    "batch_size": 50,
+    "max_age_minutes": 1440
+  }
+  ```
+- **Response `200 OK`**:
+  ```json
+  {
+    "reconciled_payments_count": 3,
+    "reconciled_webhooks_count": 1,
+    "ambiguous_attempts_resolved": 1
+  }
+  ```
+- **Error Responses**:
+  - `403 Forbidden`: Invalid or missing internal service secret.
+
+### `POST /api/v1/internal/payments/{payment_id}/resolve-ambiguity`
+- **Auth**: Protected by internal service secret and operator metadata headers.
+- **Headers**:
+  - `X-Internal-Service-Key`: String (Required).
+  - `X-Operator-Id`: String (Required, operator UUID or email).
+  - `X-Operator-Reason`: String (Required).
+  - `Idempotency-Key`: String (Required).
+- **Description**: Manual operational review endpoint to resolve payment attempts in `CREATION_AMBIGUOUS` state after 60-minute review SLA. Supports either confirming absence of provider order or linking discovered provider order ID.
+- **Request Body**:
+  ```json
+  {
+    "action": "CONFIRM_ABSENT",
+    "provider_order_id": null
+  }
+  ```
+- **Response `200 OK`**:
+  ```json
+  {
+    "payment_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "status": "FAILED",
+    "action_taken": "CONFIRM_ABSENT",
+    "resolved_at": "2026-11-18T16:00:00Z"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `INVALID_ACTION` or `PAYMENT_NOT_AMBIGUOUS`.
+  - `403 Forbidden`: Invalid or missing internal service secret.
+
+### `POST /api/v1/orders/{order_id}/refunds`
+- **Auth**: Required (Admin / Support role or privileged internal call).
+- **Headers**:
+  - `Idempotency-Key`: String (Required, application-level idempotency).
+- **Description**: Issues a full or partial refund against a specific capture in `payment_captures`. Locks the capture row `FOR UPDATE`, enforces `sum(active refunds) <= capture.amount_paise`, and dispatches the request to Razorpay Refunds API with official header `X-Refund-Idempotency: {refund.id}` and body `receipt`.
+- **Request Body**:
+  ```json
+  {
+    "capture_id": "3c1e2b4d-5a6f-4a3b-9c1d-8e7f6a5b4c3d",
+    "amount_paise": 50000,
+    "reason": "CUSTOMER_RETURN_PARTIAL"
+  }
+  ```
+- **Response `201 Created`**:
+  ```json
+  {
+    "refund_id": "7b2c1a8d-4e5f-4a3b-9c1d-6e8f5a4b3c2d",
+    "capture_id": "3c1e2b4d-5a6f-4a3b-9c1d-8e7f6a5b4c3d",
+    "payment_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+    "order_id": "4a2c1b8d-9c3f-4e5a-8b1d-7e9f2a3c4b5d",
+    "provider_refund_id": "rfnd_NXv8W11223344",
+    "amount_paise": 50000,
+    "currency": "INR",
+    "status": "REFUND_PENDING"
+  }
+  ```
+- **Error Responses**:
+  - `400 Bad Request`: `EXCEEDS_REFUNDABLE_BALANCE` or `PAYMENT_NOT_CAPTURED`.
+  - `404 Not Found`: `ORDER_NOT_FOUND` or `PAYMENT_NOT_FOUND`.

@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -36,6 +37,7 @@ class PaymentStatus(enum.StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     REQUIRES_RECONCILIATION = "REQUIRES_RECONCILIATION"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
     REFUNDED = "REFUNDED"
 
 
@@ -104,6 +106,12 @@ class Order(Base):
         nullable=False,
         index=True,
     )
+    fulfilling_capture_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payment_window_expires_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
@@ -137,8 +145,28 @@ class Order(Base):
     reservation: Mapped[Any] = relationship(
         "InventoryReservation", foreign_keys=[reservation_id]
     )
+    payments: Mapped[list[Any]] = relationship(
+        "Payment",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="Payment.created_at",
+    )
+    fulfilling_capture: Mapped[Any] = relationship(
+        "PaymentCapture",
+        primaryjoin="and_(Order.fulfilling_capture_id == foreign(PaymentCapture.id), Order.id == foreign(PaymentCapture.order_id))",
+        uselist=False,
+        post_update=True,
+        viewonly=True,
+        lazy="raise",
+    )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["fulfilling_capture_id", "id"],
+            ["payment_captures.id", "payment_captures.order_id"],
+            name="fk_orders_fulfilling_capture_same_order",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "(customer_id IS NOT NULL AND guest_token_hash IS NULL) OR "
             "(customer_id IS NULL AND guest_token_hash IS NOT NULL)",
@@ -149,7 +177,7 @@ class Order(Base):
             name="chk_order_status",
         ),
         CheckConstraint(
-            "payment_status IN ('NOT_INITIATED', 'PENDING', 'SUCCEEDED', 'FAILED', 'REQUIRES_RECONCILIATION', 'REFUNDED')",
+            "payment_status IN ('NOT_INITIATED', 'PENDING', 'SUCCEEDED', 'FAILED', 'REQUIRES_RECONCILIATION', 'PARTIALLY_REFUNDED', 'REFUNDED')",
             name="chk_order_payment_status",
         ),
         CheckConstraint("subtotal_paise >= 0", name="chk_order_subtotal_paise"),
