@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     KAFKA_PRODUCER_RETRIES: int = 5
     KAFKA_PRODUCER_TIMEOUT_SECONDS: float = 2.0
 
+    # Outbox Publisher (Phase 3B)
+    OUTBOX_POLL_INTERVAL_SECONDS: float = 1.0
+    OUTBOX_BATCH_SIZE: int = 20
+    OUTBOX_LEASE_SECONDS: float = 30.0
+    OUTBOX_BATCH_WINDOW_SECONDS: float = 15.0
+    OUTBOX_PER_EVENT_TIMEOUT_SECONDS: float = 2.0
+    OUTBOX_MAX_RETRIES: int = 5
+
     # OpenSearch (Aiven OpenSearch)
     OPENSEARCH_URL: str | None = None
     OPENSEARCH_USERNAME: str | None = None
@@ -273,6 +281,13 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "KAFKA_BOOTSTRAP_SERVERS in production cannot use mock or localhost addresses."
                 )
+        return v
+
+    @field_validator("OUTBOX_BATCH_SIZE", mode="after")
+    @classmethod
+    def validate_outbox_batch_size(cls, v: int) -> int:
+        if v < 1 or v > 20:
+            raise ValueError("OUTBOX_BATCH_SIZE must be between 1 and 20.")
         return v
 
     @property

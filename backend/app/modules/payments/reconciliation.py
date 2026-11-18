@@ -349,11 +349,13 @@ class ReconciliationService:
                     aggregate_id=locked_order.id,
                     event_type="order.cancelled",
                     schema_version=1,
+                    aggregate_version=locked_order.version,
                     payload={
                         "order_id": str(locked_order.id),
                         "order_number": locked_order.order_number,
                         "status": "CANCELLED",
                         "cancel_reason": "PARTIAL_CAPTURE_REJECTED",
+                        "aggregate_version": locked_order.version,
                     },
                     status=OutboxStatus.PENDING.value,
                 )
@@ -501,6 +503,7 @@ class ReconciliationService:
                 continue
 
             # 2. Only after stock release succeeds, permanently cancel order
+            locked_order.version += 1
             locked_order.status = OrderStatus.CANCELLED.value
             locked_order.payment_status = PaymentStatus.FAILED.value
 
@@ -542,11 +545,13 @@ class ReconciliationService:
                 aggregate_id=locked_order.id,
                 event_type="order.cancelled",
                 schema_version=1,
+                aggregate_version=locked_order.version,
                 payload={
                     "order_id": str(locked_order.id),
                     "order_number": locked_order.order_number,
                     "status": "CANCELLED",
                     "cancel_reason": "AMBIGUITY_SLA_EXPIRED",
+                    "aggregate_version": locked_order.version,
                 },
                 status=OutboxStatus.PENDING.value,
             )

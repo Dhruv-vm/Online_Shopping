@@ -457,11 +457,15 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
 
 ---
 
-## 13. Phase 3 — Kafka Streaming, Outbox Leases & Consumer Inbox (`0009_outbox_lease_and_consumer_inbox`)
+## 13. Phase 3 — Kafka Streaming, Outbox Leases & Consumer Inbox
 
-Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
+Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.1.0 Distributed Systems & Reliability Specification)
 
-### `outbox_events` Table Alterations (`0009_outbox_lease_and_consumer_inbox`)
+### `orders` Table Alterations (`0009_outbox_lease`)
+- Added column `version`: INTEGER (Default 1, nullable=False, authoritative aggregate root version for event streaming and optimistic concurrency control)
+
+### `outbox_events` Table Alterations (`0009_outbox_lease`)
+- Added column `aggregate_version`: INTEGER (Nullable, aggregate root version for consumer external versioning)
 - Added column `claimed_by`: VARCHAR(128) (Nullable, worker identifier holding publishing lease)
 - Added column `claim_expires_at`: TIMESTAMPTZ (Nullable, lease expiration timestamp for worker crash recovery)
 - Added column `next_attempt_at`: TIMESTAMPTZ (Default `now()`, nullable=False, scheduled timestamp for durable backoff retries)
@@ -469,10 +473,10 @@ Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distribute
 - Updated status check constraint to include `'PROCESSING'`:
   `status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED')`
 - **Updated Indexes**:
-  - Replaced `ix_outbox_pending` with partial index `ix_outbox_lease_poll`:
+  - Added partial index `ix_outbox_lease_poll`:
     `ON outbox_events (status, next_attempt_at, claim_expires_at) WHERE status IN ('PENDING', 'PROCESSING')`
 
-### `consumer_inbox` Table (`0009_outbox_lease_and_consumer_inbox`)
+### `consumer_inbox` Table (`0010_consumer_inbox` — Scheduled for Slice 3C)
 Durable deduplication table providing effectively-once consumer side effects across crashes and at-least-once Kafka deliveries:
 - `id`: UUID (PK, default `uuid.uuid4`)
 - `consumer_group`: VARCHAR(128) (Nullable=False, indexed, e.g. `'basket-opensearch-sync'`)

@@ -14,6 +14,7 @@ from app.modules.orders.models import (
     Order,
     OrderStatusHistory,
     OutboxEvent,
+    OutboxStatus,
 )
 from app.modules.pricing.models import CheckoutQuote
 
@@ -117,6 +118,19 @@ class OrderRepository:
         res = await self.session.execute(stmt)
         return res.scalar_one_or_none()
 
+    async def get_order_by_id_for_update(self, order_id: uuid.UUID) -> Order | None:
+        stmt = (
+            select(Order)
+            .where(Order.id == order_id)
+            .with_for_update()
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.status_history),
+            )
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
     async def list_orders(
         self,
         customer_id: uuid.UUID | None,
@@ -151,6 +165,8 @@ class OrderRepository:
         event_type: str,
         schema_version: int,
         payload: dict[str, Any],
+        correlation_id: str | None = None,
+        aggregate_version: int | None = None,
     ) -> OutboxEvent:
         event = OutboxEvent(
             id=uuid.uuid4(),
@@ -159,8 +175,10 @@ class OrderRepository:
             event_type=event_type,
             schema_version=schema_version,
             payload=payload,
-            status="PENDING",
+            status=OutboxStatus.PENDING.value,
             retry_count=0,
+            correlation_id=correlation_id,
+            aggregate_version=aggregate_version,
         )
         self.session.add(event)
         return event

@@ -43,6 +43,7 @@ class PaymentStatus(enum.StrEnum):
 
 class OutboxStatus(enum.StrEnum):
     PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
     PUBLISHED = "PUBLISHED"
     FAILED = "FAILED"
 
@@ -115,6 +116,9 @@ class Order(Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payment_window_expires_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, server_default="1", default=1, nullable=False
     )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True),
@@ -303,10 +307,19 @@ class OutboxEvent(Base):
     published_at: Mapped[Any | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    claim_expires_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_attempt_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    correlation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    aggregate_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('PENDING', 'PUBLISHED', 'FAILED')",
+            "status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED')",
             name="chk_outbox_status",
         ),
         Index(
@@ -314,6 +327,14 @@ class OutboxEvent(Base):
             "created_at",
             postgresql_where=text("status = 'PENDING'"),
             sqlite_where=text("status = 'PENDING'"),
+        ),
+        Index(
+            "ix_outbox_lease_poll",
+            "status",
+            "next_attempt_at",
+            "claim_expires_at",
+            postgresql_where=text("status IN ('PENDING', 'PROCESSING')"),
+            sqlite_where=text("status IN ('PENDING', 'PROCESSING')"),
         ),
         Index("ix_outbox_aggregate", "aggregate_type", "aggregate_id"),
     )

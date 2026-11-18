@@ -125,9 +125,10 @@
 
 ## 2. Transactional Outbox Reliability & Delivery Engine
 
-### 2.1 Outbox Schema Extension (`0009_outbox_lease_and_consumer_inbox`)
+### 2.1 Outbox Schema Extension (`0009_outbox_lease`)
 ```sql
 ALTER TABLE outbox_events
+    ADD COLUMN aggregate_version INTEGER NULL,
     ADD COLUMN claimed_by VARCHAR(128) NULL,
     ADD COLUMN claim_expires_at TIMESTAMPTZ NULL,
     ADD COLUMN next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -141,10 +142,11 @@ ALTER TABLE outbox_events ADD CONSTRAINT chk_outbox_status CHECK (
 CREATE INDEX ix_outbox_lease_poll ON outbox_events (status, next_attempt_at, claim_expires_at)
     WHERE status IN ('PENDING', 'PROCESSING');
 ```
+*(Note: `consumer_inbox` is decoupled and provisioned in Slice 3C via migration `0010_consumer_inbox`)*
 
 ### 2.2 Bounded Batches, Lease Ownership & Long-Running Protection
 1. **Batch Size Capped at 20:** Workers claim at most 20 records (`LIMIT 20`) via `SELECT ... FOR UPDATE SKIP LOCKED`.
-2. **Per-Event Send Timeout (2.0s):** Remote publish calls to Kafka have hard 2.0-second timeouts. If the total batch loop exceeds 15 seconds, remaining un-sent records are skipped and left for subsequent cycles, preventing 30-second leases from expiring during execution.
+2. **Per-Event Send Timeout (2.0s):** Remote publish calls to Kafka have hard 2.0-second timeouts. If the total batch loop exceeds 15 seconds, remaining un-sent records are safely relinquished back to `PENDING` with cleared claim leases, preventing 30-second leases from expiring during execution.
 3. **Lease-Scoped Mutation (`WHERE claimed_by = :worker_id`):** When acknowledging published or failed events in PostgreSQL, the query strictly requires `WHERE id IN (:ids) AND claimed_by = :worker_id`. If worker-1 stalls for >30s, worker-2 reclaims the expired row; when worker-1 awakens, its update affects 0 rows, guaranteeing stale workers cannot overwrite legitimate progress.
 
 ### 2.3 Bounded Exponential Backoff with Decorrelated Jitter
@@ -152,7 +154,7 @@ When an outbox event encounters a transient error, its `next_attempt_at` is sche
 
 $$T_{backoff} = \min\left(T_{max},\; T_{base} \times 2^{retry\_count} + \text{uniform}(0,\; T_{jitter})\right)$$
 
-- $T_{base} = 1.0\text{ second}$, $T_{max} = 300.0\text{ seconds}$ (5 minutes), $T_{jitter} = 2.0\text{ seconds}$, `MAX_RETRIES` = 10 attempts.
+- $T_{base} = 1.0\text{ second}$, $T_{max} = 300.0\text{ seconds}$ (5 minutes), $T_{jitter} = 2.0\text{ seconds}$, `MAX_RETRIES` = 5 attempts (aligned with `KAFKA_PRODUCER_RETRIES = 5` and Webhook retry limits). At `retry_count >= 5`, the event transitions permanently to `FAILED`.
 
 ### 2.4 The Acknowledged-Publish / Unacknowledged-DB Crash Proof
 ```text
@@ -168,6 +170,25 @@ $$T_{backoff} = \min\left(T_{max},\; T_{base} \times 2^{retry\_count} + \text{un
 - **Consumer Invariant:** Downstream consumers achieve **effective exactly-once** execution:
   - PostgreSQL consumers deduplicate via the `consumer_inbox` table (`ON CONFLICT DO NOTHING`).
   - OpenSearch consumers deduplicate via `version_type="external_gte"`, safely ignoring or reapplying equal versions without state regression.
+
+### 2.5 Authoritative Aggregate Versioning & Monotonicity Invariants
+Every published `EventEnvelope` strictly preserves the aggregate root version to enable downstream consumer deduplication and optimistic concurrency control (OpenSearch `version_type="external_gte"`):
+1. **Authoritative Source of Version:** The Aggregate Root itself (`Order.version` in the `orders` table) is the single source of truth for the aggregate version, provisioned in migration `0009_outbox_lease`.
+2. **Transactional Allocation under Exclusive Lock:** State transitions exclusively lock the aggregate root via `SELECT ... FOR UPDATE`. The version is atomically incremented (`order.version += 1`), and the outbox event is persisted with `aggregate_version = order.version` in the exact same database transaction.
+3. **Strictly Monotonic Sequences:**
+   - Initial creation: `order.created` receives version 1.
+   - Subsequent confirmation: `order.confirmed` increments to version 2.
+   - Post-confirmation cancellation: `order.cancelled` increments to version 3.
+   - Direct cancellation from pending payment: `order.cancelled` increments to version 2.
+   - For all paths, $V_1 < V_2 < V_3 < \dots < V_n$.
+4. **Concurrency & Race Invariant:** PostgreSQL row-level locks on the aggregate root serialize concurrent state transitions. Two concurrent transactions can never allocate the same aggregate version.
+5. **Idempotent Terminal States:** Repeated cancellation attempts on an already cancelled order are strictly idempotent no-ops: they do not mutate `order.version` and emit zero outbox events.
+6. **OpenSearch `external_gte` Consumer Invariant:**
+   - Strictly greater version ($V > V_{current}$): Applies mutation and advances document version.
+   - Equal version ($V == V_{current}$): Accepts idempotent replay without version error or state regression.
+   - Strictly lesser version ($V < V_{current}$): Rejects with `version_conflict_engine_exception`, preventing delayed/out-of-order events from regressing state.
+7. **Legacy Historical Event Compatibility:** Migration `0009_outbox_lease` backfills historical unversioned records using `ROW_NUMBER() OVER (PARTITION BY aggregate_id ORDER BY created_at ASC)`, guaranteeing deterministic monotonic versions across existing databases.
+8. **Retry Invariant:** Event retries preserve identical `event_id`, `event_version`, `aggregate_version`, and `occurred_at` timestamps across all publishing attempts.
 
 ---
 

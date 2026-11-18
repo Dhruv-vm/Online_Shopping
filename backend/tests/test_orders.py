@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,11 +16,14 @@ from app.modules.inventory.models import InventoryReservation, ReservationStatus
 from app.modules.inventory.service import ReservationService
 from app.modules.orders.models import (
     Order,
+    OrderStatus,
     OutboxEvent,
 )
 from app.modules.orders.schemas import CreateOrderRequest
 from app.modules.orders.service import OrderService
+from app.modules.payments.client import RazorpayClient
 from app.modules.pricing.models import CheckoutQuote, QuoteStatus
+from tests.test_payments import generate_payment_signature, setup_customer_and_order
 
 
 def get_internal_auth_headers(use_token_alias: bool = False) -> dict[str, str]:
@@ -1851,3 +1855,284 @@ async def test_concurrent_cleanup_and_order_placement(
                 )
             )
             await session.commit()
+
+
+@pytest.mark.asyncio
+class TestOrderAggregateVersionMonotonicity:
+    async def test_aggregate_version_created_confirmed_cancelled(
+        self, async_client: AsyncClient
+    ):
+        """Monotonic versioning: created (v1) -> confirmed (v2) -> cancelled (v3)."""
+        user, token, order_data = await setup_customer_and_order(async_client)
+        order_id = uuid.UUID(order_data["id"])
+        amount = order_data["total_payable_paise"]
+        session_factory = get_session_factory()
+
+        # Step 1: Verify creation version
+        async with session_factory() as session:
+            db_order = (
+                await session.execute(select(Order).where(Order.id == order_id))
+            ).scalar_one()
+            assert db_order.version == 1
+
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(evts) == 1
+            assert evts[0].event_type == "order.created"
+            assert evts[0].aggregate_version == 1
+            assert evts[0].payload["aggregate_version"] == 1
+
+        # Step 2: Confirm order via payment verification -> version 2
+        provider_order_id = f"order_rzp_{uuid.uuid4().hex[:8]}"
+        provider_payment_id = f"pay_rzp_{uuid.uuid4().hex[:8]}"
+        valid_sig = generate_payment_signature(provider_order_id, provider_payment_id)
+
+        fake_provider_order = {
+            "id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "receipt": order_data["order_number"],
+            "status": "created",
+        }
+        fake_provider_payment = {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+        }
+
+        with (
+            patch.object(
+                RazorpayClient,
+                "create_order",
+                new_callable=AsyncMock,
+                return_value=fake_provider_order,
+            ),
+            patch.object(
+                RazorpayClient,
+                "fetch_payment",
+                new_callable=AsyncMock,
+                return_value=fake_provider_payment,
+            ),
+        ):
+            init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+            assert init_resp.status_code == 201
+
+            verify_resp = await async_client.post(
+                f"/api/v1/orders/{order_id}/payments/verify",
+                json={
+                    "razorpay_order_id": provider_order_id,
+                    "razorpay_payment_id": provider_payment_id,
+                    "razorpay_signature": valid_sig,
+                },
+            )
+            assert verify_resp.status_code == 200
+
+        # Step 3: Verify confirmation version in DB
+        async with session_factory() as session:
+            db_order = (
+                await session.execute(select(Order).where(Order.id == order_id))
+            ).scalar_one()
+            assert db_order.status == OrderStatus.CONFIRMED.value
+            assert db_order.version == 2
+
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(evts) == 2
+            assert evts[1].event_type == "order.confirmed"
+            assert evts[1].aggregate_version == 2
+            assert evts[1].payload["aggregate_version"] == 2
+
+        # Step 4: Cancel confirmed order -> version 3
+        async with session_factory() as session:
+            order_service = OrderService(session)
+            cancelled = await order_service.cancel_order(
+                order_id=order_id,
+                reason="CUSTOMER_REQUESTED_POST_CONFIRM",
+            )
+            await session.commit()
+            assert cancelled.status == OrderStatus.CANCELLED.value
+            assert cancelled.version == 3
+
+        # Step 5: Verify complete monotonically increasing event chain: 1 -> 2 -> 3
+        async with session_factory() as session:
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(evts) == 3
+            assert [e.aggregate_version for e in evts] == [1, 2, 3]
+            assert [e.event_type for e in evts] == [
+                "order.created",
+                "order.confirmed",
+                "order.cancelled",
+            ]
+            for i, evt in enumerate(evts, start=1):
+                assert evt.payload["aggregate_version"] == i
+
+    async def test_aggregate_version_created_cancelled(self, async_client: AsyncClient):
+        """Monotonic versioning: created (v1) -> cancelled (v2)."""
+        user, token, order_data = await setup_customer_and_order(async_client)
+        order_id = uuid.UUID(order_data["id"])
+        session_factory = get_session_factory()
+
+        # Step 1: Verify creation
+        async with session_factory() as session:
+            db_order = (
+                await session.execute(select(Order).where(Order.id == order_id))
+            ).scalar_one()
+            assert db_order.version == 1
+
+        # Step 2: Cancel directly from PENDING_PAYMENT
+        async with session_factory() as session:
+            order_service = OrderService(session)
+            cancelled = await order_service.cancel_order(
+                order_id=order_id,
+                reason="PAYMENT_WINDOW_EXPIRED",
+            )
+            await session.commit()
+            assert cancelled.status == OrderStatus.CANCELLED.value
+            assert cancelled.version == 2
+
+        # Step 3: Verify monotonic chain: 1 -> 2
+        async with session_factory() as session:
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(evts) == 2
+            assert [e.aggregate_version for e in evts] == [1, 2]
+            assert [e.event_type for e in evts] == [
+                "order.created",
+                "order.cancelled",
+            ]
+            assert evts[0].payload["aggregate_version"] == 1
+            assert evts[1].payload["aggregate_version"] == 2
+
+    async def test_repeated_cancellation_attempts_are_idempotent(
+        self, async_client: AsyncClient
+    ):
+        """Repeated cancellation is idempotent: does not increment version or emit duplicate events."""
+        user, token, order_data = await setup_customer_and_order(async_client)
+        order_id = uuid.UUID(order_data["id"])
+        session_factory = get_session_factory()
+
+        # First cancel
+        async with session_factory() as session:
+            order_service = OrderService(session)
+            await order_service.cancel_order(order_id=order_id, reason="FIRST_CANCEL")
+            await session.commit()
+
+        # Second cancel (duplicate attempt)
+        async with session_factory() as session:
+            order_service = OrderService(session)
+            second_result = await order_service.cancel_order(
+                order_id=order_id,
+                reason="DUPLICATE_CANCEL",
+            )
+            await session.commit()
+            assert second_result.version == 2
+            assert second_result.status == OrderStatus.CANCELLED.value
+
+        # Third cancel
+        async with session_factory() as session:
+            order_service = OrderService(session)
+            third_result = await order_service.cancel_order(
+                order_id=order_id,
+                reason="THIRD_CANCEL",
+            )
+            await session.commit()
+            assert third_result.version == 2
+
+        # Verify exactly 2 events exist (created=1, cancelled=2), zero duplicates
+        async with session_factory() as session:
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(evts) == 2
+            assert [e.aggregate_version for e in evts] == [1, 2]
+
+    async def test_concurrent_order_state_transitions_monotonicity(
+        self, async_client: AsyncClient
+    ):
+        """Two concurrent cancellation transactions cannot allocate the same aggregate version."""
+        user, token, order_data = await setup_customer_and_order(async_client)
+        order_id = uuid.UUID(order_data["id"])
+        session_factory = get_session_factory()
+
+        async def attempt_cancel(worker_name: str):
+            async with session_factory() as session:
+                order_service = OrderService(session)
+                res = await order_service.cancel_order(
+                    order_id=order_id,
+                    reason=f"CONCURRENT_{worker_name}",
+                )
+                await session.commit()
+                return res.version
+
+        # Run concurrent cancellations across independent DB sessions
+        v1, v2 = await asyncio.gather(
+            attempt_cancel("WORKER_A"),
+            attempt_cancel("WORKER_B"),
+        )
+
+        assert v1 == 2
+        assert v2 == 2
+
+        # Verify outbox event versions are strictly unique and no duplicate version was created
+        async with session_factory() as session:
+            evts = (
+                (
+                    await session.execute(
+                        select(OutboxEvent)
+                        .where(OutboxEvent.aggregate_id == order_id)
+                        .order_by(OutboxEvent.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            versions = [e.aggregate_version for e in evts]
+            assert versions == [1, 2]
+            assert len(versions) == len(set(versions))
