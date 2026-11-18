@@ -2277,14 +2277,14 @@ async def test_sla_reservation_release_failure_atomic_rollback_and_retry(
     session_factory = get_session_factory()
     assert session_factory is not None
 
-    # Age order past 75-minute SLA
+    # Age order past 75-minute SLA (set earlier than stale database records)
     async with session_factory() as session:
         await session.execute(
             update(Order)
             .where(Order.id == order_id)
             .values(
-                created_at=datetime.now(UTC) - timedelta(minutes=80),
-                payment_window_expires_at=datetime.now(UTC) - timedelta(minutes=80),
+                created_at=datetime.now(UTC) - timedelta(days=365),
+                payment_window_expires_at=datetime.now(UTC) - timedelta(days=365),
             )
         )
         await session.commit()

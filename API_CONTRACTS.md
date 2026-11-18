@@ -629,3 +629,119 @@ For every endpoint document:
 - **Error Responses**:
   - `400 Bad Request`: `EXCEEDS_REFUNDABLE_BALANCE` or `PAYMENT_NOT_CAPTURED`.
   - `404 Not Found`: `ORDER_NOT_FOUND` or `PAYMENT_NOT_FOUND`.
+
+---
+
+## 10. Phase 3 Search & Ingestion API Contracts
+
+Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
+
+### `GET /api/v1/search`
+- **Auth**: Public (Optional authenticated customer context).
+- **Rate Limiting**: 60 requests/minute per IP (unauthenticated), 180 requests/minute (authenticated).
+- **Description**: Universal multi-category product search powered by OpenSearch with automatic, transparent fallback to PostgreSQL SQL search protected by a 3-state circuit breaker.
+- **Query Parameters**:
+  - `q`: String (Optional search query string, min 1 char, max 100 chars, e.g. `"organic milk"` or `"smartphone"`).
+  - `category_slug`: String (Optional category filter).
+  - `brand`: String (Optional brand filter; repeatable or comma-separated).
+  - `retailer_id`: UUID (Optional retailer filter).
+  - `min_price_paise`: Integer (Optional minimum selling price in integer paise).
+  - `max_price_paise`: Integer (Optional maximum selling price in integer paise).
+  - `in_stock`: Boolean (Optional in-stock filter).
+  - `min_rating`: Float (Optional rating floor).
+  - `sort_by`: String (Enum: `relevance`, `price_asc`, `price_desc`, `rating_desc`, `newest`, default: `relevance`).
+  - `page`: Integer (Default: 1, min: 1).
+  - `limit`: Integer (Default: 20, min: 1, max: 100).
+- **Response `200 OK`**:
+  ```json
+  {
+    "items": [
+      {
+        "id": "c1a2b3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "Organic Whole Milk 1L",
+        "slug": "organic-whole-milk-1l",
+        "brand": "Amul Organic",
+        "category_id": "f1e2d3c4-b5a6-7890-1234-56789abcdef0",
+        "category_name": "Dairy & Eggs",
+        "category_slug": "dairy-eggs",
+        "primary_image": "https://assets.basket.local/products/milk-1l.jpg",
+        "min_price_paise": 7200,
+        "max_price_paise": 7800,
+        "original_price_paise": 7800,
+        "currency": "INR",
+        "is_in_stock": true,
+        "rating": 5.0,
+        "variant_count": 1,
+        "retailer_count": 3
+      }
+    ],
+    "facets": {
+      "categories": [
+        { "slug": "dairy-eggs", "name": "Dairy & Eggs", "count": 14 }
+      ],
+      "brands": [
+        { "name": "Amul Organic", "count": 6 },
+        { "name": "Mother Dairy", "count": 8 }
+      ],
+      "retailers": [
+        { "id": "e1f2a3b4-c5d6-7890-1234-56789abcdef1", "name": "SuperMart Express", "count": 12 }
+      ],
+      "price_range": {
+        "min_price_paise": 4500,
+        "max_price_paise": 18500
+      }
+    },
+    "total": 1,
+    "page": 1,
+    "limit": 20,
+    "pages": 1,
+    "engine": "opensearch"
+  }
+  ```
+  *(Note: When circuit breaker trips, `engine` is `"postgres_fallback"` and `facets` returns `null` to protect database load).*
+- **Error Responses**:
+  - `400 Bad Request`: `INVALID_PARAMETER` (e.g. `min_price_paise > max_price_paise` or `q` length > 100).
+
+### `GET /api/v1/search/suggest`
+- **Auth**: Public.
+- **Rate Limiting**: 120 requests/minute per IP.
+- **Description**: Fast autocomplete suggestions using edge n-gram analyzers.
+- **Query Parameters**:
+  - `q`: String (Required, min 2 chars, max 50 chars).
+  - `limit`: Integer (Default: 5, max: 10).
+- **Response `200 OK`**:
+  ```json
+  {
+    "query": "mil",
+    "suggestions": [
+      { "text": "milk", "type": "query" },
+      { "text": "Organic Whole Milk 1L", "type": "product", "slug": "organic-whole-milk-1l" },
+      { "text": "Milton", "type": "brand" }
+    ]
+  }
+  ```
+
+### `POST /api/v1/internal/search/reindex`
+- **Auth**: Protected by internal service secret and operator audit headers. Never exposed publicly.
+- **Headers**:
+  - `X-Internal-Service-Key`: String (Required).
+  - `X-Operator-Id`: String (Optional, e.g. operator UUID/email for audit log).
+  - `X-Operator-Reason`: String (Optional).
+- **Description**: Initiates a background full reindex from PostgreSQL to OpenSearch with zero-downtime blue/green alias rotation.
+- **Request Body**:
+  ```json
+  {
+    "batch_size": 250
+  }
+  ```
+- **Response `202 Accepted`**:
+  ```json
+  {
+    "status": "ACCEPTED",
+    "job_id": "job-reindex-20261118-01",
+    "target_index": "basket_products_v2"
+  }
+  ```
+- **Error Responses**:
+  - `403 Forbidden`: Invalid or missing internal service secret.
+  - `403 Forbidden`: Invalid or missing internal service secret.

@@ -454,3 +454,53 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
   - `uq_webhook_provider_event`: UNIQUE on `(provider, provider_event_id)`
   - Index `ix_webhook_claim`: `(status, claim_expires_at)`
   - Index `ix_webhook_created`: `(created_at)`
+
+---
+
+## 13. Phase 3 — Kafka Streaming, Outbox Leases & Consumer Inbox (`0009_outbox_lease_and_consumer_inbox`)
+
+Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
+
+### `outbox_events` Table Alterations (`0009_outbox_lease_and_consumer_inbox`)
+- Added column `claimed_by`: VARCHAR(128) (Nullable, worker identifier holding publishing lease)
+- Added column `claim_expires_at`: TIMESTAMPTZ (Nullable, lease expiration timestamp for worker crash recovery)
+- Added column `next_attempt_at`: TIMESTAMPTZ (Default `now()`, nullable=False, scheduled timestamp for durable backoff retries)
+- Added column `correlation_id`: VARCHAR(128) (Nullable, trace identifier for end-to-end telemetry)
+- Updated status check constraint to include `'PROCESSING'`:
+  `status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED')`
+- **Updated Indexes**:
+  - Replaced `ix_outbox_pending` with partial index `ix_outbox_lease_poll`:
+    `ON outbox_events (status, next_attempt_at, claim_expires_at) WHERE status IN ('PENDING', 'PROCESSING')`
+
+### `consumer_inbox` Table (`0009_outbox_lease_and_consumer_inbox`)
+Durable deduplication table providing effectively-once consumer side effects across crashes and at-least-once Kafka deliveries:
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `consumer_group`: VARCHAR(128) (Nullable=False, indexed, e.g. `'basket-opensearch-sync'`)
+- `event_id`: UUID (Nullable=False, indexed, references `EventEnvelope.event_id`)
+- `aggregate_type`: VARCHAR(64) (Nullable=False)
+- `aggregate_id`: UUID (Nullable=False)
+- `processed_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- **Constraints & Indexes**:
+  - `uq_consumer_inbox_group_event`: UNIQUE on `(consumer_group, event_id)`
+  - Index `ix_consumer_inbox_retention`: `(processed_at)` (For 30-day inbox pruning)
+
+### OpenSearch Derived Document Projection (`basket_products` Index)
+*Note: Stored in OpenSearch, not PostgreSQL. Documented here for cross-system data model alignment.*
+- `product_id`: Keyword (Authoritative UUID from `products.id`)
+- `product_name`: Text (Search analyzer + Edge n-gram autocomplete)
+- `product_slug`: Keyword
+- `brand`: Text (Analyzed + raw Keyword)
+- `category`: Object (`id`: Keyword, `name`: Text/Keyword, `slug`: Keyword)
+- `description`: Text (Search analyzer)
+- `primary_image_url`: Keyword
+- `min_price_paise`: Long (Minimum selling price across active listings)
+- `max_price_paise`: Long (Maximum selling price across active listings)
+- `has_discount`: Boolean (Derived: `min_price_paise < max_original_price_paise`)
+- `max_discount_percentage`: Float
+- `is_in_stock`: Boolean (True if aggregate available inventory > 0)
+- `total_available_quantity`: Integer
+- `retailer_count`: Integer
+- `retailers`: Array of Objects (`id`, `name`, `slug`, `selling_price_paise`, `original_price_paise`, `rating`, `is_available`)
+- `is_active`: Boolean
+- `created_at`, `updated_at`: Date
+- `version`: Long (External versioning using monotonic epoch millisecond timestamp for `external_gte` concurrency protection)
