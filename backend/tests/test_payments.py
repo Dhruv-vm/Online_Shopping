@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.database import get_session_factory
 from app.core.exceptions import AppException
 from app.modules.inventory.models import InventoryReservation, ReservationStatus
+from app.modules.inventory.service import ReservationService
 from app.modules.orders.models import (
     Order,
     OrderStatus,
@@ -2982,7 +2983,16 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
     sig = generate_webhook_signature(raw_body)
     evt_id1 = f"evt_wh_part_{uuid.uuid4().hex[:8]}"
 
-    # A1. Simulate reservation release failure
+    # A1. Simulate a real database-level statement failure during reservation release that aborts a PostgreSQL transaction:
+    real_release = ReservationService.release_reservation
+
+    async def aborting_pg_release(self, *args, **kwargs):
+        # Execute a statement that aborts transaction at the PostgreSQL database engine level
+        await self.session.execute(
+            text("SELECT * FROM non_existent_table_that_aborts_pg_tx")
+        )
+        return await real_release(self, *args, **kwargs)
+
     with (
         patch(
             "app.modules.payments.service.RazorpayClient.create_refund",
@@ -2993,12 +3003,10 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
                 "amount": partial_amount,
             },
         ),
-        patch(
-            "app.modules.inventory.service.ReservationService.release_reservation",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError(
-                "Simulated lock contention on reservation release"
-            ),
+        patch.object(
+            ReservationService,
+            "release_reservation",
+            aborting_pg_release,
         ),
     ):
         resp_fail = await async_client.post(
@@ -3015,12 +3023,13 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
     # Verify state after release failure:
     async with session_factory() as session:
         ord_row = await session.get(Order, order_id)
-        # Order is NOT cancelled! Reservation release failed!
+        # 1. Order is NOT cancelled! Reservation release failed!
         assert ord_row.status != OrderStatus.CANCELLED.value
+        # 2. Order enters REQUIRES_RECONCILIATION
         assert ord_row.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value
         assert ord_row.fulfilling_capture_id is None
 
-        # Capture and refund intent survive
+        # 3. Partial capture is durably recorded
         cap_res = await session.execute(
             select(PaymentCapture).where(
                 PaymentCapture.provider_payment_id == provider_payment_id
@@ -3033,14 +3042,104 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
         )
         assert cap.is_fulfillment_eligible is False
 
+        # 4. Refund intent is durably recorded
         rfnd_res = await session.execute(
             select(PaymentRefund).where(PaymentRefund.capture_id == cap.id)
         )
         rfnd = rfnd_res.scalar_one()
         assert rfnd.amount_paise == partial_amount
 
-    # A2. Retry partial capture webhook (unmocked reservation release succeeds)
-    evt_id2 = f"evt_wh_part_retry_{uuid.uuid4().hex[:8]}"
+        # 5. The webhook processor finished cleanly and marked the event PROCESSED without a poisoned session
+        evt_row = (
+            await session.execute(
+                select(WebhookEvent).where(WebhookEvent.provider_event_id == evt_id1)
+            )
+        ).scalar_one()
+        assert evt_row.status == WebhookEventStatus.PROCESSED.value
+
+    # A2. Test same provider event ID delivered again:
+    # Deduplicated at ingestion level and does NOT rerun business processing
+    resp_dup = await async_client.post(
+        "/api/v1/payments/webhook",
+        content=raw_body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Razorpay-Signature": sig,
+            "X-Razorpay-Event-Id": evt_id1,
+        },
+    )
+    assert resp_dup.status_code == 200
+    assert resp_dup.json()["status"] == "ignored"
+    assert resp_dup.json()["reason"] == "ALREADY_INGESTED"
+
+    # Assert business processing was not rerun: still exactly 1 capture, 1 refund, order non-cancelled
+    async with session_factory() as session:
+        caps_dup = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(caps_dup) == 1
+        rfnds_dup = (
+            (
+                await session.execute(
+                    select(PaymentRefund).where(PaymentRefund.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rfnds_dup) == 1
+        ord_dup = await session.get(Order, order_id)
+        assert ord_dup.status != OrderStatus.CANCELLED.value
+
+    # A3. Reconciliation retry after the original webhook has been marked PROCESSED:
+    # Razorpay sends NO new event; background reconciliation discovers the order in REQUIRES_RECONCILIATION
+    async with session_factory() as session:
+        reconciler = ReconciliationService(session)
+        rec_res = await reconciler.reconcile_pending(batch_size=10)
+        assert rec_res.reconciled_payments_count >= 1
+
+    # Verify state after reconciliation: order cancelled, reservation released exactly once
+    async with session_factory() as session:
+        ord_rec = await session.get(Order, order_id)
+        assert ord_rec.status == OrderStatus.CANCELLED.value
+        assert ord_rec.payment_status == PaymentStatus.FAILED.value
+        assert ord_rec.fulfilling_capture_id is None
+
+        # Reservation was released cleanly
+        res_row = await session.get(InventoryReservation, ord_rec.reservation_id)
+        assert res_row.status == ReservationStatus.RELEASED.value
+
+        # Still exactly 1 capture and 1 refund (no duplicate records)
+        caps_rec = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(caps_rec) == 1
+        rfnds_rec = (
+            (
+                await session.execute(
+                    select(PaymentRefund).where(PaymentRefund.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rfnds_rec) == 1
+
+    # A4. Distinct duplicate event for the same capture:
+    # A subsequent webhook with a DIFFERENT event_id arrives for the same captured payment
+    evt_id_distinct = f"evt_wh_part_distinct_{uuid.uuid4().hex[:8]}"
     with patch(
         "app.modules.payments.service.RazorpayClient.create_refund",
         new_callable=AsyncMock,
@@ -3050,26 +3149,24 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
             "amount": partial_amount,
         },
     ):
-        resp_retry = await async_client.post(
+        resp_distinct = await async_client.post(
             "/api/v1/payments/webhook",
             content=raw_body,
             headers={
                 "Content-Type": "application/json",
                 "X-Razorpay-Signature": sig,
-                "X-Razorpay-Event-Id": evt_id2,
+                "X-Razorpay-Event-Id": evt_id_distinct,
             },
         )
-        assert resp_retry.status_code == 200
+        assert resp_distinct.status_code == 200
 
-    # Verify state after retry: order now cleanly CANCELLED, payment FAILED
+    # Verify idempotency after distinct duplicate: no duplicate release or refund, order stays CANCELLED
     async with session_factory() as session:
-        ord_retry = await session.get(Order, order_id)
-        assert ord_retry.status == OrderStatus.CANCELLED.value
-        assert ord_retry.payment_status == PaymentStatus.FAILED.value
-        assert ord_retry.fulfilling_capture_id is None
+        ord_distinct = await session.get(Order, order_id)
+        assert ord_distinct.status == OrderStatus.CANCELLED.value
+        assert ord_distinct.payment_status == PaymentStatus.FAILED.value
 
-        # Still exactly 1 capture and 1 refund
-        caps_all = (
+        caps_distinct = (
             (
                 await session.execute(
                     select(PaymentCapture).where(PaymentCapture.order_id == order_id)
@@ -3078,9 +3175,9 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
             .scalars()
             .all()
         )
-        assert len(caps_all) == 1
+        assert len(caps_distinct) == 1
 
-        rfnds_all = (
+        rfnds_distinct = (
             (
                 await session.execute(
                     select(PaymentRefund).where(PaymentRefund.order_id == order_id)
@@ -3089,7 +3186,13 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
             .scalars()
             .all()
         )
-        assert len(rfnds_all) == 1
+        assert len(rfnds_distinct) == 1
+
+    # A5. Subsequent reconciliation run is an idempotent no-op (0 partial captures resolved)
+    async with session_factory() as session:
+        reconciler = ReconciliationService(session)
+        rec_res2 = await reconciler.reconcile_pending(batch_size=10)
+        assert rec_res2.reconciled_payments_count == 0
 
     # Part B: Webhook arriving after /payments/verify recorded the same capture
     user_b, token_b, order_b = await setup_customer_and_order(async_client)

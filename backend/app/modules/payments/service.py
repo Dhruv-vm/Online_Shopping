@@ -50,23 +50,39 @@ from app.modules.payments.schemas import (
 async def reconcile_rejected_partial_capture_order(
     order: Order,
     reservation_service: ReservationService | None,
+    session: AsyncSession | None = None,
 ) -> bool:
     """Attempts to release the order's reservation hold on rejected partial capture.
     Only marks the order CANCELLED and payment_status FAILED if reservation release succeeds.
     If release fails, marks payment_status REQUIRES_RECONCILIATION and leaves order non-cancelled.
+    Uses a savepoint (begin_nested) to safely isolate database-level statement failures (such as
+    lock_timeout or postgres aborted transactions) so the outer transaction holding the capture
+    ledger, refund intent, and order reconciliation state is not poisoned.
     Returns True if release succeeded or order was already cancelled.
     """
     if order.status == OrderStatus.CANCELLED.value:
         return True
 
     release_succeeded = False
+    effective_session = session or (
+        reservation_service.session if reservation_service else None
+    )
+
     if reservation_service and order.reservation_id:
         try:
-            await reservation_service.release_reservation(
-                reservation_id=order.reservation_id,
-                reason="PARTIAL_CAPTURE_REJECTED",
-                internal=True,
-            )
+            if effective_session:
+                async with effective_session.begin_nested():
+                    await reservation_service.release_reservation(
+                        reservation_id=order.reservation_id,
+                        reason="PARTIAL_CAPTURE_REJECTED",
+                        internal=True,
+                    )
+            else:
+                await reservation_service.release_reservation(
+                    reservation_id=order.reservation_id,
+                    reason="PARTIAL_CAPTURE_REJECTED",
+                    internal=True,
+                )
             release_succeeded = True
         except Exception as exc:
             logger.error(
@@ -619,6 +635,7 @@ class PaymentService:
             await reconcile_rejected_partial_capture_order(
                 order=order,
                 reservation_service=self.reservation_service,
+                session=self.session,
             )
 
             # Durably commit partial capture, order status, and payment attempt before refund / raising error

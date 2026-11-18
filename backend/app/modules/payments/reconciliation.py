@@ -16,6 +16,7 @@ from app.modules.orders.models import (
 )
 from app.modules.payments.client import RazorpayClient
 from app.modules.payments.models import (
+    CaptureReconciliationStatus,
     CaptureStatus,
     Payment,
     PaymentAttemptStatus,
@@ -26,6 +27,7 @@ from app.modules.payments.schemas import (
     ReconcilePendingResponse,
     ResolveAmbiguityResponse,
 )
+from app.modules.payments.service import reconcile_rejected_partial_capture_order
 from app.modules.payments.webhook import WebhookService
 
 
@@ -215,11 +217,86 @@ class ReconciliationService:
             except Exception as exc:
                 logger.error("Error reconciling refund %s: %s", refund.id, str(exc))
 
+        # 5. Reconcile rejected partial captures where reservation release previously failed
+        reconciled_partial_captures = await self.reconcile_unresolved_partial_captures(
+            limit=batch_size
+        )
+        reconciled_payments_count += reconciled_partial_captures
+
         return ReconcilePendingResponse(
             reconciled_payments_count=reconciled_payments_count,
             reconciled_webhooks_count=reconciled_webhooks_count,
             ambiguous_attempts_resolved=ambiguous_resolved_count,
         )
+
+    async def reconcile_unresolved_partial_captures(
+        self,
+        limit: int = 50,
+    ) -> int:
+        """Finds non-cancelled orders in REQUIRES_RECONCILIATION that have rejected partial captures,
+        and retries reservation release and order cancellation."""
+        orders = await self.repo.get_orders_requiring_partial_capture_reconciliation(
+            limit=limit
+        )
+        resolved_count = 0
+        for order in orders:
+            locked_order = await self.repo.get_order_by_id_for_update(order.id)
+            if (
+                not locked_order
+                or locked_order.status == OrderStatus.CANCELLED.value
+                or locked_order.payment_status
+                != PaymentStatus.REQUIRES_RECONCILIATION.value
+            ):
+                continue
+            if locked_order.fulfilling_capture_id is not None:
+                continue
+
+            success = await reconcile_rejected_partial_capture_order(
+                order=locked_order,
+                reservation_service=self.reservation_service,
+                session=self.session,
+            )
+            if success:
+                history = OrderStatusHistory(
+                    order_id=locked_order.id,
+                    from_status=locked_order.status,
+                    to_status=OrderStatus.CANCELLED.value,
+                    reason="PARTIAL_CAPTURE_REJECTED",
+                )
+                self.session.add(history)
+
+                outbox_event = OutboxEvent(
+                    aggregate_type="Order",
+                    aggregate_id=locked_order.id,
+                    event_type="order.cancelled",
+                    schema_version=1,
+                    payload={
+                        "order_id": str(locked_order.id),
+                        "order_number": locked_order.order_number,
+                        "status": "CANCELLED",
+                        "cancel_reason": "PARTIAL_CAPTURE_REJECTED",
+                    },
+                    status=OutboxStatus.PENDING.value,
+                )
+                self.session.add(outbox_event)
+
+                # Ensure automated refund exists and is queued/dispatched
+                caps = await self.repo.get_captures_for_order(locked_order.id)
+                for cap in caps:
+                    if (
+                        cap.reconciliation_status
+                        == CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value
+                    ):
+                        await self.webhook_service._trigger_auto_refund(
+                            cap, "PARTIAL_CAPTURE_REJECTED"
+                        )
+
+                await self.session.commit()
+                resolved_count += 1
+            else:
+                await self.session.rollback()
+
+        return resolved_count
 
     async def resolve_ambiguity_manual(
         self,

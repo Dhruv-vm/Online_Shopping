@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.orders.models import Order
+from app.modules.orders.models import Order, OrderStatus, PaymentStatus
 from app.modules.payments.models import (
+    CaptureReconciliationStatus,
     Payment,
     PaymentAttemptStatus,
     PaymentCapture,
@@ -367,6 +368,26 @@ class PaymentRepository:
             .order_by(Order.created_at.asc())
             .limit(limit)
             .with_for_update(skip_locked=True)
+        )
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
+    async def get_orders_requiring_partial_capture_reconciliation(
+        self, limit: int = 50
+    ) -> list[Order]:
+        """Finds non-cancelled orders in REQUIRES_RECONCILIATION that have rejected partial captures."""
+        stmt = (
+            select(Order)
+            .join(PaymentCapture, PaymentCapture.order_id == Order.id)
+            .where(
+                Order.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value,
+                Order.status != OrderStatus.CANCELLED.value,
+                Order.fulfilling_capture_id.is_(None),
+                PaymentCapture.reconciliation_status
+                == CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value,
+            )
+            .distinct()
+            .limit(limit)
         )
         res = await self.session.execute(stmt)
         return list(res.scalars().all())

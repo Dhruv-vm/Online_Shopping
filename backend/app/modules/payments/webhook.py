@@ -311,7 +311,9 @@ class WebhookService:
                 await reconcile_rejected_partial_capture_order(
                     order=order,
                     reservation_service=self.reservation_service,
+                    session=self.session,
                 )
+                await self.session.commit()
                 await self._trigger_auto_refund(
                     existing_capture, "PARTIAL_CAPTURE_REJECTED"
                 )
@@ -391,6 +393,7 @@ class WebhookService:
             await reconcile_rejected_partial_capture_order(
                 order=order,
                 reservation_service=self.reservation_service,
+                session=self.session,
             )
 
             await self._trigger_auto_refund(partial_capture, "PARTIAL_CAPTURE_REJECTED")
