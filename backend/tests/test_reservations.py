@@ -1493,6 +1493,12 @@ def test_internal_service_key_configuration_security():
 
     # 4. In production, strong random key is accepted
     strong_key = "a" * 32
-    prod_settings = Settings(ENVIRONMENT="production", INTERNAL_SERVICE_KEY=strong_key)
+    prod_settings = Settings(
+        ENVIRONMENT="production",
+        INTERNAL_SERVICE_KEY=strong_key,
+        RAZORPAY_KEY_ID="rzp_live_realprodkey123",
+        RAZORPAY_KEY_SECRET="productionsecret16chars",
+        RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
+    )
     assert prod_settings.INTERNAL_SERVICE_KEY is not None
     assert prod_settings.INTERNAL_SERVICE_KEY.get_secret_value() == strong_key

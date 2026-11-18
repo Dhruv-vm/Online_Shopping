@@ -548,14 +548,19 @@ For every endpoint document:
 - **Auth**: Protected by internal service secret header.
 - **Headers**:
   - `X-Internal-Service-Key`: String (Required).
-- **Description**: Internal maintenance and reconciliation endpoint. Resolves ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`, checks status of lagging `PENDING` payments against Razorpay REST API, and reclaims expired webhook leases with bounded batches.
+- **Description**: Internal maintenance and reconciliation endpoint. Performs:
+  1. Missed-webhook payment recovery: queries Razorpay REST API (`GET /v1/orders/{order_id}/payments`) for orders in `PENDING` or `REQUIRES_RECONCILIATION`, records capture in ledger, executes savepoint-isolated inventory confirmation, transitions order to `CONFIRMED`, and emits outbox events.
+  2. Resolves ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`.
+  3. Reclaims expired webhook leases with bounded batches.
 - **Request Body**:
   ```json
   {
     "batch_size": 50,
-    "max_age_minutes": 1440
+    "max_age_minutes": 1440,
+    "pending_cutoff_minutes": 5
   }
   ```
+  *(Note: `pending_cutoff_minutes` defaults to 5 minutes if omitted. Pass `0` to immediately reconcile all pending payments).*
 - **Response `200 OK`**:
   ```json
   {

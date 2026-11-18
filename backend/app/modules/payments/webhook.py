@@ -11,21 +11,15 @@ from app.core.logging import logger
 from app.modules.inventory.service import ReservationService
 from app.modules.orders.models import (
     OrderStatus,
-    OrderStatusHistory,
-    OutboxEvent,
-    OutboxStatus,
     PaymentStatus,
 )
 from app.modules.payments.client import RazorpayClient
 from app.modules.payments.exceptions import (
     InvalidWebhookSignatureError,
     MissingWebhookSignatureError,
-    PaymentGatewayTimeoutError,
 )
 from app.modules.payments.models import (
-    CaptureReconciliationStatus,
     CaptureStatus,
-    Payment,
     PaymentAttemptStatus,
     PaymentCapture,
     PaymentRefund,
@@ -35,7 +29,10 @@ from app.modules.payments.models import (
 )
 from app.modules.payments.repository import PaymentRepository
 from app.modules.payments.schemas import WebhookIngestResponse
-from app.modules.payments.service import reconcile_rejected_partial_capture_order
+from app.modules.payments.service import (
+    dispatch_automated_refund,
+    process_payment_capture_and_fulfillment,
+)
 
 
 def sanitize_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -232,20 +229,15 @@ class WebhookService:
         payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
         provider_payment_id = payment_entity.get("id")
         provider_order_id = payment_entity.get("order_id")
-        amount_paise = int(payment_entity.get("amount", 0))
-        currency = payment_entity.get("currency", "INR")
-        captured_at_ts = payment_entity.get("created_at") or int(
-            datetime.now(UTC).timestamp()
-        )
-        captured_at = datetime.fromtimestamp(captured_at_ts, tz=UTC)
-        acquirer_ref = (
-            payment_entity.get("acquirer_data", {}).get("rrn")
-            or payment_entity.get("acquirer_data", {}).get("upi_transaction_id")
-            or payment_entity.get("acquirer_data", {}).get("bank_transaction_id")
-        )
 
-        if not provider_payment_id:
-            logger.warning("payment.captured webhook payload missing payment id")
+        if not provider_payment_id and not provider_order_id:
+            order_entity = payload.get("payload", {}).get("order", {}).get("entity", {})
+            provider_order_id = order_entity.get("id")
+
+        if not provider_order_id and not provider_payment_id:
+            logger.warning(
+                "payment.captured webhook payload missing payment and order id"
+            )
             return
 
         # Locate payment and order
@@ -275,187 +267,31 @@ class WebhookService:
             )
             return
 
-        if not payment and order:
-            payment = await self.repo.get_latest_payment_for_order(order.id)
-            if not payment:
-                payment = Payment(
-                    id=uuid.uuid4(),
-                    order_id=order.id,
-                    customer_id=order.customer_id,
-                    guest_token_hash="guest_webhook" if order.is_guest else None,
-                    provider="RAZORPAY_SANDBOX",
-                    provider_order_id=provider_order_id,
-                    provider_payment_id=provider_payment_id,
-                    idempotency_key=f"wh_{provider_payment_id}",
-                    attempt_number=1,
-                    amount_paise=amount_paise,
-                    currency=currency,
-                    status=PaymentAttemptStatus.PENDING.value,
-                )
-                await self.repo.create_payment(payment)
-
-        # Check existing capture
-        existing_capture = await self.repo.get_capture_by_provider_payment_id(
-            "RAZORPAY_SANDBOX", provider_payment_id
-        )
-        if existing_capture:
-            logger.info(
-                "Webhook duplicate capture for pay_id=%s already recorded; acknowledging idempotently.",
-                provider_payment_id,
-            )
-            # If previously rejected partial capture, ensure order reservation reconciliation is completed
-            if (
-                existing_capture.reconciliation_status
-                == CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value
-            ):
-                await reconcile_rejected_partial_capture_order(
-                    order=order,
-                    reservation_service=self.reservation_service,
+        if not provider_payment_id and provider_order_id:
+            rzp_payments = await self.client.fetch_order_payments(provider_order_id)
+            for p_item in rzp_payments:
+                await process_payment_capture_and_fulfillment(
                     session=self.session,
+                    repo=self.repo,
+                    reservation_service=self.reservation_service,
+                    order_id=order.id,
+                    payment_entity=p_item,
+                    source="WEBHOOK",
+                    payment_id=payment.id if payment else None,
+                    client=self.client,
                 )
-                await self.session.commit()
-                await self._trigger_auto_refund(
-                    existing_capture, "PARTIAL_CAPTURE_REJECTED"
-                )
             return
 
-        # If order is already confirmed:
-        if order.status == OrderStatus.CONFIRMED.value:
-            # Second distinct capture for already confirmed order: record as OVERPAYMENT_ANOMALY and auto-refund
-            anomaly_capture = PaymentCapture(
-                payment_id=payment.id,
-                order_id=order.id,
-                provider="RAZORPAY_SANDBOX",
-                provider_payment_id=provider_payment_id,
-                provider_order_id=provider_order_id,
-                amount_paise=amount_paise,
-                currency=currency,
-                status=CaptureStatus.CAPTURED.value,
-                method=payment_entity.get("method"),
-                acquirer_reference=acquirer_ref,
-                is_fulfillment_eligible=False,
-                reconciliation_status=CaptureReconciliationStatus.OVERPAYMENT_ANOMALY.value,
-                captured_at=captured_at,
-            )
-            await self.repo.create_capture(anomaly_capture)
-            await self._trigger_auto_refund(
-                anomaly_capture, "OVERPAYMENT_DUPLICATE_CAPTURE"
-            )
-            return
-
-        # If order was cancelled:
-        if order.status == OrderStatus.CANCELLED.value:
-            late_capture = PaymentCapture(
-                payment_id=payment.id,
-                order_id=order.id,
-                provider="RAZORPAY_SANDBOX",
-                provider_payment_id=provider_payment_id,
-                provider_order_id=provider_order_id,
-                amount_paise=amount_paise,
-                currency=currency,
-                status=CaptureStatus.CAPTURED.value,
-                method=payment_entity.get("method"),
-                acquirer_reference=acquirer_ref,
-                is_fulfillment_eligible=False,
-                reconciliation_status=CaptureReconciliationStatus.LATE_CAPTURE_ANOMALY.value,
-                captured_at=captured_at,
-            )
-            await self.repo.create_capture(late_capture)
-            await self._trigger_auto_refund(
-                late_capture, "LATE_CAPTURE_AFTER_ORDER_CANCELLATION"
-            )
-            return
-
-        # Check partial capture
-        if amount_paise < order.total_payable_paise:
-            partial_capture = PaymentCapture(
-                payment_id=payment.id,
-                order_id=order.id,
-                provider="RAZORPAY_SANDBOX",
-                provider_payment_id=provider_payment_id,
-                provider_order_id=provider_order_id,
-                amount_paise=amount_paise,
-                currency=currency,
-                status=CaptureStatus.CAPTURED.value,
-                method=payment_entity.get("method"),
-                acquirer_reference=acquirer_ref,
-                is_fulfillment_eligible=False,
-                reconciliation_status=CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value,
-                captured_at=captured_at,
-            )
-            await self.repo.create_capture(partial_capture)
-
-            if payment:
-                payment.status = PaymentAttemptStatus.FAILED.value
-                payment.error_code = "PARTIAL_CAPTURE_REJECTED"
-
-            # Reconcile order & reservation hold (atomic release, CANCELLED on success, REQUIRES_RECONCILIATION on failure)
-            await reconcile_rejected_partial_capture_order(
-                order=order,
-                reservation_service=self.reservation_service,
-                session=self.session,
-            )
-
-            await self._trigger_auto_refund(partial_capture, "PARTIAL_CAPTURE_REJECTED")
-            return
-
-        # Normal successful capture fulfillment:
-        capture = PaymentCapture(
-            payment_id=payment.id,
+        await process_payment_capture_and_fulfillment(
+            session=self.session,
+            repo=self.repo,
+            reservation_service=self.reservation_service,
             order_id=order.id,
-            provider="RAZORPAY_SANDBOX",
-            provider_payment_id=provider_payment_id,
-            provider_order_id=provider_order_id,
-            amount_paise=amount_paise,
-            currency=currency,
-            status=CaptureStatus.CAPTURED.value,
-            method=payment_entity.get("method"),
-            acquirer_reference=acquirer_ref,
-            is_fulfillment_eligible=True,
-            reconciliation_status=CaptureReconciliationStatus.NORMAL.value,
-            captured_at=captured_at,
+            payment_entity=payment_entity,
+            source="WEBHOOK",
+            payment_id=payment.id if payment else None,
+            client=self.client,
         )
-        await self.repo.create_capture(capture)
-
-        order.fulfilling_capture_id = capture.id
-        order.status = OrderStatus.CONFIRMED.value
-        order.payment_status = PaymentStatus.SUCCEEDED.value
-
-        history = OrderStatusHistory(
-            order_id=order.id,
-            from_status=OrderStatus.PENDING_PAYMENT.value,
-            to_status=OrderStatus.CONFIRMED.value,
-            reason="WEBHOOK_PAYMENT_CAPTURED",
-        )
-        self.session.add(history)
-
-        if payment:
-            payment.status = PaymentAttemptStatus.SUCCEEDED.value
-            payment.provider_payment_id = provider_payment_id
-            payment.method = payment_entity.get("method")
-
-        await self.reservation_service.confirm_reservation(
-            reservation_id=order.reservation_id,
-            internal=True,
-        )
-
-        outbox_event = OutboxEvent(
-            aggregate_type="Order",
-            aggregate_id=order.id,
-            event_type="order.confirmed",
-            schema_version=1,
-            payload={
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "status": order.status,
-                "payment_status": order.payment_status,
-                "fulfilling_capture_id": str(capture.id),
-                "total_payable_paise": order.total_payable_paise,
-                "currency": order.currency,
-            },
-            status=OutboxStatus.PENDING.value,
-        )
-        self.session.add(outbox_event)
 
     async def _handle_payment_failed(self, payload: dict[str, Any]) -> None:
         """Handles payment.failed event safely; ignores if order is already confirmed."""
@@ -596,66 +432,10 @@ class WebhookService:
         )
 
     async def _trigger_auto_refund(self, capture: PaymentCapture, reason: str) -> None:
-        refund_idempotency = f"auto-refund-{capture.id}"
-        existing = await self.repo.get_refund_by_idempotency_key(refund_idempotency)
-        if not existing:
-            existing = await self.repo.get_refund_by_idempotency_key(
-                f"webhook-auto-refund-{capture.id}"
-            )
-        if existing:
-            return
-
-        refund = PaymentRefund(
-            capture_id=capture.id,
-            payment_id=capture.payment_id,
-            order_id=capture.order_id,
-            idempotency_key=refund_idempotency,
-            amount_paise=capture.amount_paise,
-            currency=capture.currency,
-            status=RefundStatus.REFUND_REQUESTED.value,
+        await dispatch_automated_refund(
+            session=self.session,
+            repo=self.repo,
+            client=self.client,
+            capture=capture,
             reason=reason,
         )
-        await self.repo.create_refund(refund)
-        # Commit capture and refund intent before calling external gateway
-        await self.session.commit()
-
-        try:
-            rzp_refund = await self.client.create_refund(
-                payment_id=capture.provider_payment_id,
-                amount_paise=capture.amount_paise,
-                idempotency_key=refund_idempotency,
-                receipt=f"RFND-{str(refund.id)[:30]}",
-                notes={"reason": reason, "capture_id": str(capture.id)},
-            )
-            locked_refund = await self.repo.get_refund_by_id(refund.id)
-            if locked_refund:
-                locked_refund.provider_refund_id = rzp_refund.get("id")
-                if rzp_refund.get("status") == "processed":
-                    locked_refund.status = RefundStatus.REFUND_PROCESSED.value
-                    locked_refund.processed_at = datetime.now(UTC)
-                    locked_capture = await self.repo.get_capture_by_id_for_update(
-                        capture.id
-                    )
-                    if locked_capture:
-                        locked_capture.status = CaptureStatus.REFUNDED.value
-                else:
-                    locked_refund.status = RefundStatus.REFUND_PENDING.value
-                    locked_refund.processed_at = None
-            await self.session.commit()
-        except PaymentGatewayTimeoutError:
-            locked_refund = await self.repo.get_refund_by_id(refund.id)
-            if locked_refund:
-                locked_refund.status = RefundStatus.REFUND_PENDING.value
-                locked_refund.processed_at = None
-            await self.session.commit()
-        except Exception as exc:
-            logger.warning(
-                "Auto-refund dispatch error in webhook; leaving in REFUND_PENDING: %s",
-                str(exc),
-            )
-            locked_refund = await self.repo.get_refund_by_id(refund.id)
-            if locked_refund:
-                locked_refund.status = RefundStatus.REFUND_PENDING.value
-                locked_refund.processed_at = None
-                locked_refund.error_description = str(exc)
-            await self.session.commit()

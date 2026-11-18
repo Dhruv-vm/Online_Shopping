@@ -133,13 +133,23 @@
     - Late capture automated full refund when reservation is `RELEASED`.
     - Expose `POST /api/v1/orders/{order_id}/refunds`.
   - [x] **Slice G: Background Reconciliation Service & Internal API:**
-    - Reconciler for ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`, pending payments older than 5m, and expired webhook leases.
+    - Missed-webhook payment recovery querying `GET /v1/orders/{order_id}/payments` to reconcile captures, update ledger, and confirm order fulfillment when callbacks/webhooks are lost.
+    - PostgreSQL savepoint isolation (`begin_nested()`) wrapping `confirm_reservation()` so statement failures isolate cleanly to `REQUIRES_RECONCILIATION` without poisoning the outer payment ledger transaction.
+    - Fail-closed production configuration rejecting missing, placeholder, or mock Razorpay credentials without leaking secrets.
+    - Reconciler for ambiguous `CREATION_AMBIGUOUS` attempts via `GET /v1/orders?receipt={receipt}`, pending payments older than `pending_cutoff_minutes`, and expired webhook leases.
     - Administrative endpoint `POST /api/v1/internal/payments/{id}/resolve-ambiguity` with audit logging for manual review action (`CONFIRM_ABSENT` vs `LINK_PROVIDER_ORDER`).
     - Automated 75-minute fail-safe quarantine escalation job: cancels order (`AMBIGUITY_SLA_EXPIRED`), fails attempts (`OPERATIONAL_SLA_EXPIRED`), releases reservations exactly once, and leaves order permanently cancelled.
-    - Expose `POST /api/v1/internal/payments/reconcile-pending` protected by `X-Internal-Service-Key`.
+    - Expose `POST /api/v1/internal/payments/reconcile-pending` protected by `X-Internal-Service-Key` with configurable `pending_cutoff_minutes`.
   - [x] **Slice H: Frontend Integration & Test Suite:**
     - Dynamic script loader for `checkout.js`, modal configuration, customer/guest checkout flows, polling fallback.
-    - Comprehensive pytest suite in `tests/test_payments.py` covering:
+    - Comprehensive pytest suite (176 tests in `backend/tests/`) covering:
+      - Test A: Missed webhook payment recovery fulfills order, confirms reservation, and emits outbox event.
+      - Test B: Repeated reconciliation runs are idempotent.
+      - Test C: Late webhook arriving after reconciliation preserves fulfillment without duplicate stock deduction.
+      - Test D: Invalid gateway payments (partial capture, late capture, overpayment, failed) rejected/refunded without stock confirmation.
+      - Test E: Concurrent webhook and reconciliation worker race cleanly serialized via row locks.
+      - Test F: Savepoint isolates inventory confirmation statement failure and safely recovers.
+      - Test G: Production rejects missing, placeholder, or mock Razorpay credentials.
       - Scenario A: One exact successful capture (one ledger record, one fulfillment, one inventory deduction).
       - Scenario B: Duplicate webhook for same capture (one ledger record, no duplicate side effects).
       - Scenario C: Two distinct provider captures for same order (both persist in ledger, first fulfills, second auto-refunded as overpayment anomaly).

@@ -314,7 +314,87 @@ $$\mathbf{orders} \longrightarrow \mathbf{payments} \longrightarrow \mathbf{paym
 | **Phase 2F Verify Payment** | `orders` (`FOR UPDATE`) | `payments` (`FOR UPDATE`) | `payment_captures` (`FOR UPDATE`) | `inventory_reservations` $\rightarrow$ `store_inventory` | Downward hierarchy. |
 | **Phase 2F Order Expiry / SLA Job** | `orders` (`FOR UPDATE SKIP LOCKED`) | `payments` (`FOR UPDATE`) | `inventory_reservations` (`FOR UPDATE`) | `store_inventory` (`listing_id` ASC) | Enforces `orders` first. Prevents AB-BA deadlocks. |
 | **Phase 2F Payment Refund** | `orders` (`FOR UPDATE`) | `payments` (`FOR UPDATE`) | `payment_captures` (`FOR UPDATE`) | `payment_refunds` (INSERT/UPDATE) | Downward hierarchy. |
-| **Phase 2F Reconciler** | `orders` (`FOR UPDATE SKIP LOCKED`) | `payments` (`FOR UPDATE`) | `inventory_reservations` $\rightarrow$ `store_inventory` | — | Downward hierarchy. |
+| **Phase 2F Reconciler** | `orders` (`FOR UPDATE SKIP LOCKED`) | `payments` (`FOR UPDATE`) | `payment_captures` (`FOR UPDATE`) | `inventory_reservations` $\rightarrow$ `store_inventory` | Downward hierarchy. |
+
+### 7.1 Missed-Webhook Payment Recovery Architecture
+When a customer completes payment on the gateway but the payment webhook is lost, delayed, or dropped due to network partitions, the background reconciliation worker actively queries Razorpay (`GET /v1/orders/{order_id}/payments`) and reconciles both the payment capture ledger and order fulfillment.
+
+```mermaid
+sequenceDiagram
+    participant REC as ReconciliationWorker
+    participant RZP as Razorpay Gateway
+    participant DB as PostgreSQL
+    participant INV as InventoryService
+
+    REC->>DB: Query PENDING payments / REQUIRES_RECONCILIATION orders older than cutoff
+    REC->>RZP: GET /v1/orders/{order_id}/payments
+    RZP-->>REC: List of payment entities (pay_xxx, status, amount)
+    rect rgb(240, 248, 255)
+        Note over REC,DB: Unified Fulfillment & Capture Transaction (process_payment_capture_and_fulfillment)
+        REC->>DB: SELECT * FROM orders WHERE id = :order_id FOR UPDATE
+        REC->>DB: SELECT * FROM payments WHERE id = :payment_id FOR UPDATE
+        alt Order Already Fulfilled or Confirmed (Overpayment Anomaly)
+            REC->>DB: INSERT INTO payment_captures (is_fulfillment_eligible=FALSE, reconciliation_status='OVERPAYMENT_ANOMALY')
+            REC->>RZP: POST /v1/payments/{pay_id}/refund (100% automated refund)
+        else Order Cancelled (Late Capture Anomaly)
+            REC->>DB: INSERT INTO payment_captures (is_fulfillment_eligible=FALSE, reconciliation_status='LATE_CAPTURE_ANOMALY')
+            REC->>RZP: POST /v1/payments/{pay_id}/refund (100% automated refund)
+        else Partial Capture Rejected
+            REC->>DB: INSERT INTO payment_captures (is_fulfillment_eligible=FALSE, reconciliation_status='PARTIAL_CAPTURE_REJECTED')
+            REC->>DB: UPDATE orders SET status='CANCELLED', payment_status='FAILED'
+            REC->>INV: release_reservation (Isolated savepoint)
+            REC->>RZP: POST /v1/payments/{pay_id}/refund (100% automated refund)
+        else Standard Eligible Capture
+            REC->>DB: INSERT INTO payment_captures (is_fulfillment_eligible=TRUE, reconciliation_status='NORMAL')
+            rect rgb(255, 250, 240)
+                Note over REC,INV: Savepoint Isolation (begin_nested)
+                REC->>INV: confirm_reservation(order.reservation_id)
+                alt Reservation Confirm Fails (e.g. lock timeout)
+                    Note over REC,DB: Savepoint Rollback Only
+                    REC->>DB: UPDATE orders SET payment_status='REQUIRES_RECONCILIATION'
+                    REC->>DB: INSERT INTO outbox_events (order.reconciliation_required)
+                else Reservation Confirm Succeeds
+                    REC->>DB: UPDATE orders SET fulfilling_capture_id=cap.id, status='CONFIRMED', payment_status='SUCCEEDED'
+                    REC->>DB: INSERT INTO outbox_events (order.confirmed)
+                end
+            end
+            REC->>DB: UPDATE payments SET status='SUCCEEDED', provider_payment_id=pay_xxx
+            REC->>DB: COMMIT Transaction
+        end
+    end
+```
+
+#### Key Invariants & Guarantees:
+1. **Unified Fulfillment Logic:** Callback verification (`/payments/verify`), webhook processing (`_handle_payment_captured`), and reconciliation (`reconcile_pending`) execute through the exact same shared helper `process_payment_capture_and_fulfillment()`.
+2. **PostgreSQL Savepoint Isolation:** Reservation confirmation (`confirm_reservation()`) is enclosed in `async with session.begin_nested()`. If inventory confirmation aborts (e.g. statement lock timeout), the nested savepoint rolls back only the inventory statement. The outer transaction catches the exception, marks the order `REQUIRES_RECONCILIATION`, records `order_status_history`, emits an outbox event, and cleanly commits the captured payment fact and payment status without transaction rollback.
+3. **Repeated Reconciliation & Late Webhook Idempotency:** If reconciliation fulfills an order before the webhook arrives, the subsequent webhook finds `orders.fulfilling_capture_id == capture.id`, acknowledges the existing fulfillment, and commits without duplicate stock deduction or status corruption.
+4. **Automated Refund Durability:** External gateway refunds (`dispatch_automated_refund`) record `REFUND_REQUESTED` and commit the capture ledger durably before dispatching to the Razorpay API.
+
+### 7.2 Fail-Closed Production Configuration & Zero-Leak Security
+1. **Startup Validation:** In `backend/app/core/config.py`, `@field_validator` validates `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`.
+2. **Strict Production Enforcement:** When `ENVIRONMENT == "production"`, any missing key or value containing test/mock placeholders (`mock_`, `test_`, `dummy`, `placeholder`, `example`, `your_`) immediately raises `ValueError` and prevents the application from booting.
+3. **Secret Masking:** Error messages never print, log, or leak secret strings.
+
+### 7.3 Operational Runbook, Monitoring & Alerting
+1. **Scheduled Background Jobs (Cron):**
+   - **Pending Reconciliation:** `POST /api/v1/internal/payments/reconcile-pending`
+     - Recommended schedule: Every 2 to 5 minutes.
+     - Cutoff window: 5 minutes (`pending_cutoff_minutes: 5`).
+     - Header: `X-Internal-Service-Key: <INTERNAL_SERVICE_SECRET>`
+   - **Operational SLA Escalation:** `POST /api/v1/internal/payments/sla-escalation`
+     - Recommended schedule: Every 1 to 5 minutes.
+     - Cutoff window: 75 minutes.
+     - Header: `X-Internal-Service-Key: <INTERNAL_SERVICE_SECRET>`
+2. **Monitoring & Prometheus Metrics:**
+   - `reconciled_payments_count`: Count of payments recovered from provider.
+   - `reconciled_webhooks_count`: Count of expired webhook leases recovered.
+   - `ambiguous_attempts_resolved`: Count of ambiguous attempts resolved against gateway.
+3. **Alerting Thresholds:**
+   - **P1 Alert:** Orders remaining in `REQUIRES_RECONCILIATION` for > 15 minutes.
+   - **P2 Alert:** Elevated count of `PARTIAL_CAPTURE_REJECTED` or `OVERPAYMENT_ANOMALY`.
+   - **P2 Alert:** Failed automated refund dispatches requiring manual operator retry.
+4. **Manual Recovery Endpoint:**
+   - `POST /api/v1/internal/payments/{payment_id}/resolve-ambiguity` with `X-Operator-Id` and `X-Operator-Reason` to manually audit ambiguous attempts exceeding operational review SLAs.
 
 ---
 
@@ -567,3 +647,10 @@ def downgrade():
 | **V314-11** | Late Capture After SLA Expiry Auto-Refund | §5.2 | `payment_captures`, `reconciliation_status='LATE_CAPTURE_ANOMALY'` | Webhook Worker | `test_post_sla_capture_auto_refund` |
 | **V314-12** | All Composite FKs Match Unique Keys | §3.2, §8.0 | `uq_payments_id_order`, `uq_payment_captures_id_order` | PostgreSQL Schema | Schema Inspection / Alembic Check |
 | **V314-13** | Account Anonymization & Session Revocation | §6.1, §6.2 | `users.is_active=FALSE`, `users.hashed_password` | Identity Service | `test_account_anonymization_and_revocation` |
+| **V314-14** | Missed-Webhook Payment Recovery & Fulfillment | §7.1 | `process_payment_capture_and_fulfillment` | `POST /internal/payments/reconcile-pending` | `test_reconciliation_missed_webhook_recovers_payment_and_fulfills_order` |
+| **V314-15** | Repeated Reconciliation Idempotency | §7.1 | Capture unique key & Fulfillment check | Reconciliation Worker | `test_reconciliation_repeated_runs_are_idempotent` |
+| **V314-16** | Late Webhook Following Reconciliation Idempotency | §7.1 | Fulfillment source of truth | Webhook Worker | `test_reconciliation_then_late_webhook_idempotency` |
+| **V314-17** | Invalid Gateway Payments Handling | §7.1 | Anomaly classification & rejection | Reconciliation Worker | `test_reconciliation_invalid_provider_payments_rejected` |
+| **V314-18** | Concurrent Reconciliation & Webhook Race Protection | §7.1 | Order row lock serialization | Concurrency / Database | `test_concurrent_reconciliation_and_webhook_race` |
+| **V314-19** | Savepoint Isolation on Inventory Statement Failure | §7.1 | `session.begin_nested()` Savepoint | Reconciliation / Inventory | `test_reconciliation_savepoint_isolates_inventory_failure_and_recovers` |
+| **V314-20** | Fail-Closed Production Credential Validation | §7.2 | `@field_validator` in `Settings` | Application Core Config | `test_production_rejects_missing_or_mock_razorpay_credentials` |

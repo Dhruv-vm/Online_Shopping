@@ -98,6 +98,53 @@ class Settings(BaseSettings):
             return [str(item) for item in v]
         return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    @field_validator(
+        "RAZORPAY_KEY_ID",
+        "RAZORPAY_KEY_SECRET",
+        "RAZORPAY_WEBHOOK_SECRET",
+        mode="after",
+    )
+    @classmethod
+    def validate_razorpay_credentials(
+        cls, v: SecretStr | None, info
+    ) -> SecretStr | None:
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production":
+            field_name = info.field_name
+            if not v or not v.get_secret_value() or not v.get_secret_value().strip():
+                raise ValueError(f"{field_name} must be configured in production.")
+            secret = v.get_secret_value().strip()
+            known_mock_values = {
+                "rzp_test_basket_mock_key_id",
+                "mock_secret_key_at_least_16_chars",
+                "mock_webhook_secret_at_least_16_chars",
+                "rzp_test_placeholder",
+                "rzp_test_replace_with_your_key_id",
+                "replace_with_your_key_secret_at_least_16_chars",
+                "replace_with_your_webhook_secret_at_least_16_chars",
+                "secret",
+                "mock",
+                "changeme",
+                "change-me",
+            }
+            if (
+                secret in known_mock_values
+                or "mock" in secret.lower()
+                or "replace" in secret.lower()
+                or "placeholder" in secret.lower()
+            ):
+                raise ValueError(
+                    f"{field_name} must be configured with genuine production credentials; mock or placeholder values are not permitted in production."
+                )
+            if (
+                field_name in ("RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET")
+                and len(secret) < 16
+            ):
+                raise ValueError(
+                    f"{field_name} in production must have at least 16 characters."
+                )
+        return v
+
     @field_validator("INTERNAL_SERVICE_KEY", mode="after")
     @classmethod
     def validate_internal_service_key(

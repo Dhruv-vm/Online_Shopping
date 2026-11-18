@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.orders.models import Order, OrderStatus, PaymentStatus
@@ -63,6 +63,17 @@ class PaymentRepository:
         res = await self.session.execute(stmt)
         return res.scalar_one_or_none()
 
+    async def get_payment_by_provider_order_id_for_update(
+        self, provider_order_id: str
+    ) -> Payment | None:
+        stmt = (
+            select(Payment)
+            .where(Payment.provider_order_id == provider_order_id)
+            .with_for_update()
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
     async def get_active_or_ambiguous_attempt_for_order(
         self, order_id: uuid.UUID
     ) -> Payment | None:
@@ -89,6 +100,18 @@ class PaymentRepository:
             select(Payment)
             .where(Payment.order_id == order_id)
             .order_by(Payment.attempt_number.desc())
+        )
+        res = await self.session.execute(stmt)
+        return res.scalars().first()
+
+    async def get_latest_payment_for_order_for_update(
+        self, order_id: uuid.UUID
+    ) -> Payment | None:
+        stmt = (
+            select(Payment)
+            .where(Payment.order_id == order_id)
+            .order_by(Payment.attempt_number.desc())
+            .with_for_update()
         )
         res = await self.session.execute(stmt)
         return res.scalars().first()
@@ -337,12 +360,20 @@ class PaymentRepository:
     ) -> list[Payment]:
         stmt = (
             select(Payment)
+            .join(Order, Payment.order_id == Order.id)
             .where(
-                Payment.status.in_(
-                    [
-                        PaymentAttemptStatus.PENDING.value,
-                        PaymentAttemptStatus.AUTHORIZED.value,
-                    ]
+                or_(
+                    Payment.status.in_(
+                        [
+                            PaymentAttemptStatus.PENDING.value,
+                            PaymentAttemptStatus.AUTHORIZED.value,
+                        ]
+                    ),
+                    and_(
+                        Order.payment_status
+                        == PaymentStatus.REQUIRES_RECONCILIATION.value,
+                        Order.fulfilling_capture_id.is_(None),
+                    ),
                 ),
                 Payment.created_at <= cutoff_datetime,
             )

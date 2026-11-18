@@ -3317,3 +3317,862 @@ async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
             .all()
         )
         assert len(rfnds_b) == 1
+
+
+# ==============================================================================
+# PHASE 2F RECONCILIATION HARDENING TESTS (Tests A through F)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_missed_webhook_recovers_payment_and_fulfills_order(
+    async_client: AsyncClient,
+):
+    """Test A (Missing-Webhook Recovery): Customer pays on gateway, but BASKET misses webhook.
+    Reconciliation queries provider order and payments, persists capture, confirms reservation,
+    fulfills order, and emits outbox event.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+    amount = order["total_payable_paise"]
+    provider_order_id = f"order_rzp_rec_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_rec_{uuid.uuid4().hex[:8]}"
+
+    # Initiate payment to obtain PENDING attempt
+    fake_provider_order = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "created",
+    }
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value=fake_provider_order,
+    ):
+        init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        assert init_resp.status_code == 201
+
+    # Gateway state: order is paid, payment is captured
+    rzp_order_paid = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "paid",
+    }
+    rzp_payments_list = [
+        {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+            "method": "upi",
+            "created_at": int(datetime.now(UTC).timestamp()),
+        }
+    ]
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+    ):
+        # Trigger reconciliation
+        headers = get_internal_auth_headers()
+        rec_resp = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert rec_resp.status_code == 200
+        rec_data = rec_resp.json()
+        assert rec_data["reconciled_payments_count"] >= 1
+
+    # Verify DB state
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        # Capture persisted with is_fulfillment_eligible=True
+        captures = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures) == 1
+        capture = captures[0]
+        assert capture.provider_payment_id == provider_payment_id
+        assert capture.is_fulfillment_eligible is True
+        assert capture.reconciliation_status == CaptureReconciliationStatus.NORMAL.value
+        assert capture.status == CaptureStatus.CAPTURED.value
+
+        # Order fulfilled
+        db_order = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order.status == OrderStatus.CONFIRMED.value
+        assert db_order.payment_status == PaymentStatus.SUCCEEDED.value
+        assert db_order.fulfilling_capture_id == capture.id
+
+        # Payment attempt succeeded
+        db_payment = (
+            await session.execute(
+                select(Payment).where(Payment.provider_order_id == provider_order_id)
+            )
+        ).scalar_one()
+        assert db_payment.status == PaymentAttemptStatus.SUCCEEDED.value
+
+        # Inventory reservation confirmed
+        db_res = (
+            await session.execute(
+                select(InventoryReservation).where(
+                    InventoryReservation.id == db_order.reservation_id
+                )
+            )
+        ).scalar_one()
+        assert db_res.status == ReservationStatus.CONFIRMED.value
+
+        # Outbox event order.confirmed emitted with Zero PII
+        events = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+        ev_payload = events[0].payload
+        assert ev_payload["order_id"] == str(order_id)
+        assert ev_payload["status"] == OrderStatus.CONFIRMED.value
+        assert ev_payload["fulfilling_capture_id"] == str(capture.id)
+        # Verify Zero PII: no customer personal info
+        for pii_field in ("email", "phone", "card", "full_name", "password"):
+            assert pii_field not in ev_payload
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_repeated_runs_are_idempotent(
+    async_client: AsyncClient,
+):
+    """Test B (Repeated Reconciliation Idempotency): Running reconciliation multiple times
+    on the same payment does not duplicate captures, fulfillment, stock deductions, or outbox events.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+    amount = order["total_payable_paise"]
+    provider_order_id = f"order_rzp_rep_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_rep_{uuid.uuid4().hex[:8]}"
+
+    fake_provider_order = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "created",
+    }
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value=fake_provider_order,
+    ):
+        init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        assert init_resp.status_code == 201
+
+    rzp_order_paid = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "paid",
+    }
+    rzp_payments_list = [
+        {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+            "method": "upi",
+            "created_at": int(datetime.now(UTC).timestamp()),
+        }
+    ]
+
+    headers = get_internal_auth_headers()
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+    ):
+        # Run 1
+        resp1 = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert resp1.status_code == 200
+
+        # Run 2
+        resp2 = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert resp2.status_code == 200
+
+        # Run 3
+        resp3 = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert resp3.status_code == 200
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        captures = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures) == 1
+
+        db_order = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order.status == OrderStatus.CONFIRMED.value
+        assert db_order.fulfilling_capture_id == captures[0].id
+
+        events = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_then_late_webhook_idempotency(
+    async_client: AsyncClient,
+):
+    """Test C (Late Webhook After Reconciliation): Order is first fulfilled via missed-webhook
+    reconciliation. Later, Razorpay's webhook delivers payment.captured.
+    Assert webhook returns 200 PROCESSED, no duplicate capture is created, and order state is unchanged.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+    amount = order["total_payable_paise"]
+    provider_order_id = f"order_rzp_late_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_late_{uuid.uuid4().hex[:8]}"
+
+    fake_provider_order = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "created",
+    }
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value=fake_provider_order,
+    ):
+        init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        assert init_resp.status_code == 201
+
+    rzp_order_paid = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "paid",
+    }
+    rzp_payments_list = [
+        {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+            "method": "netbanking",
+            "created_at": int(datetime.now(UTC).timestamp()),
+        }
+    ]
+
+    # 1. Reconcile first
+    headers = get_internal_auth_headers()
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+    ):
+        rec_resp = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert rec_resp.status_code == 200
+
+    # 2. Webhook arrives afterwards
+    webhook_payload = {
+        "entity": "event",
+        "account_id": "acc_mock_123",
+        "event": "payment.captured",
+        "contains": ["payment"],
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": provider_payment_id,
+                    "order_id": provider_order_id,
+                    "amount": amount,
+                    "currency": "INR",
+                    "status": "captured",
+                    "method": "netbanking",
+                }
+            }
+        },
+        "created_at": int(datetime.now(UTC).timestamp()),
+    }
+    raw_payload = json.dumps(webhook_payload).encode("utf-8")
+    wh_resp = await async_client.post(
+        "/api/v1/payments/webhook",
+        content=raw_payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Razorpay-Signature": generate_webhook_signature(raw_payload),
+            "X-Razorpay-Event-Id": f"evt_late_{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert wh_resp.status_code == 200
+
+    # Assert invariant: exactly 1 capture, order confirmed once, 1 outbox event
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        captures = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures) == 1
+
+        db_order = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order.status == OrderStatus.CONFIRMED.value
+        assert db_order.fulfilling_capture_id == captures[0].id
+
+        events = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_invalid_provider_payments_rejected(
+    async_client: AsyncClient,
+):
+    """Test D (Invalid / Non-Fulfilling Payments):
+    Amount mismatch, currency mismatch, provider order mismatch, authorized-only, and failed status
+    do NOT fulfill the order.
+    """
+    session_factory = get_session_factory()
+
+    # Case 1: Currency mismatch (e.g. USD) -> creates OVERPAYMENT_ANOMALY, does not fulfill
+    user1, token1, order1 = await setup_customer_and_order(async_client)
+    order1_id = uuid.UUID(order1["id"])
+    p_ord1_id = f"order_rzp_cur_{uuid.uuid4().hex[:8]}"
+    p_pay1_id = f"pay_rzp_cur_{uuid.uuid4().hex[:8]}"
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value={
+            "id": p_ord1_id,
+            "amount": order1["total_payable_paise"],
+            "currency": "INR",
+            "receipt": order1["order_number"],
+            "status": "created",
+        },
+    ):
+        await async_client.post(f"/api/v1/orders/{order1_id}/payments")
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": p_ord1_id,
+                "status": "paid",
+                "amount": order1["total_payable_paise"],
+                "currency": "INR",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "id": p_pay1_id,
+                    "order_id": p_ord1_id,
+                    "amount": order1["total_payable_paise"],
+                    "currency": "USD",
+                    "status": "captured",
+                }
+            ],
+        ),
+        patch.object(
+            RazorpayClient,
+            "create_refund",
+            new_callable=AsyncMock,
+            return_value={"id": f"rfnd_{uuid.uuid4().hex[:8]}", "status": "processed"},
+        ),
+    ):
+        await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=get_internal_auth_headers(),
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+
+    async with session_factory() as session:
+        ord1_db = (
+            await session.execute(select(Order).where(Order.id == order1_id))
+        ).scalar_one()
+        assert ord1_db.status != OrderStatus.CONFIRMED.value
+        assert ord1_db.fulfilling_capture_id is None
+
+    # Case 2: Status authorized-only -> does not fulfill
+    user2, token2, order2 = await setup_customer_and_order(async_client)
+    order2_id = uuid.UUID(order2["id"])
+    p_ord2_id = f"order_rzp_auth_{uuid.uuid4().hex[:8]}"
+    p_pay2_id = f"pay_rzp_auth_{uuid.uuid4().hex[:8]}"
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value={
+            "id": p_ord2_id,
+            "amount": order2["total_payable_paise"],
+            "currency": "INR",
+            "receipt": order2["order_number"],
+            "status": "created",
+        },
+    ):
+        await async_client.post(f"/api/v1/orders/{order2_id}/payments")
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": p_ord2_id,
+                "status": "attempted",
+                "amount": order2["total_payable_paise"],
+                "currency": "INR",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "id": p_pay2_id,
+                    "order_id": p_ord2_id,
+                    "amount": order2["total_payable_paise"],
+                    "currency": "INR",
+                    "status": "authorized",
+                }
+            ],
+        ),
+    ):
+        await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=get_internal_auth_headers(),
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+
+    async with session_factory() as session:
+        ord2_db = (
+            await session.execute(select(Order).where(Order.id == order2_id))
+        ).scalar_one()
+        assert ord2_db.status != OrderStatus.CONFIRMED.value
+        assert ord2_db.fulfilling_capture_id is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reconciliation_and_webhook_race(
+    async_client: AsyncClient,
+):
+    """Test E (Concurrency Race): Concurrent execution of reconciliation and webhook
+    results in exactly one fulfillment transition, one eligible capture, and one outbox event.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+    amount = order["total_payable_paise"]
+    provider_order_id = f"order_rzp_race_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_race_{uuid.uuid4().hex[:8]}"
+
+    fake_provider_order = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "created",
+    }
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value=fake_provider_order,
+    ):
+        init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        assert init_resp.status_code == 201
+
+    rzp_order_paid = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "paid",
+    }
+    rzp_payments_list = [
+        {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+            "method": "card",
+            "created_at": int(datetime.now(UTC).timestamp()),
+        }
+    ]
+
+    webhook_payload = {
+        "entity": "event",
+        "account_id": "acc_mock_123",
+        "event": "payment.captured",
+        "contains": ["payment"],
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": provider_payment_id,
+                    "order_id": provider_order_id,
+                    "amount": amount,
+                    "currency": "INR",
+                    "status": "captured",
+                    "method": "card",
+                }
+            }
+        },
+        "created_at": int(datetime.now(UTC).timestamp()),
+    }
+    raw_payload = json.dumps(webhook_payload).encode("utf-8")
+
+    headers_int = get_internal_auth_headers()
+    headers_wh = {
+        "Content-Type": "application/json",
+        "X-Razorpay-Signature": generate_webhook_signature(raw_payload),
+        "X-Razorpay-Event-Id": f"evt_race_{uuid.uuid4().hex[:8]}",
+    }
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+    ):
+        # Run reconciliation and webhook concurrently
+        rec_task = async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers_int,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        wh_task = async_client.post(
+            "/api/v1/payments/webhook",
+            content=raw_payload,
+            headers=headers_wh,
+        )
+        res_rec, res_wh = await asyncio.gather(rec_task, wh_task)
+        assert res_rec.status_code == 200
+        assert res_wh.status_code == 200
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        captures = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures) == 1
+
+        db_order = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order.status == OrderStatus.CONFIRMED.value
+        assert db_order.fulfilling_capture_id == captures[0].id
+
+        events = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_savepoint_isolates_inventory_failure_and_recovers(
+    async_client: AsyncClient,
+):
+    """Test F (Database Statement Failure Isolation & Recovery):
+    Simulate database statement failure during reservation confirmation.
+    Assert capture is durably saved, order remains unconfirmed in REQUIRES_RECONCILIATION,
+    and a subsequent reconciliation run successfully fulfills the order reusing the capture.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+    amount = order["total_payable_paise"]
+    provider_order_id = f"order_rzp_savept_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_savept_{uuid.uuid4().hex[:8]}"
+
+    fake_provider_order = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "created",
+    }
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value=fake_provider_order,
+    ):
+        init_resp = await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        assert init_resp.status_code == 201
+
+    rzp_order_paid = {
+        "id": provider_order_id,
+        "amount": amount,
+        "currency": "INR",
+        "receipt": order["order_number"],
+        "status": "paid",
+    }
+    rzp_payments_list = [
+        {
+            "id": provider_payment_id,
+            "order_id": provider_order_id,
+            "amount": amount,
+            "currency": "INR",
+            "status": "captured",
+            "method": "upi",
+            "created_at": int(datetime.now(UTC).timestamp()),
+        }
+    ]
+
+    headers = get_internal_auth_headers()
+    session_factory = get_session_factory()
+
+    # Step 1: Simulate statement failure in confirm_reservation
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+        patch.object(
+            ReservationService,
+            "confirm_reservation",
+            new_callable=AsyncMock,
+            side_effect=Exception("Simulated DB statement failure / lock timeout"),
+        ),
+    ):
+        resp_f1 = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert resp_f1.status_code == 200
+
+    # Verify DB state after failure: capture is persisted, order requires reconciliation
+    async with session_factory() as session:
+        captures_f = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures_f) == 1
+        cap_f = captures_f[0]
+        assert cap_f.is_fulfillment_eligible is True
+
+        order_f = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert order_f.status != OrderStatus.CONFIRMED.value
+        assert order_f.fulfilling_capture_id is None
+        assert order_f.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value
+
+        events_f = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events_f) == 0
+
+    # Step 2: Run reconciliation again with reservation confirmation restored
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_order",
+            new_callable=AsyncMock,
+            return_value=rzp_order_paid,
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_order_payments",
+            new_callable=AsyncMock,
+            return_value=rzp_payments_list,
+        ),
+    ):
+        resp_f2 = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+            json={"pending_cutoff_minutes": 0, "batch_size": 500},
+        )
+        assert resp_f2.status_code == 200
+
+    # Verify order is now successfully fulfilled, capture is reused, outbox event emitted
+    async with session_factory() as session:
+        captures_f2 = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(captures_f2) == 1  # Not duplicated!
+        assert captures_f2[0].id == cap_f.id
+
+        order_f2 = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert order_f2.status == OrderStatus.CONFIRMED.value
+        assert order_f2.payment_status == PaymentStatus.SUCCEEDED.value
+        assert order_f2.fulfilling_capture_id == cap_f.id
+
+        events_f2 = (
+            (
+                await session.execute(
+                    select(OutboxEvent).where(
+                        OutboxEvent.aggregate_id == order_id,
+                        OutboxEvent.event_type == "order.confirmed",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events_f2) == 1

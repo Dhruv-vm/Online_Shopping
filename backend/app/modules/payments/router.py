@@ -216,10 +216,16 @@ async def reconcile_pending(
 ) -> ReconcilePendingResponse:
     batch_size = payload.batch_size if payload else 50
     max_age_minutes = payload.max_age_minutes if payload else 1440
+    cutoff_minutes = (
+        payload.pending_cutoff_minutes
+        if payload and payload.pending_cutoff_minutes is not None
+        else 5
+    )
     service = ReconciliationService(db)
     return await service.reconcile_pending(
         batch_size=batch_size,
         max_age_minutes=max_age_minutes,
+        pending_cutoff_minutes=cutoff_minutes,
     )
 
 

@@ -142,6 +142,31 @@ class RazorpayClient:
 
         return response.json()
 
+    async def fetch_order_payments(
+        self, order_id: str, count: int = 10, skip: int = 0
+    ) -> list[dict[str, Any]]:
+        """Fetch all payments for an order: GET /v1/orders/{order_id}/payments."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get(
+                    f"/orders/{order_id}/payments",
+                    params={"count": count, "skip": skip},
+                )
+            except httpx.TimeoutException as exc:
+                raise PaymentGatewayTimeoutError() from exc
+            except httpx.RequestError as exc:
+                raise PaymentGatewayError(
+                    "Network error contacting payment gateway"
+                ) from exc
+
+        if response.status_code != 200:
+            raise PaymentGatewayError(
+                f"Failed to fetch payments for order {order_id}: gateway status {response.status_code}"
+            )
+
+        data = response.json()
+        return data.get("items", []) if isinstance(data, dict) else []
+
     async def fetch_orders_by_receipt(
         self, receipt: str, count: int = 10
     ) -> list[dict[str, Any]]:

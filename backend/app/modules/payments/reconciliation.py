@@ -27,7 +27,10 @@ from app.modules.payments.schemas import (
     ReconcilePendingResponse,
     ResolveAmbiguityResponse,
 )
-from app.modules.payments.service import reconcile_rejected_partial_capture_order
+from app.modules.payments.service import (
+    process_payment_capture_and_fulfillment,
+    reconcile_rejected_partial_capture_order,
+)
 from app.modules.payments.webhook import WebhookService
 
 
@@ -49,11 +52,15 @@ class ReconciliationService:
         self,
         batch_size: int = 50,
         max_age_minutes: int = 1440,
+        pending_cutoff_minutes: int = 5,
     ) -> ReconcilePendingResponse:
         """Automated reconciliation for ambiguous attempts, pending payments, and stuck webhook leases."""
         now = datetime.now(UTC)
         cutoff_ambiguous = now - timedelta(minutes=5)
-        cutoff_pending = now - timedelta(minutes=5)
+        if pending_cutoff_minutes <= 0:
+            cutoff_pending = now + timedelta(seconds=10)
+        else:
+            cutoff_pending = now - timedelta(minutes=pending_cutoff_minutes)
 
         ambiguous_resolved_count = 0
         reconciled_payments_count = 0
@@ -94,7 +101,7 @@ class ReconciliationService:
                     "Error reconciling ambiguous payment %s: %s", payment.id, str(exc)
                 )
 
-        # 2. Reconcile pending payments older than 5 minutes
+        # 2. Reconcile pending payments older than cutoff (Missed-Webhook Recovery)
         pending_payments = await self.repo.get_pending_payments_for_reconciliation(
             cutoff_datetime=cutoff_pending, limit=batch_size
         )
@@ -103,9 +110,81 @@ class ReconciliationService:
                 continue
             try:
                 rzp_order = await self.client.fetch_order(payment.provider_order_id)
-                if rzp_order.get("status") == "paid":
-                    # Order paid on gateway; verify or update
-                    reconciled_payments_count += 1
+                if rzp_order.get("id") != payment.provider_order_id:
+                    continue
+
+                rzp_order_status = rzp_order.get("status")
+                if rzp_order_status == "paid":
+                    rzp_payments = await self.client.fetch_order_payments(
+                        payment.provider_order_id
+                    )
+                    for p_entity in rzp_payments:
+                        capture = await process_payment_capture_and_fulfillment(
+                            session=self.session,
+                            repo=self.repo,
+                            reservation_service=self.reservation_service,
+                            order_id=payment.order_id,
+                            payment_entity=p_entity,
+                            source="RECONCILIATION",
+                            payment_id=payment.id,
+                            client=self.client,
+                        )
+                        if capture and capture.is_fulfillment_eligible:
+                            locked_order = await self.repo.get_order_by_id(
+                                payment.order_id
+                            )
+                            if (
+                                locked_order
+                                and locked_order.status == OrderStatus.CONFIRMED.value
+                                and locked_order.fulfilling_capture_id == capture.id
+                            ):
+                                reconciled_payments_count += 1
+                elif rzp_order_status in ("attempted", "created"):
+                    rzp_payments = await self.client.fetch_order_payments(
+                        payment.provider_order_id
+                    )
+                    for p_entity in rzp_payments:
+                        p_status = p_entity.get("status")
+                        if p_status == "captured":
+                            capture = await process_payment_capture_and_fulfillment(
+                                session=self.session,
+                                repo=self.repo,
+                                reservation_service=self.reservation_service,
+                                order_id=payment.order_id,
+                                payment_entity=p_entity,
+                                source="RECONCILIATION",
+                                payment_id=payment.id,
+                                client=self.client,
+                            )
+                            if capture and capture.is_fulfillment_eligible:
+                                locked_order = await self.repo.get_order_by_id(
+                                    payment.order_id
+                                )
+                                if (
+                                    locked_order
+                                    and locked_order.status
+                                    == OrderStatus.CONFIRMED.value
+                                    and locked_order.fulfilling_capture_id == capture.id
+                                ):
+                                    reconciled_payments_count += 1
+                        elif p_status == "failed":
+                            locked_p = await self.repo.get_payment_by_id_for_update(
+                                payment.id
+                            )
+                            if (
+                                locked_p
+                                and locked_p.status
+                                == PaymentAttemptStatus.PENDING.value
+                            ):
+                                locked_p.status = PaymentAttemptStatus.FAILED.value
+                                locked_p.error_code = (
+                                    p_entity.get("error_code")
+                                    or "GATEWAY_PAYMENT_FAILED"
+                                )
+                                locked_p.error_description = p_entity.get(
+                                    "error_description"
+                                )
+                                await self.session.commit()
             except Exception as exc:
                 logger.error(
                     "Error checking pending payment %s: %s", payment.id, str(exc)

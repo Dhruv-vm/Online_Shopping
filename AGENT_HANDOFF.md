@@ -1001,3 +1001,47 @@ Copy this section for every new request.
    - Git State: All changes on branch `feature/phase2-payment-gateway`, clean working tree.
 
 **Status:** IMPLEMENTATION COMPLETE & VERIFIED — Ready for PR and code review.
+
+---
+
+### [2026-11-18 18:45 IST] — Principal Backend Architect — Phase 2F Payment Reconciliation Hardening & Failure Recovery Complete
+
+**Related branch / PR / task:** `feature/phase2-payment-gateway` -> `integration` (PR)
+**Authoritative Specification:** `PHASE_2F_ARCHITECTURE.md` (Version 3.1.4 + Hardening Amendments)
+**Scope Implemented:** Missed-webhook payment recovery, unified capture fulfillment helper, PostgreSQL savepoint isolation for inventory confirmation, fail-closed production credential validation, and operational runbook.
+
+**Summary of Corrections & Deliverables:**
+1. **Missed-Webhook Payment Recovery Flow:**
+   - Added `fetch_order_payments(order_id)` in `RazorpayClient` querying `GET /v1/orders/{order_id}/payments`.
+   - Updated `ReconciliationService.reconcile_pending()`: when pending payments or orders in `REQUIRES_RECONCILIATION` lack local fulfilling captures, queries the gateway's recorded payments and invokes `process_payment_capture_and_fulfillment()`.
+   - If gateway status is `captured`, persists the capture record, confirms the order inventory reservation, sets `orders.fulfilling_capture_id`, transitions order to `CONFIRMED`, marks payment attempt `SUCCEEDED`, and emits outbox event `order.confirmed`.
+2. **Unified Fulfillment Pipeline & Universal Lock Ordering:**
+   - Extracted `process_payment_capture_and_fulfillment()` shared across `/payments/verify`, webhook processing (`_handle_payment_captured`), and reconciliation (`reconcile_pending`).
+   - Enforces universal lock hierarchy: `orders` -> `payments` -> `payment_captures` -> `payment_refunds` -> `inventory_reservations` -> `store_inventory`.
+   - Extracted `dispatch_automated_refund()` guaranteeing capture and refund intent commitment before external dispatch.
+3. **PostgreSQL Savepoint Isolation (`begin_nested()`):**
+   - Wrapped `reservation_service.confirm_reservation()` in `async with session.begin_nested()`.
+   - If an inventory confirmation error (e.g. statement lock timeout or transient constraint error) occurs, the savepoint rolls back only the reservation attempt. Outer transaction cleanly catches the exception, updates order payment status to `REQUIRES_RECONCILIATION`, records `order_status_history`, emits `order.reconciliation_required`, and commits captured facts and payment status without transaction poisoning.
+4. **Fail-Closed Production Credential Validation:**
+   - Implemented `@field_validator("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET")` in `Settings` (`backend/app/core/config.py`).
+   - In `ENVIRONMENT == "production"`, strictly halts application startup with `ValueError` if credentials are missing or contain placeholder substrings (`mock_`, `test_`, `dummy`, `placeholder`, `example`, `your_`).
+   - Completely masks credential values to ensure zero secret leakage in logs or exceptions.
+5. **Operational Runbook & Scheduling:**
+   - Documented operational schedules: cron every 2-5 minutes for `POST /api/v1/internal/payments/reconcile-pending` and every 1-5 minutes for `POST /api/v1/internal/payments/sla-escalation`.
+   - Documented Prometheus metric counters and P1/P2 alert thresholds in `PHASE_2F_ARCHITECTURE.md`.
+6. **Comprehensive Automated Test Verification (176 Backend Tests):**
+   - Added Tests A through G in `backend/tests/test_payments.py` and `backend/tests/test_config.py`:
+     - Test A: Missed webhook payment recovery fulfills order, confirms reservation, and emits outbox event.
+     - Test B: Repeated reconciliation runs are idempotent.
+     - Test C: Late webhook arriving after reconciliation preserves fulfillment without duplicate stock deduction.
+     - Test D: Invalid gateway payments (partial capture, late capture, overpayment, failed) rejected/refunded without stock confirmation.
+     - Test E: Concurrent webhook and reconciliation worker race cleanly serialized via row locks.
+     - Test F: Savepoint isolates inventory confirmation statement failure and safely recovers.
+     - Test G: Production rejects missing, placeholder, or mock Razorpay credentials.
+   - All 176 backend pytest tests passing cleanly in 33.86s.
+   - All 60 frontend tests passing.
+   - Frontend TypeScript type check and Next.js production build passing with 0 warnings or errors.
+   - Alembic migration `0008` roundtrip downgrade/upgrade verified cleanly.
+   - `./scripts/verify-environment.sh` passed 100%.
+
+**Status:** RECONCILIATION HARDENING COMPLETE & VERIFIED — Ready for integration review.
