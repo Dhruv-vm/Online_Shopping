@@ -151,10 +151,16 @@ class ReconciliationService:
                 if rzp_rfnd:
                     locked_rfnd = await self.repo.get_refund_by_id(refund.id)
                     if locked_rfnd:
+                        # Never regress an already processed refund
+                        if locked_rfnd.status == RefundStatus.REFUND_PROCESSED.value:
+                            continue
+
                         locked_rfnd.provider_refund_id = rzp_rfnd.get("id")
                         if rzp_rfnd.get("status") == "processed":
                             locked_rfnd.status = RefundStatus.REFUND_PROCESSED.value
                             locked_rfnd.processed_at = datetime.now(UTC)
+                            locked_rfnd.error_code = None
+                            locked_rfnd.error_description = None
                             await self.session.flush()
 
                             locked_capture = (
@@ -194,13 +200,17 @@ class ReconciliationService:
                                         PaymentStatus.PARTIALLY_REFUNDED.value
                                     )
                         elif rzp_rfnd.get("status") == "failed":
-                            locked_rfnd.status = RefundStatus.REFUND_FAILED.value
-                            locked_rfnd.error_code = (
-                                rzp_rfnd.get("error_code") or "PROVIDER_FAILED"
-                            )
-                            locked_rfnd.error_description = rzp_rfnd.get(
-                                "error_description"
-                            )
+                            if (
+                                locked_rfnd.status
+                                != RefundStatus.REFUND_PROCESSED.value
+                            ):
+                                locked_rfnd.status = RefundStatus.REFUND_FAILED.value
+                                locked_rfnd.error_code = (
+                                    rzp_rfnd.get("error_code") or "PROVIDER_FAILED"
+                                )
+                                locked_rfnd.error_description = rzp_rfnd.get(
+                                    "error_description"
+                                )
                     await self.session.commit()
             except Exception as exc:
                 logger.error("Error reconciling refund %s: %s", refund.id, str(exc))

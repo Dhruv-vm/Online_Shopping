@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException
@@ -114,35 +114,37 @@ class WebhookService:
 
         return WebhookIngestResponse(status="ok", event_id=event_id)
 
-    async def process_webhook_event(
-        self, event_id: uuid.UUID, worker_id: str | None = None
-    ) -> bool:
-        """Phase 2: Business execution for a single claimed webhook event."""
-        now = datetime.now(UTC)
-        if worker_id:
-            stmt = (
-                select(WebhookEvent)
-                .where(
-                    WebhookEvent.id == event_id,
-                    WebhookEvent.claimed_by == worker_id,
-                    WebhookEvent.status == WebhookEventStatus.PROCESSING.value,
-                    WebhookEvent.claim_expires_at > now,
-                )
-                .with_for_update()
+    async def process_webhook_event(self, event_id: uuid.UUID, worker_id: str) -> bool:
+        """Phase 2: Business execution for a single claimed webhook event.
+        Requires active durable worker lease ownership."""
+        if not worker_id or not str(worker_id).strip():
+            raise AppException(
+                code="MISSING_WORKER_ID",
+                message="worker_id is required to process webhook event",
+                status_code=400,
             )
-            res = await self.session.execute(stmt)
-            event = res.scalar_one_or_none()
-            if not event:
-                logger.warning(
-                    "Worker %s cannot process webhook event %s; missing or expired claim",
-                    worker_id,
-                    event_id,
-                )
-                return False
-        else:
-            event = await self.session.get(WebhookEvent, event_id)
-            if not event:
-                return False
+        worker_id = str(worker_id).strip()
+
+        now = datetime.now(UTC)
+        stmt = (
+            select(WebhookEvent)
+            .where(
+                WebhookEvent.id == event_id,
+                WebhookEvent.claimed_by == worker_id,
+                WebhookEvent.status == WebhookEventStatus.PROCESSING.value,
+                WebhookEvent.claim_expires_at > now,
+            )
+            .with_for_update()
+        )
+        res = await self.session.execute(stmt)
+        event = res.scalar_one_or_none()
+        if not event:
+            logger.warning(
+                "Worker %s cannot process webhook event %s; missing or expired claim",
+                worker_id,
+                event_id,
+            )
+            return False
 
         event_type = event.event_type
         payload = event.payload
@@ -159,10 +161,33 @@ class WebhookService:
             else:
                 logger.info("Ignoring unhandled webhook event type: %s", event_type)
 
-            event.status = WebhookEventStatus.PROCESSED.value
-            event.processed_at = datetime.now(UTC)
-            event.claimed_by = None
-            event.claim_expires_at = None
+            # Ensure a worker whose lease expires during processing cannot mark the event complete after losing ownership
+            now_end = datetime.now(UTC)
+            update_stmt = (
+                update(WebhookEvent)
+                .where(
+                    WebhookEvent.id == event_id,
+                    WebhookEvent.claimed_by == worker_id,
+                    WebhookEvent.status == WebhookEventStatus.PROCESSING.value,
+                    WebhookEvent.claim_expires_at > now_end,
+                )
+                .values(
+                    status=WebhookEventStatus.PROCESSED.value,
+                    processed_at=now_end,
+                    claimed_by=None,
+                    claim_expires_at=None,
+                )
+            )
+            update_res = await self.session.execute(update_stmt)
+            if update_res.rowcount == 0:
+                logger.warning(
+                    "Worker %s lost lease for webhook event %s before completion",
+                    worker_id,
+                    event_id,
+                )
+                await self.session.rollback()
+                return False
+
             await self.session.commit()
             return True
         except Exception as exc:
@@ -174,16 +199,30 @@ class WebhookService:
             )
             await self.session.rollback()
 
-            event = await self.session.get(WebhookEvent, event_id)
-            if event:
-                event.error_message = str(exc)
-                if event.retry_count >= 5:
-                    event.status = WebhookEventStatus.FAILED.value
-                else:
-                    event.status = WebhookEventStatus.PENDING.value
-                event.claimed_by = None
-                event.claim_expires_at = None
-                await self.session.commit()
+            now_err = datetime.now(UTC)
+            fail_stmt = (
+                update(WebhookEvent)
+                .where(
+                    WebhookEvent.id == event_id,
+                    WebhookEvent.claimed_by == worker_id,
+                    WebhookEvent.status == WebhookEventStatus.PROCESSING.value,
+                    WebhookEvent.claim_expires_at > now_err,
+                )
+                .values(
+                    error_message=str(exc),
+                    status=case(
+                        (
+                            WebhookEvent.retry_count >= 5,
+                            WebhookEventStatus.FAILED.value,
+                        ),
+                        else_=WebhookEventStatus.PENDING.value,
+                    ),
+                    claimed_by=None,
+                    claim_expires_at=None,
+                )
+            )
+            await self.session.execute(fail_stmt)
+            await self.session.commit()
             return False
 
     async def _handle_payment_captured(self, payload: dict[str, Any]) -> None:
@@ -456,8 +495,19 @@ class WebhookService:
         if not refund:
             return
 
+        # Duplicate refund.processed is an idempotent no-op
+        if refund.status == RefundStatus.REFUND_PROCESSED.value:
+            logger.info(
+                "Duplicate refund.processed event for already processed refund %s (provider_refund_id=%s)",
+                refund.id,
+                provider_refund_id,
+            )
+            return
+
         refund.status = RefundStatus.REFUND_PROCESSED.value
         refund.processed_at = datetime.now(UTC)
+        refund.error_code = None
+        refund.error_description = None
         await self.session.flush()
 
         capture = await self.repo.get_capture_by_id_for_update(refund.capture_id)
@@ -483,7 +533,8 @@ class WebhookService:
                 order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
 
     async def _handle_refund_failed(self, payload: dict[str, Any]) -> None:
-        """Handles refund.failed event to mark refund FAILED without regressing capture status."""
+        """Handles refund.failed event to mark refund FAILED without regressing capture status.
+        Never regresses an already processed refund."""
         refund_entity = payload.get("payload", {}).get("refund", {}).get("entity", {})
         provider_refund_id = refund_entity.get("id")
         if not provider_refund_id:
@@ -495,6 +546,24 @@ class WebhookService:
         res = await self.session.execute(stmt)
         refund = res.scalar_one_or_none()
         if not refund:
+            return
+
+        # Never transition REFUND_PROCESSED back to REFUND_FAILED
+        if refund.status == RefundStatus.REFUND_PROCESSED.value:
+            logger.info(
+                "Ignoring stale refund.failed event for already processed refund %s (provider_refund_id=%s)",
+                refund.id,
+                provider_refund_id,
+            )
+            return
+
+        # Duplicate refund.failed is an idempotent no-op
+        if refund.status == RefundStatus.REFUND_FAILED.value:
+            logger.info(
+                "Duplicate refund.failed event for already failed refund %s (provider_refund_id=%s)",
+                refund.id,
+                provider_refund_id,
+            )
             return
 
         refund.status = RefundStatus.REFUND_FAILED.value

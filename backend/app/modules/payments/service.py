@@ -569,31 +569,48 @@ class PaymentService:
                     captured_at=captured_at,
                 )
                 await self.repo.create_capture(partial_capture)
+            else:
+                partial_capture = existing_capture
 
-                # Underpayment: reject capture for fulfillment and auto-refund
-                payment.status = PaymentAttemptStatus.FAILED.value
-                payment.error_code = "PARTIAL_CAPTURE_REJECTED"
+            # Underpayment: reject capture for fulfillment
+            payment.status = PaymentAttemptStatus.FAILED.value
+            payment.error_code = "PARTIAL_CAPTURE_REJECTED"
 
-                if order.status == OrderStatus.PENDING_PAYMENT.value:
+            # Attempt reservation release if order is not yet CANCELLED
+            if order.status != OrderStatus.CANCELLED.value:
+                release_succeeded = False
+                if self.reservation_service and order.reservation_id:
+                    try:
+                        await self.reservation_service.release_reservation(
+                            reservation_id=order.reservation_id,
+                            reason="PARTIAL_CAPTURE_REJECTED",
+                            internal=True,
+                        )
+                        release_succeeded = True
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to release reservation on partial capture for order %s: %s",
+                            order.id,
+                            exc,
+                        )
+                        release_succeeded = False
+
+                if release_succeeded:
                     order.status = OrderStatus.CANCELLED.value
                     order.payment_status = PaymentStatus.FAILED.value
-                    if self.reservation_service and order.reservation_id:
-                        try:
-                            await self.reservation_service.release_reservation(
-                                reservation_id=order.reservation_id,
-                                reason="PARTIAL_CAPTURE_REJECTED",
-                                internal=True,
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "Failed to release reservation on partial capture: %s",
-                                exc,
-                            )
+                else:
+                    # Never mark CANCELLED if release failed! Keep in REQUIRES_RECONCILIATION
+                    order.payment_status = PaymentStatus.REQUIRES_RECONCILIATION.value
 
-                await self._queue_automated_refund(
-                    capture=partial_capture,
-                    reason="PARTIAL_CAPTURE_REJECTED",
-                )
+            # Durably commit partial capture, order status, and payment attempt before refund / raising error
+            await self.session.commit()
+
+            # Make refund dispatch independent of whether inventory release succeeds
+            # Ensure durable capture and refund intent are committed
+            await self._queue_automated_refund(
+                capture=partial_capture,
+                reason="PARTIAL_CAPTURE_REJECTED",
+            )
             raise PartialCaptureRejectedError()
 
         # Normal successful capture:
