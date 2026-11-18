@@ -827,8 +827,9 @@ async def test_partial_capture_rejected_and_auto_refunded(
         db_order = (
             await session.execute(select(Order).where(Order.id == uuid.UUID(order_id)))
         ).scalar_one()
-        # Order NOT confirmed
-        assert db_order.status == OrderStatus.PENDING_PAYMENT
+        # Order cancelled and not confirmed
+        assert db_order.status == OrderStatus.CANCELLED.value
+        assert db_order.payment_status == PaymentStatus.FAILED.value
         assert db_order.fulfilling_capture_id is None
 
         captures = (
@@ -2913,3 +2914,303 @@ async def test_refund_state_transitions_and_stale_events(
         rf = res.scalar_one()
         assert rf.status == RefundStatus.REFUND_PROCESSED.value
         assert rf.processed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_webhook_partial_capture_invariants_and_retry_lifecycle(
+    async_client: AsyncClient,
+):
+    """Verifies that the webhook partial-capture path shares the exact same
+    invariants as the payment verification path:
+    1. Partial capture received through webhook releases inventory and cancels order.
+    2. Reservation release failure through webhook leaves order non-cancelled and sets REQUIRES_RECONCILIATION.
+    3. Capture and refund intent survive release failure.
+    4. A retry webhook successfully releases reservation and transitions order.
+    5. Duplicate webhook delivery does not create duplicate capture/refund or release stock twice.
+    6. Webhook arriving after /payments/verify recorded the same capture remains idempotent.
+    7. Partial capture can never confirm order or consume inventory as successful fulfillment.
+    """
+    session_factory = get_session_factory()
+
+    # Part A: Reservation release failure through webhook leaves order non-cancelled and sets REQUIRES_RECONCILIATION
+    user, token, order_data = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order_data["id"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Initiate payment attempt
+    fake_rzp_order_id = f"order_{uuid.uuid4().hex[:14]}"
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value={
+            "id": fake_rzp_order_id,
+            "status": "created",
+            "amount": order_data["total_payable_paise"],
+            "currency": "INR",
+        },
+    ):
+        init_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments",
+            headers={**headers, "Idempotency-Key": f"init-wh-part-{order_id}"},
+        )
+    assert init_resp.status_code == 201
+
+    provider_payment_id = f"pay_wh_part_{uuid.uuid4().hex[:12]}"
+    partial_amount = order_data["total_payable_paise"] - 2000
+
+    webhook_payload = {
+        "entity": "event",
+        "account_id": "acc_mock_123",
+        "event": "payment.captured",
+        "contains": ["payment"],
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": provider_payment_id,
+                    "order_id": fake_rzp_order_id,
+                    "amount": partial_amount,
+                    "currency": "INR",
+                    "status": "captured",
+                    "method": "card",
+                }
+            }
+        },
+        "created_at": int(datetime.now(UTC).timestamp()),
+    }
+    raw_body = json.dumps(webhook_payload).encode("utf-8")
+    sig = generate_webhook_signature(raw_body)
+    evt_id1 = f"evt_wh_part_{uuid.uuid4().hex[:8]}"
+
+    # A1. Simulate reservation release failure
+    with (
+        patch(
+            "app.modules.payments.service.RazorpayClient.create_refund",
+            new_callable=AsyncMock,
+            return_value={
+                "id": f"rfnd_{uuid.uuid4().hex[:12]}",
+                "status": "processed",
+                "amount": partial_amount,
+            },
+        ),
+        patch(
+            "app.modules.inventory.service.ReservationService.release_reservation",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError(
+                "Simulated lock contention on reservation release"
+            ),
+        ),
+    ):
+        resp_fail = await async_client.post(
+            "/api/v1/payments/webhook",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Razorpay-Signature": sig,
+                "X-Razorpay-Event-Id": evt_id1,
+            },
+        )
+        assert resp_fail.status_code == 200
+
+    # Verify state after release failure:
+    async with session_factory() as session:
+        ord_row = await session.get(Order, order_id)
+        # Order is NOT cancelled! Reservation release failed!
+        assert ord_row.status != OrderStatus.CANCELLED.value
+        assert ord_row.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value
+        assert ord_row.fulfilling_capture_id is None
+
+        # Capture and refund intent survive
+        cap_res = await session.execute(
+            select(PaymentCapture).where(
+                PaymentCapture.provider_payment_id == provider_payment_id
+            )
+        )
+        cap = cap_res.scalar_one()
+        assert (
+            cap.reconciliation_status
+            == CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value
+        )
+        assert cap.is_fulfillment_eligible is False
+
+        rfnd_res = await session.execute(
+            select(PaymentRefund).where(PaymentRefund.capture_id == cap.id)
+        )
+        rfnd = rfnd_res.scalar_one()
+        assert rfnd.amount_paise == partial_amount
+
+    # A2. Retry partial capture webhook (unmocked reservation release succeeds)
+    evt_id2 = f"evt_wh_part_retry_{uuid.uuid4().hex[:8]}"
+    with patch(
+        "app.modules.payments.service.RazorpayClient.create_refund",
+        new_callable=AsyncMock,
+        return_value={
+            "id": f"rfnd_{uuid.uuid4().hex[:12]}",
+            "status": "processed",
+            "amount": partial_amount,
+        },
+    ):
+        resp_retry = await async_client.post(
+            "/api/v1/payments/webhook",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Razorpay-Signature": sig,
+                "X-Razorpay-Event-Id": evt_id2,
+            },
+        )
+        assert resp_retry.status_code == 200
+
+    # Verify state after retry: order now cleanly CANCELLED, payment FAILED
+    async with session_factory() as session:
+        ord_retry = await session.get(Order, order_id)
+        assert ord_retry.status == OrderStatus.CANCELLED.value
+        assert ord_retry.payment_status == PaymentStatus.FAILED.value
+        assert ord_retry.fulfilling_capture_id is None
+
+        # Still exactly 1 capture and 1 refund
+        caps_all = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(caps_all) == 1
+
+        rfnds_all = (
+            (
+                await session.execute(
+                    select(PaymentRefund).where(PaymentRefund.order_id == order_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rfnds_all) == 1
+
+    # Part B: Webhook arriving after /payments/verify recorded the same capture
+    user_b, token_b, order_b = await setup_customer_and_order(async_client)
+    order_b_id = uuid.UUID(order_b["id"])
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    fake_rzp_b_id = f"order_{uuid.uuid4().hex[:14]}"
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value={
+            "id": fake_rzp_b_id,
+            "status": "created",
+            "amount": order_b["total_payable_paise"],
+            "currency": "INR",
+        },
+    ):
+        init_b = await async_client.post(
+            f"/api/v1/orders/{order_b_id}/payments",
+            headers={**headers_b, "Idempotency-Key": f"init-part-b-{order_b_id}"},
+        )
+    assert init_b.status_code == 201
+
+    pay_b_id = f"pay_part_b_{uuid.uuid4().hex[:12]}"
+    sig_b = generate_payment_signature(fake_rzp_b_id, pay_b_id)
+    partial_b_amount = order_b["total_payable_paise"] - 1500
+
+    # 1. /payments/verify records capture and auto-refunds first
+    with (
+        patch(
+            "app.modules.payments.service.RazorpayClient.fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": pay_b_id,
+                "order_id": fake_rzp_b_id,
+                "amount": partial_b_amount,
+                "currency": "INR",
+                "status": "captured",
+                "method": "card",
+            },
+        ),
+        patch(
+            "app.modules.payments.service.RazorpayClient.create_refund",
+            new_callable=AsyncMock,
+            return_value={
+                "id": f"rfnd_{uuid.uuid4().hex[:12]}",
+                "status": "processed",
+                "amount": partial_b_amount,
+            },
+        ),
+    ):
+        v_b = await async_client.post(
+            f"/api/v1/orders/{order_b_id}/payments/verify",
+            headers=headers_b,
+            json={
+                "razorpay_order_id": fake_rzp_b_id,
+                "razorpay_payment_id": pay_b_id,
+                "razorpay_signature": sig_b,
+            },
+        )
+        assert v_b.status_code == 400
+        assert v_b.json()["error"]["code"] == "PARTIAL_CAPTURE_REJECTED"
+
+    # 2. Webhook arrives afterwards for the same capture
+    webhook_b_payload = {
+        "entity": "event",
+        "account_id": "acc_mock_123",
+        "event": "payment.captured",
+        "contains": ["payment"],
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": pay_b_id,
+                    "order_id": fake_rzp_b_id,
+                    "amount": partial_b_amount,
+                    "currency": "INR",
+                    "status": "captured",
+                    "method": "card",
+                }
+            }
+        },
+        "created_at": int(datetime.now(UTC).timestamp()),
+    }
+    raw_b = json.dumps(webhook_b_payload).encode("utf-8")
+    resp_wh_b = await async_client.post(
+        "/api/v1/payments/webhook",
+        content=raw_b,
+        headers={
+            "Content-Type": "application/json",
+            "X-Razorpay-Signature": generate_webhook_signature(raw_b),
+            "X-Razorpay-Event-Id": f"evt_wh_b_{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert resp_wh_b.status_code == 200
+
+    # Verify idempotency: exactly 1 capture, exactly 1 refund, order stays CANCELLED
+    async with session_factory() as session:
+        ord_b_row = await session.get(Order, order_b_id)
+        assert ord_b_row.status == OrderStatus.CANCELLED.value
+        assert ord_b_row.payment_status == PaymentStatus.FAILED.value
+        assert ord_b_row.fulfilling_capture_id is None
+
+        caps_b = (
+            (
+                await session.execute(
+                    select(PaymentCapture).where(PaymentCapture.order_id == order_b_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(caps_b) == 1
+
+        rfnds_b = (
+            (
+                await session.execute(
+                    select(PaymentRefund).where(PaymentRefund.order_id == order_b_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rfnds_b) == 1

@@ -9,6 +9,7 @@ from app.core.exceptions import AppException
 from app.core.logging import logger
 from app.modules.inventory.service import ReservationService
 from app.modules.orders.models import (
+    Order,
     OrderStatus,
     OrderStatusHistory,
     OutboxEvent,
@@ -44,6 +45,44 @@ from app.modules.payments.schemas import (
     PaymentVerifyResponse,
     RefundResponse,
 )
+
+
+async def reconcile_rejected_partial_capture_order(
+    order: Order,
+    reservation_service: ReservationService | None,
+) -> bool:
+    """Attempts to release the order's reservation hold on rejected partial capture.
+    Only marks the order CANCELLED and payment_status FAILED if reservation release succeeds.
+    If release fails, marks payment_status REQUIRES_RECONCILIATION and leaves order non-cancelled.
+    Returns True if release succeeded or order was already cancelled.
+    """
+    if order.status == OrderStatus.CANCELLED.value:
+        return True
+
+    release_succeeded = False
+    if reservation_service and order.reservation_id:
+        try:
+            await reservation_service.release_reservation(
+                reservation_id=order.reservation_id,
+                reason="PARTIAL_CAPTURE_REJECTED",
+                internal=True,
+            )
+            release_succeeded = True
+        except Exception as exc:
+            logger.error(
+                "Failed to release reservation on partial capture for order %s: %s",
+                order.id,
+                exc,
+            )
+            release_succeeded = False
+
+    if release_succeeded:
+        order.status = OrderStatus.CANCELLED.value
+        order.payment_status = PaymentStatus.FAILED.value
+    else:
+        order.payment_status = PaymentStatus.REQUIRES_RECONCILIATION.value
+
+    return release_succeeded
 
 
 class PaymentService:
@@ -577,30 +616,10 @@ class PaymentService:
             payment.error_code = "PARTIAL_CAPTURE_REJECTED"
 
             # Attempt reservation release if order is not yet CANCELLED
-            if order.status != OrderStatus.CANCELLED.value:
-                release_succeeded = False
-                if self.reservation_service and order.reservation_id:
-                    try:
-                        await self.reservation_service.release_reservation(
-                            reservation_id=order.reservation_id,
-                            reason="PARTIAL_CAPTURE_REJECTED",
-                            internal=True,
-                        )
-                        release_succeeded = True
-                    except Exception as exc:
-                        logger.error(
-                            "Failed to release reservation on partial capture for order %s: %s",
-                            order.id,
-                            exc,
-                        )
-                        release_succeeded = False
-
-                if release_succeeded:
-                    order.status = OrderStatus.CANCELLED.value
-                    order.payment_status = PaymentStatus.FAILED.value
-                else:
-                    # Never mark CANCELLED if release failed! Keep in REQUIRES_RECONCILIATION
-                    order.payment_status = PaymentStatus.REQUIRES_RECONCILIATION.value
+            await reconcile_rejected_partial_capture_order(
+                order=order,
+                reservation_service=self.reservation_service,
+            )
 
             # Durably commit partial capture, order status, and payment attempt before refund / raising error
             await self.session.commit()

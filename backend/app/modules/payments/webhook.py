@@ -20,6 +20,7 @@ from app.modules.payments.client import RazorpayClient
 from app.modules.payments.exceptions import (
     InvalidWebhookSignatureError,
     MissingWebhookSignatureError,
+    PaymentGatewayTimeoutError,
 )
 from app.modules.payments.models import (
     CaptureReconciliationStatus,
@@ -34,6 +35,7 @@ from app.modules.payments.models import (
 )
 from app.modules.payments.repository import PaymentRepository
 from app.modules.payments.schemas import WebhookIngestResponse
+from app.modules.payments.service import reconcile_rejected_partial_capture_order
 
 
 def sanitize_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -301,6 +303,18 @@ class WebhookService:
                 "Webhook duplicate capture for pay_id=%s already recorded; acknowledging idempotently.",
                 provider_payment_id,
             )
+            # If previously rejected partial capture, ensure order reservation reconciliation is completed
+            if (
+                existing_capture.reconciliation_status
+                == CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value
+            ):
+                await reconcile_rejected_partial_capture_order(
+                    order=order,
+                    reservation_service=self.reservation_service,
+                )
+                await self._trigger_auto_refund(
+                    existing_capture, "PARTIAL_CAPTURE_REJECTED"
+                )
             return
 
         # If order is already confirmed:
@@ -372,6 +386,12 @@ class WebhookService:
             if payment:
                 payment.status = PaymentAttemptStatus.FAILED.value
                 payment.error_code = "PARTIAL_CAPTURE_REJECTED"
+
+            # Reconcile order & reservation hold (atomic release, CANCELLED on success, REQUIRES_RECONCILIATION on failure)
+            await reconcile_rejected_partial_capture_order(
+                order=order,
+                reservation_service=self.reservation_service,
+            )
 
             await self._trigger_auto_refund(partial_capture, "PARTIAL_CAPTURE_REJECTED")
             return
@@ -573,8 +593,12 @@ class WebhookService:
         )
 
     async def _trigger_auto_refund(self, capture: PaymentCapture, reason: str) -> None:
-        refund_idempotency = f"webhook-auto-refund-{capture.id}"
+        refund_idempotency = f"auto-refund-{capture.id}"
         existing = await self.repo.get_refund_by_idempotency_key(refund_idempotency)
+        if not existing:
+            existing = await self.repo.get_refund_by_idempotency_key(
+                f"webhook-auto-refund-{capture.id}"
+            )
         if existing:
             return
 
@@ -615,10 +639,20 @@ class WebhookService:
                     locked_refund.status = RefundStatus.REFUND_PENDING.value
                     locked_refund.processed_at = None
             await self.session.commit()
-        except Exception as exc:
-            logger.error("Auto-refund dispatch error in webhook: %s", str(exc))
+        except PaymentGatewayTimeoutError:
             locked_refund = await self.repo.get_refund_by_id(refund.id)
             if locked_refund:
                 locked_refund.status = RefundStatus.REFUND_PENDING.value
+                locked_refund.processed_at = None
+            await self.session.commit()
+        except Exception as exc:
+            logger.warning(
+                "Auto-refund dispatch error in webhook; leaving in REFUND_PENDING: %s",
+                str(exc),
+            )
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.status = RefundStatus.REFUND_PENDING.value
+                locked_refund.processed_at = None
                 locked_refund.error_description = str(exc)
             await self.session.commit()
