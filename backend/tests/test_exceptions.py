@@ -1,0 +1,13 @@
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_not_found_standard_error(async_client: AsyncClient):
+    response = await async_client.get("/non-existent-endpoint")
+    assert response.status_code == 404
+    data = response.json()
+    assert "error" in data
+    assert data["error"]["code"] == "NOT_FOUND"
+    assert "request_id" in data["error"]
+    assert "message" in data["error"]

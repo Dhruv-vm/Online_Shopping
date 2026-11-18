@@ -1,0 +1,317 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  ShoppingBasket,
+  Search,
+  Menu,
+  X,
+  Store,
+  LayoutGrid,
+  User,
+  LogOut,
+  MapPin,
+  ShoppingCart,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth/auth-context";
+import { useCart } from "@/lib/cart/cart-context";
+
+export function Header() {
+  const router = useRouter();
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
+  const { totalQuantity } = useCart();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      router.push(`/products?search=${encodeURIComponent(searchQuery.trim())}`);
+      setMobileMenuOpen(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setMobileMenuOpen(false);
+    router.push("/");
+  };
+
+  return (
+    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-xs">
+      <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:px-6 gap-4">
+        {/* Brand Logo */}
+        <Link href="/" className="flex items-center space-x-2.5 shrink-0">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm">
+            <ShoppingBasket className="h-5 w-5" />
+          </div>
+          <div className="flex flex-col">
+            <div className="flex items-center">
+              <span className="text-xl font-extrabold tracking-tight text-foreground">
+                BASKET
+              </span>
+              <Badge variant="outline" className="ml-2 font-mono text-[10px] text-emerald-700 dark:text-emerald-400 border-emerald-600/30">
+                Live Store
+              </Badge>
+            </div>
+            <span className="text-[10px] text-muted-foreground hidden sm:block">
+              Multi-Category Indian Retail
+            </span>
+          </div>
+        </Link>
+
+        {/* Global Search Bar (Desktop) */}
+        <form
+          onSubmit={handleSearchSubmit}
+          className="relative hidden md:flex flex-1 max-w-md mx-4 items-center"
+        >
+          <Search className="absolute left-3 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            type="search"
+            placeholder="Search Sony headphones, FabIndia silk, organic groceries..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-4 h-10 w-full bg-muted/40 border-muted-foreground/20 focus:bg-background transition-colors text-xs sm:text-sm"
+          />
+        </form>
+
+        {/* Desktop Navigation Links */}
+        <nav className="hidden lg:flex items-center space-x-5 text-sm font-medium">
+          <Link
+            href="/products"
+            className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+          >
+            <LayoutGrid className="h-4 w-4" />
+            Catalogue
+          </Link>
+          <Link
+            href="/categories"
+            className="text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+          >
+            Categories
+          </Link>
+          <Link
+            href="/retailers"
+            className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+          >
+            <Store className="h-4 w-4" />
+            Retailers
+          </Link>
+
+          {/* Cart Icon Link (Desktop) */}
+          <Link
+            href="/cart"
+            className="relative flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+            aria-label="Shopping Cart"
+          >
+            <div className="relative">
+              <ShoppingCart className="h-5 w-5" />
+              {totalQuantity > 0 && (
+                <span className="absolute -top-2 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                  {totalQuantity > 99 ? "99+" : totalQuantity}
+                </span>
+              )}
+            </div>
+            <span>Cart</span>
+          </Link>
+
+          {/* Desktop User Authentication Controls */}
+          {!isLoading && (
+            <div className="flex items-center gap-2.5 pl-2 border-l border-muted">
+              {isAuthenticated ? (
+                <div className="flex items-center gap-2">
+                  <Link href="/account">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-2 text-xs font-semibold border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                    >
+                      <User className="h-3.5 w-3.5" />
+                      {user?.full_name ? user.full_name.split(" ")[0] : "Account"}
+                    </Button>
+                  </Link>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleLogout}
+                    title="Sign Out"
+                    aria-label="Sign Out"
+                    className="h-9 w-9 p-0 text-muted-foreground hover:text-red-600"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Link href="/login">
+                    <Button variant="ghost" size="sm" className="h-9 text-xs font-medium">
+                      Sign In
+                    </Button>
+                  </Link>
+                  <Link href="/register">
+                    <Button
+                      size="sm"
+                      className="h-9 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                    >
+                      Register
+                    </Button>
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+
+        {/* Mobile triggers */}
+        <div className="flex items-center lg:hidden gap-1.5">
+          <Link href="/cart" className="relative p-2 text-foreground" aria-label="Shopping Cart">
+            <ShoppingCart className="h-5 w-5" />
+            {totalQuantity > 0 && (
+              <span className="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                {totalQuantity > 99 ? "99+" : totalQuantity}
+              </span>
+            )}
+          </Link>
+
+          {isAuthenticated && (
+            <Link href="/account" className="sm:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs font-medium border-emerald-600/40 text-emerald-700"
+              >
+                <User className="h-3.5 w-3.5" />
+              </Button>
+            </Link>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle navigation"
+            className="h-9 w-9 p-0"
+          >
+            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </Button>
+        </div>
+      </div>
+
+      {/* Mobile Navigation Drawer / Dropdown */}
+      {mobileMenuOpen && (
+        <div className="lg:hidden border-t bg-background px-4 py-4 space-y-4">
+          <form onSubmit={handleSearchSubmit} className="relative">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search products, brands, categories..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-4 h-10 w-full"
+            />
+          </form>
+
+          <nav className="flex flex-col space-y-1 text-sm font-medium pt-1">
+            <Link
+              href="/cart"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4 text-emerald-600" />
+                Shopping Cart
+              </div>
+              {totalQuantity > 0 && (
+                <Badge className="bg-emerald-600 text-white text-xs">
+                  {totalQuantity} {totalQuantity === 1 ? "item" : "items"}
+                </Badge>
+              )}
+            </Link>
+            <Link
+              href="/products"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center gap-2"
+            >
+              <LayoutGrid className="h-4 w-4 text-emerald-600" />
+              Catalogue
+            </Link>
+            <Link
+              href="/categories"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground"
+            >
+              Categories
+            </Link>
+            <Link
+              href="/retailers"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center gap-2"
+            >
+              <Store className="h-4 w-4 text-emerald-600" />
+              Partner Retailers
+            </Link>
+
+            <div className="pt-2 border-t border-muted/60 my-2">
+              {isAuthenticated ? (
+                <>
+                  <Link
+                    href="/account"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center gap-2 font-semibold text-emerald-700 dark:text-emerald-400"
+                  >
+                    <User className="h-4 w-4" />
+                    My Account ({user?.full_name})
+                  </Link>
+                  <Link
+                    href="/account/addresses"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center gap-2"
+                  >
+                    <MapPin className="h-4 w-4" />
+                    Saved Addresses
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full text-left px-3 py-2 rounded-md hover:bg-red-50 text-red-600 dark:hover:bg-red-950/40 flex items-center gap-2"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign Out
+                  </button>
+                </>
+              ) : (
+                <div className="flex flex-col gap-2 pt-1">
+                  <Link
+                    href="/login"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full"
+                  >
+                    <Button variant="outline" className="w-full justify-center">
+                      Sign In
+                    </Button>
+                  </Link>
+                  <Link
+                    href="/register"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full"
+                  >
+                    <Button className="w-full justify-center bg-emerald-600 hover:bg-emerald-700 text-white">
+                      Create Customer Account
+                    </Button>
+                  </Link>
+                </div>
+              )}
+            </div>
+          </nav>
+        </div>
+      )}
+    </header>
+  );
+}
+
