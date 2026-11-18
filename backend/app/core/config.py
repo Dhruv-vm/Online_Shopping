@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     KAFKA_SSL_CA_LOCATION: str | None = None
     KAFKA_SSL_CERTIFICATE_LOCATION: str | None = None
     KAFKA_SSL_KEY_LOCATION: str | None = None
+    KAFKA_SASL_MECHANISM: str = "SCRAM-SHA-256"
+    KAFKA_SASL_USERNAME: str | None = None
+    KAFKA_SASL_PASSWORD: SecretStr | None = None
+    KAFKA_CLIENT_ID: str = "basket-backend"
+    KAFKA_PRODUCER_ACKS: str = "all"
+    KAFKA_PRODUCER_RETRIES: int = 5
+    KAFKA_PRODUCER_TIMEOUT_SECONDS: float = 2.0
 
     # OpenSearch (Aiven OpenSearch)
     OPENSEARCH_URL: str | None = None
@@ -185,6 +192,89 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("KAFKA_SECURITY_PROTOCOL", mode="after")
+    @classmethod
+    def validate_kafka_security_protocol(cls, v: str, info) -> str:
+        protocol = v.upper().strip()
+        valid_protocols = {"SSL", "SASL_SSL", "PLAINTEXT", "SASL_PLAINTEXT"}
+        if protocol not in valid_protocols:
+            raise ValueError(
+                f"KAFKA_SECURITY_PROTOCOL must be one of {sorted(valid_protocols)}"
+            )
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production" and protocol in ("PLAINTEXT", "SASL_PLAINTEXT"):
+            raise ValueError(
+                f"KAFKA_SECURITY_PROTOCOL cannot be '{protocol}' in production; SSL or SASL_SSL is required."
+            )
+        return protocol
+
+    @field_validator("KAFKA_PRODUCER_ACKS", mode="after")
+    @classmethod
+    def validate_kafka_producer_acks(cls, v: str, info) -> str:
+        valid_acks = {"all", "-1", "0", "1"}
+        v_str = str(v).lower().strip()
+        if v_str not in valid_acks:
+            raise ValueError(f"KAFKA_PRODUCER_ACKS must be one of {sorted(valid_acks)}")
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production" and v_str not in ("all", "-1"):
+            raise ValueError(
+                "KAFKA_PRODUCER_ACKS must be 'all' (or '-1') in production; acks=0 and acks=1 are prohibited."
+            )
+        return v_str
+
+    @field_validator("KAFKA_SASL_PASSWORD", mode="after")
+    @classmethod
+    def validate_kafka_sasl_credentials(
+        cls, v: SecretStr | None, info
+    ) -> SecretStr | None:
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        protocol = str(info.data.get("KAFKA_SECURITY_PROTOCOL", "SSL")).upper()
+        servers = info.data.get("KAFKA_BOOTSTRAP_SERVERS")
+        if (
+            env == "production"
+            and servers
+            and protocol in ("SASL_SSL", "SASL_PLAINTEXT")
+        ):
+            if not v or not v.get_secret_value() or not v.get_secret_value().strip():
+                raise ValueError(
+                    "KAFKA_SASL_PASSWORD must be configured in production when using SASL."
+                )
+            secret = v.get_secret_value().strip().lower()
+            if "mock" in secret or "example" in secret or "placeholder" in secret:
+                raise ValueError(
+                    "KAFKA_SASL_PASSWORD cannot be a placeholder or mock value in production."
+                )
+        return v
+
+    @field_validator("KAFKA_BOOTSTRAP_SERVERS", mode="before")
+    @classmethod
+    def clean_kafka_bootstrap_servers(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return str(v)
+
+    @field_validator("KAFKA_BOOTSTRAP_SERVERS", mode="after")
+    @classmethod
+    def validate_kafka_bootstrap_servers(cls, v: str | None, info) -> str | None:
+        if v is None:
+            return None
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production":
+            cleaned_lower = v.lower()
+            if (
+                "mock" in cleaned_lower
+                or "example" in cleaned_lower
+                or "localhost" in cleaned_lower
+                or "127.0.0.1" in cleaned_lower
+            ):
+                raise ValueError(
+                    "KAFKA_BOOTSTRAP_SERVERS in production cannot use mock or localhost addresses."
+                )
+        return v
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
@@ -192,6 +282,12 @@ class Settings(BaseSettings):
     @property
     def has_database(self) -> bool:
         return bool(self.DATABASE_URL and self.DATABASE_URL.strip())
+
+    @property
+    def has_kafka(self) -> bool:
+        return bool(
+            self.KAFKA_BOOTSTRAP_SERVERS and self.KAFKA_BOOTSTRAP_SERVERS.strip()
+        )
 
 
 settings = Settings()

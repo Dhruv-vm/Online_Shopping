@@ -174,16 +174,56 @@
 - [ ] **Phase 2G — Storefront UI & End-to-End Verification:**
   - [ ] Cart drawer, full cart page, multi-step checkout stepper, order tracking view.
 
-## 5. Phase 3 — Kafka and reliability
+## 5. Phase 3 — Kafka Event Streaming, Outbox Publisher, OpenSearch & Universal Search
 
-Assign one owner for each task:
-- [ ] Transactional outbox schema and service.
-- [ ] Outbox publisher to Kafka.
-- [ ] Order-created event schema.
-- [ ] Idempotent consumer.
-- [ ] Consumer reaction (for example, update a read model/index or record a notification job).
-- [ ] Retry/error handling and observability.
-- [ ] Demonstrate duplicate event does not duplicate side effects.
+Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
+
+- [ ] **Phase 3A — Infrastructure, Configuration & Event Contracts:**
+  - [ ] Add `aiokafka>=0.11.0` optional dependency and configuration settings for Aiven Kafka (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, TLS certificates, SASL credentials).
+  - [ ] Implement Pre-Deployment Validation Checklist verifying provisioned Aiven tier, partition limits, and single/multi-broker replication constraints.
+  - [ ] Implement `EventEnvelope` model with strict versioning, `aggregate_version`, partition keys, ISO-8601 timestamps, and zero-PII payload validation (customer identifiers excluded).
+  - [ ] Define Kafka topic topology (`basket.events.orders`, `basket.events.payments`, `basket.events.catalogue`, `basket.events.inventory`, `basket.events.dead-letter`).
+  - [ ] Provide `MockKafkaProducer` for local development and CI testing without live Aiven credentials.
+  - [ ] Acceptance Criteria: Envelope validation tests pass; Level 1/Level 2 PII detection fails closed; local environment runs cleanly without credentials.
+
+- [ ] **Phase 3B — Transactional Outbox Publisher:**
+  - [ ] Alembic migration `0009_outbox_lease_and_consumer_inbox` adding `claimed_by`, `claim_expires_at`, `next_attempt_at`, `correlation_id` and `PROCESSING` status to `outbox_events`.
+  - [ ] Implement multi-worker lease claiming with `SELECT ... FOR UPDATE SKIP LOCKED`, 30-second leases, and bounded batch sizes (10-25 items).
+  - [ ] Enforce lease ownership on update (`WHERE id IN (...) AND claimed_by = :worker_id`).
+  - [ ] Outbox publisher worker executing bounded exponential backoff with decorrelated jitter ($T_{backoff} = \min(300, 2^{retry\_count} + \text{jitter})$).
+  - [ ] Distinction between transient network errors and permanent serialization failures (`FAILED` status).
+  - [ ] Admin CLI tool `python -m app.cli.outbox_admin replay-failed` with operator audit logging.
+  - [ ] Acceptance Criteria: Multi-worker concurrency tests prove zero duplicate processing races; publisher crash after Kafka ACK safely recovers; no skipped outbox rows.
+
+- [ ] **Phase 3C — Kafka Consumers & Reliability Engine:**
+  - [ ] Alembic migration `0009` creating `consumer_inbox` table with unique constraint on `(consumer_group, event_id)`.
+  - [ ] Strategy A (PostgreSQL-only consumers): Atomic DB transaction enclosing inbox insert and business mutation, followed by manual offset commit.
+  - [ ] Strategy B (OpenSearch consumers): External versioned upsert (`version_type="external_gte"`), followed by DB inbox insert, followed by manual offset commit.
+  - [ ] Generic `BaseKafkaConsumer` managing consumer groups, cooperative sticky rebalancing, partition pause/resume on retry, and dead-letter queue routing (`basket.events.dead-letter`).
+  - [ ] Acceptance Criteria: Injected duplicate event deliveries produce effectively-once business side effects; consumer crash before commit replays safely; offset committed only after DLQ ACK confirmed.
+
+- [ ] **Phase 3D — OpenSearch Indexing & Derived Read Model:**
+  - [ ] Add `opensearch-py>=2.7.0` dependency and client configuration.
+  - [ ] Define Product-Centric `basket_products_v1` index mapping with embedded retailer listings, custom analyzers (edge n-gram autocomplete, multi-category synonyms, English stemmer).
+  - [ ] Implement zero-downtime blue/green index alias management (`basket_products`).
+  - [ ] Implement incremental indexing consumer updating OpenSearch documents on catalog and inventory events with optimistic concurrency (`external_gte`).
+  - [ ] CLI command `python -m app.cli.search_admin reindex` for full bulk reindexing from PostgreSQL.
+  - [ ] Acceptance Criteria: Multi-retailer variant document correctly indexes price ranges and inventory; replaying older product events rejects stale regression (409 Conflict); reindexing script successfully rebuilds index from PostgreSQL.
+
+- [ ] **Phase 3E — Universal Multi-Category Search API & Storefront Fallback:**
+  - [ ] Expose `GET /api/v1/search` with keyword query, multi-category facets, brand/retailer filters, price range, stock flags, sorting, and pagination.
+  - [ ] Expose `GET /api/v1/search/suggest` for instant prefix autocomplete.
+  - [ ] Three-state circuit breaker (Closed, Open, Half-Open) with 200ms connect and 500ms read timeouts.
+  - [ ] Transparent fallback to PostgreSQL SQL `list_products()` with reduced faceting under fallback load.
+  - [ ] Frontend search client integration in `frontend/lib/api/search.ts`.
+  - [ ] Acceptance Criteria: Universal search works across groceries, fashion, electronics, and home; search remains fully functional via SQL fallback when OpenSearch is terminated; circuit breaker protects database from connection exhaustion.
+
+- [ ] **Phase 3F — Observability, Metrics & Operational Runbooks:**
+  - [ ] Prometheus metrics: `basket_outbox_backlog_count`, `basket_outbox_publish_total`, `basket_kafka_consumer_lag`, `basket_consumer_inbox_dedup_total`, `basket_search_latency_seconds`, `basket_search_circuit_breaker_state`.
+  - [ ] End-to-end correlation ID propagation (`X-Correlation-ID`) across HTTP requests, outbox rows, and Kafka envelopes.
+  - [ ] Health and readiness probes (`/ready`) reporting graceful degradation for Kafka and OpenSearch.
+  - [ ] Operational runbooks for index rebuilding, DLQ event replay, and stuck lease recovery.
+  - [ ] Acceptance Criteria: Full observability dashboard metrics verified; health checks report `ready` (or `degraded` in dev) cleanly.
 
 ## 6. Phase 4 — Sale Storm proof
 

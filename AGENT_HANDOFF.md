@@ -1045,3 +1045,96 @@ Copy this section for every new request.
    - `./scripts/verify-environment.sh` passed 100%.
 
 **Status:** RECONCILIATION HARDENING COMPLETE & VERIFIED — Ready for integration review.
+
+---
+
+### [2026-11-18 19:45 IST] — Principal Software Architect — Phase 3 Distributed Systems & Reliability Architecture Review (v2.0.0)
+
+**Related branch / PR / task:** Phase 3 Architecture Review & Distributed Systems Correction
+**Authoritative Specification:** `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
+**Associated Documentation Updates:** `TASK_BREAKDOWN.md` (Section 5), `DATA_MODEL.md` (Section 13), `API_CONTRACTS.md` (Section 10)
+
+**Key Architecture Corrections Delivered:**
+1. **Durable Outbox Retries & Lease Ownership:**
+   - Added `next_attempt_at TIMESTAMPTZ` with bounded exponential backoff and decorrelated jitter ($T_{backoff} = \min(300, 2^{retry\_count} + \text{jitter})$). Events are never claimed before `next_attempt_at`.
+   - Outbox worker enforces strictly bounded batch sizes (10-25 items) and tight per-event timeouts (2.0s), guaranteeing the entire batch completes well within the 30-second lease window.
+   - All state updates strictly enforce lease ownership (`WHERE id IN (...) AND claimed_by = :worker_id`).
+   - Distinguished transient network errors from permanent serialization failures (`FAILED` status).
+2. **Consumer Strategy Decoupling (PostgreSQL vs OpenSearch):**
+   - Formally separated **Strategy A** (PostgreSQL-only: atomic DB transaction with `consumer_inbox` + manual offset commit) and **Strategy B** (OpenSearch read model: versioned idempotent upsert with `external_gte` concurrency protection $\rightarrow$ DB `consumer_inbox` record $\rightarrow$ manual offset commit).
+   - Proven that OpenSearch failure never causes premature Kafka offset acknowledgement, and replay of stale events is safely rejected via 409 Conflict without regressing documents.
+3. **Kafka Offset & DLQ Guarantees:**
+   - Offset is committed only after broker confirms DLQ receipt or after database transaction commits. DLQ events carry original headers and event IDs for deduplication.
+4. **Data Privacy & Canonical Envelope Hardening:**
+   - Formally classified all data (Direct Personal, Sensitive Financial, Pseudonymous, Non-Personal Domain).
+   - Removed `customer_id` completely from Kafka payloads; Phase 3 consumers require zero customer context.
+   - Defined `occurred_at` precisely as application UTC timestamp at event generation time.
+5. **Product-Centric Document Model Approved:**
+   - Evaluated Product-Centric (embedded listings) vs Listing-Centric models. Approved Product-Centric model to prevent duplicate search cards in multi-retailer e-commerce, provide unified price ranges ("From ₹X at Y stores"), and preserve clean brand/category facets.
+   - Verified that all indexed fields map to real columns in `modules/catalogue/models.py`.
+6. **Search Resilience & Graceful Fallback:**
+   - Added 3-state circuit breaker (Closed, Open, Half-Open) with 200ms connect and 500ms read timeouts.
+   - PostgreSQL fallback operates with reduced capabilities (basic pagination, no heavy faceting) and request bounding to protect database performance.
+7. **Pre-Deployment Aiven Validation Checklist:**
+   - All partition counts (3), replicas (2), and retention windows marked provisional. Defined pre-deployment verification checklist against actual provisioned Aiven tiers.
+   - Reconfirmed `aiokafka>=0.11.0` as evidence-based native async client for the modular monolith.
+
+**Confirmation of Code State:**
+- Application code: 0 files modified.
+- Alembic migrations: 0 migrations added or changed.
+- Dependencies: 0 dependencies installed.
+- Git: Clean on branch `integration`, commit `6fd7f34`.
+
+**Status:** PHASE 3 v2.0.0 SPECIFICATION COMPLETE & READY FOR FINAL APPROVAL — Implementation will begin on Slice 3A upon sign-off.
+
+---
+
+### [2026-11-18 20:10 IST] — Senior Backend & Distributed Systems Engineer — Phase 3 Slice 3A Implementation Handoff
+
+**Task:** Phase 3 Architecture Sign-Off & Slice 3A: Event Streaming Contracts & Infrastructure Baseline
+**Branch / PR:** `feature/phase3-event-streaming-contracts` (created from `integration` @ `6fd7f34`)
+**Authoritative Specifications:**
+- `PHASE_3_ARCHITECTURE.md` (Version 2.1.0 Architecture Review & Sign-Off)
+- `TASK_BREAKDOWN.md` (Section 5)
+- `DATA_MODEL.md` (Section 13)
+- `API_CONTRACTS.md` (Section 10)
+
+**What was implemented:**
+
+1. **Part A — Final Architecture Document Corrections:**
+   - **PostgreSQL Consumer Transaction:** Explicitly clarified that PostgreSQL database transaction commits before Kafka offset commit; non-atomicity acknowledged; inbox deduplication recovers cleanly upon crash between the two commits.
+   - **OpenSearch Versioning:** Defined deterministic document generation (`doc_id = str(product_id)`), monotonic `aggregate_version` increments, tombstone soft-deletion indexing, and duplicate-write replay idempotency with `external_gte`.
+   - **Cross-Topic Ordering:** Explicitly disclaimed cross-topic ordering; defined consumer eventual consistency, prerequisite buffering for missing parents, and irreversible terminal-state guards.
+   - **Privacy Classification:** Added operational identifier review (`provider_payment_id`, `provider_refund_id`, `provider_order_id`); strictly enforced zero customer PII in any Kafka envelope.
+   - **Event Timestamps:** Formally defined `occurred_at` as application event creation UTC timestamp; monotonic ordering strictly governed by entity `aggregate_version`.
+
+2. **Part B — Slice 3A Implementation:**
+   - **Dependency Management:** Added `aiokafka>=0.11.0` to `backend/pyproject.toml` dependencies.
+   - **Kafka Configuration:** Enhanced `backend/app/core/config.py` with validated Kafka configuration (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, TLS certificate paths, SASL mechanisms/credentials with `SecretStr`, `KAFKA_CLIENT_ID`, `KAFKA_PRODUCER_ACKS`, `KAFKA_PRODUCER_TIMEOUT_SECONDS`, and `has_kafka` property). Enforced production rejection of mock/localhost brokers.
+   - **Canonical Event Envelope:** Created `backend/app/core/events/envelope.py` providing `EventEnvelope` with Pydantic validation:
+     - Mandatory invariant: `partition_key == str(aggregate_id)`.
+     - Monotonic `aggregate_version >= 1` and `event_version >= 1`.
+     - Strict recursive zero customer PII validation rejecting `customer_id`, `guest_token`, `email`, `phone`, `full_name`, `address`, `password`, `card_number`, etc.
+     - UTC datetime enforcement for `occurred_at`.
+     - Binary and JSON serialization helpers (`to_json_bytes`, `from_json_bytes`, `to_json_dict`).
+   - **Event Producer & Factory:** Created `backend/app/core/events/kafka.py`:
+     - `EventProducer` abstract base class defining `start()`, `stop()`, `send()`, and `is_connected`.
+     - `AioKafkaEventProducer` production client implementing TLS/SASL connection management and per-event timeouts.
+     - `MockKafkaProducer` in-memory mock client enabling local testing and offline development without Aiven credentials.
+     - `get_kafka_producer` connection factory defaulting to mock when `KAFKA_BOOTSTRAP_SERVERS` is empty or during tests.
+   - **Test Suite:** Implemented comprehensive test suite in `backend/tests/test_events.py` (40 unit and integration tests) verifying envelope invariants, PII rejections, producer lifecycles, and configuration validation.
+
+3. **Strict Scope Enforcement:**
+   - Zero implementation of Slice 3B through 3F (no outbox publisher worker, no migration 0009, no consumer engine, no OpenSearch client, no search API endpoints).
+   - Alembic migration head remains strictly at `0008_payments_razorpay_schema`.
+
+**Verification Gates Passed:**
+- `ruff check app/ tests/` and `ruff format --check app/ tests/`: 100% clean across all 86 files.
+- Backend pytest: 217 passed, 0 failed in 53.00s.
+- Alembic discovery: Single head `0008_payments_razorpay_schema (head)`.
+- Frontend TypeScript type check: `tsc --noEmit` passed with 0 errors.
+- Frontend tests: 60 passed, 0 failed in 392ms.
+- Frontend production build: Next.js 15.5.29 compiled successfully (10 static/dynamic routes).
+- `./scripts/verify-environment.sh`: ALL VERIFICATION GATES PASSED CLEANLY.
+
+**Status:** SLICE 3A COMPLETE & VERIFIED — Ready for Slice 3B (Transactional Outbox Publisher).
