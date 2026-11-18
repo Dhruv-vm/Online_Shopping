@@ -346,3 +346,111 @@ Add fulfilment states only if the demo requires them. Validate transitions in ba
 - Added column `order_id`: UUID (FK `orders.id` ON DELETE SET NULL, nullable, indexed)
 - Updated status check constraint to include `'ALLOCATED_TO_ORDER'`:
   `status IN ('ACTIVE', 'ALLOCATED_TO_ORDER', 'CONFIRMED', 'RELEASED', 'EXPIRED')`
+
+---
+
+## 12. Phase 2F — Payments, Capture Ledger, Multi-Refund & Webhook Schema (`0008_payments_razorpay_schema`)
+
+### `payments` Table (Payment Attempts — `0008_payments_razorpay_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `order_id`: UUID (FK `orders.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `customer_id`: UUID (FK `users.id` ON DELETE RESTRICT, nullable, indexed)
+  *(Enforces unified financial retention: financial records are immutable; customer account deletion is handled by soft-deletion/anonymization in users without deleting user rows)*
+- `guest_token_hash`: VARCHAR(64) (Nullable, indexed)
+- `provider`: VARCHAR(32) (Default `'RAZORPAY_SANDBOX'`, nullable=False)
+- `provider_order_id`: VARCHAR(128) (Nullable during `CREATING`, indexed)
+- `provider_payment_id`: VARCHAR(128) (Nullable, initial payment attempt reference)
+- `idempotency_key`: VARCHAR(128) (Nullable=False)
+- `attempt_number`: INTEGER (Default `1`, nullable=False)
+- `amount_paise`: BIGINT (Nullable=False, check `>= 0`)
+- `currency`: VARCHAR(3) (Default `'INR'`, nullable=False)
+- `status`: VARCHAR(32) (Default `'CREATING'`, check: `status IN ('CREATING', 'CREATION_AMBIGUOUS', 'PENDING', 'AUTHORIZED', 'SUCCEEDED', 'FAILED', 'REQUIRES_RECONCILIATION', 'PARTIALLY_REFUNDED', 'REFUNDED')`, indexed)
+- `method`: VARCHAR(32) (Nullable, e.g. `'card'`, `'upi'`, `'netbanking'`)
+- `error_code`: VARCHAR(64) (Nullable)
+- `error_description`: TEXT (Nullable)
+- `metadata`: JSONB (Default `{}`)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `chk_payment_ownership`: Check `(customer_id IS NOT NULL AND guest_token_hash IS NULL) OR (customer_id IS NULL AND guest_token_hash IS NOT NULL)`
+  - `uq_payments_order_idempotency`: UNIQUE `(order_id, idempotency_key)`
+  - `uq_payments_order_attempt`: UNIQUE `(order_id, attempt_number)`
+  - `uq_payments_id_order`: UNIQUE `(id, order_id)` (Target for composite foreign keys)
+
+### `payment_captures` Table (Durable Capture Ledger — `0008_payments_razorpay_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `payment_id`: UUID (FK `payments.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `order_id`: UUID (FK `orders.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `provider`: VARCHAR(32) (Default `'RAZORPAY_SANDBOX'`, nullable=False)
+- `provider_payment_id`: VARCHAR(128) (Nullable=False, unique `pay_xxx` from gateway)
+- `provider_order_id`: VARCHAR(128) (Nullable)
+- `amount_paise`: BIGINT (Nullable=False, check `> 0`)
+- `currency`: VARCHAR(3) (Default `'INR'`, nullable=False)
+- `status`: VARCHAR(32) (Default `'CAPTURED'`, nullable=False)
+- `method`: VARCHAR(32) (Nullable)
+- `acquirer_reference`: VARCHAR(128) (Nullable, bank RRN / ARN / UPI ref)
+- `is_fulfillment_eligible`: BOOLEAN (Default `FALSE`, nullable=False)
+- `reconciliation_status`: VARCHAR(32) (Default `'NORMAL'`, check: `reconciliation_status IN ('NORMAL', 'OVERPAYMENT_ANOMALY', 'PARTIAL_CAPTURE_REJECTED', 'LATE_CAPTURE_ANOMALY', 'RESOLVED')`, indexed)
+- `captured_at`: TIMESTAMPTZ (Nullable=False)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `uq_payment_captures_provider_payment`: UNIQUE on `(provider, provider_payment_id)` (Exactly-once provider capture recording)
+  - `uq_payment_captures_id_order`: UNIQUE on `(id, order_id)` (Composite key for order linkage)
+  - `fk_payment_captures_payment_same_order`: FOREIGN KEY `(payment_id, order_id)` REFERENCES `payments(id, order_id)` ON DELETE RESTRICT
+- **Triggers**:
+  - `trg_payment_captures_protect_immutable`: BEFORE UPDATE OR DELETE ON `payment_captures`. Disallows `DELETE` completely. Disallows `UPDATE` of core immutable financial facts and historical eligibility: `provider`, `provider_payment_id`, `order_id`, `payment_id`, `amount_paise`, `currency`, `captured_at`, and `is_fulfillment_eligible`.
+
+### `orders` Table Alterations (`0008_payments_razorpay_schema`)
+- Added column `fulfilling_capture_id`: UUID (UNIQUE, nullable) — Single authoritative source of truth for fulfillment
+- Added composite foreign key:
+  `CONSTRAINT fk_orders_fulfilling_capture_same_order FOREIGN KEY (fulfilling_capture_id, id) REFERENCES payment_captures(id, order_id) ON DELETE RESTRICT`
+  *(Enforces strictly at database level that an order can only be fulfilled by a capture belonging to that exact same order)*
+- Updated check constraint `chk_order_payment_status` to include `'PARTIALLY_REFUNDED'`:
+  `payment_status IN ('NOT_INITIATED', 'PENDING', 'SUCCEEDED', 'FAILED', 'REQUIRES_RECONCILIATION', 'PARTIALLY_REFUNDED', 'REFUNDED')`
+- **Triggers**:
+  - `trg_orders_fulfilling_capture_immutable`: BEFORE INSERT OR UPDATE ON `orders`. Enforces:
+    1. On INSERT: if `fulfilling_capture_id` is non-null, validates that the capture exists for this order and has `is_fulfillment_eligible = TRUE`.
+    2. On UPDATE: once `fulfilling_capture_id` is set, it cannot be modified to a different capture ID.
+    3. On UPDATE: once `fulfilling_capture_id` is set, it cannot be cleared (set back to NULL).
+    4. On UPDATE: when newly assigning `fulfilling_capture_id`, validates that the capture exists for this order and has `is_fulfillment_eligible = TRUE`.
+
+### `payment_refunds` Table (`0008_payments_razorpay_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `capture_id`: UUID (FK `payment_captures.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `payment_id`: UUID (FK `payments.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `order_id`: UUID (FK `orders.id` ON DELETE RESTRICT, nullable=False, indexed)
+- `provider_refund_id`: VARCHAR(128) (Unique, nullable)
+- `idempotency_key`: VARCHAR(128) (Unique, nullable=False)
+- `amount_paise`: BIGINT (Nullable=False, check `> 0`)
+- `currency`: VARCHAR(3) (Default `'INR'`, nullable=False)
+- `status`: VARCHAR(32) (Default `'REFUND_REQUESTED'`, check: `status IN ('REFUND_REQUESTED', 'REFUND_PENDING', 'REFUND_PROCESSED', 'REFUND_FAILED')`, indexed)
+- `reason`: VARCHAR(255) (Nullable)
+- `error_code`: VARCHAR(64) (Nullable)
+- `error_description`: TEXT (Nullable)
+- `metadata`: JSONB (Default `{}`)
+- `processed_at`: TIMESTAMPTZ (Nullable)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `fk_refunds_capture_same_order`: FOREIGN KEY `(capture_id, order_id)` REFERENCES `payment_captures(id, order_id)` ON DELETE RESTRICT
+  - `fk_refunds_payment_same_order`: FOREIGN KEY `(payment_id, order_id)` REFERENCES `payments(id, order_id)` ON DELETE RESTRICT
+
+### `webhook_events` Table (`0008_payments_razorpay_schema`)
+- `id`: UUID (PK, default `uuid.uuid4`)
+- `provider`: VARCHAR(32) (Default `'RAZORPAY'`, nullable=False)
+- `provider_event_id`: VARCHAR(128) (Nullable=False, populated from `x-razorpay-event-id` header)
+- `event_type`: VARCHAR(128) (Nullable=False)
+- `payload`: JSONB (Nullable=False, sensitive card/bank data scrubbed)
+- `status`: VARCHAR(32) (Default `'PENDING'`, check: `status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'IGNORED', 'FAILED')`, indexed)
+- `claimed_by`: VARCHAR(128) (Nullable, worker identifier holding processing lease)
+- `claim_expires_at`: TIMESTAMPTZ (Nullable, lease expiration timestamp for worker crash recovery)
+- `retry_count`: INTEGER (Default `0`, nullable=False)
+- `error_message`: TEXT (Nullable)
+- `processed_at`: TIMESTAMPTZ (Nullable)
+- `created_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `updated_at`: TIMESTAMPTZ (Default `now()`)
+- **Constraints & Indexes**:
+  - `uq_webhook_provider_event`: UNIQUE on `(provider, provider_event_id)`
+  - Index `ix_webhook_claim`: `(status, claim_expires_at)`
+  - Index `ix_webhook_created`: `(created_at)`
