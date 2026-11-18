@@ -1364,3 +1364,76 @@ Copy this section for every new request.
 - Did NOT implement OpenSearch client or indexing (Phase 3D).
 
 **Status:** PHASE 3C AUDIT CORRECTIONS COMPLETE & FULLY VERIFIED. Ready for user inspection.
+
+---
+
+### [2026-11-19 01:25 IST] — Developer A / Senior Distributed Systems Engineer — Phase 3D, 3E, 3F Master Implementation Campaign Complete
+
+**Related branch / PR / task:**
+- Target Branch: `feature/phase3-search-observability`
+- Base: `origin/integration` commit `5145810` (verified clean)
+- Task: Coordinated implementation campaign covering Phase 3D (OpenSearch Indexing), Phase 3E (Universal Multi-Category Search & Storefront Fallback), and Phase 3F (Observability, Monitoring, Metrics & Dashboards).
+
+**Phase 3D — OpenSearch Indexing Pipeline & Derived Read Model:**
+- **OpenSearch Client Architecture (`app/core/search/client.py`):**
+  - Production `OpenSearchClient` utilizing `httpx.AsyncClient` with connection pooling, keepalive, zero credentials in log output, and exponential backoff retry.
+  - Strict production TLS check: enforces `OPENSEARCH_VERIFY_CERTS=True` in production mode.
+  - Deterministic in-memory `MockOpenSearchClient` with true `external_gte` concurrency control, alias routing, and simulated downtime capabilities.
+- **Index Management & Lifecycle (`app/core/search/index.py`):**
+  - `IndexManager` managing versioned indices (`basket_products_v1`) and read/write alias separation (`basket_products_search`, `basket_products_write`).
+  - Zero-downtime blue/green alias swapping and rollback capabilities.
+  - Automated PostgreSQL-to-OpenSearch document reconciliation (`reconcile_from_database`).
+- **Deterministic Document Projection (`app/core/search/document.py`):**
+  - Pure mathematical projection extracting canonical attributes from `Product`, `Category`, `ProductVariant`, `ProductListing`, `StoreInventory`, and `Retailer`.
+  - Monotonic `aggregate_version` tracking and attribute bag-of-words search index generation.
+- **Incremental Indexing Consumer (`app/core/search/consumer.py`):**
+  - `OpenSearchConsumer` (Strategy B) subscribing to catalogue and inventory Kafka topics.
+  - Subscribes to `product.created`, `product.updated`, `product.deleted`, `listing.updated`, and `store_inventory.stock_updated`.
+  - Queries authoritative PostgreSQL state and writes to OpenSearch with `external_gte` versioning.
+  - HTTP 409 Conflict handled safely as an out-of-order stale event no-op without advancing corrupted state.
+  - Commits consumer inbox record and Kafka offset only after OpenSearch confirmation.
+
+**Phase 3E — Universal Multi-Category Search API & Storefront Fallback:**
+- **Search Service & DSL Builder (`app/modules/search/service.py`):**
+  - Built OpenSearch DSL query generator with relevance weighting: `name^3.0`, `brand^2.0`, `category_name^1.5`, `description^1.0`, `searchable_text^0.8`.
+  - Multi-faceted navigation aggregations: categories, brands, retailers, and price statistics.
+  - Sorting criteria: `relevance`, `price_asc`, `price_desc`, `rating_desc`, and `newest`.
+- **Search Circuit Breaker (`app/core/search/circuit_breaker.py`):**
+  - 3-state state machine (`CLOSED`, `OPEN`, `HALF_OPEN`).
+  - Automatically trips to `OPEN` after 5 consecutive failures. Fast-fails requests directly to PostgreSQL fallback without making network calls.
+  - Automatic `HALF_OPEN` probe after 30 seconds recovery window.
+- **Resilient PostgreSQL SQL Fallback:**
+  - Transparent SQL search executing against PostgreSQL when OpenSearch is unavailable or circuit is OPEN.
+  - Fallback protects database CPU: caps limit to $\le 20$ and sets `facets = None`.
+- **Search Router (`app/modules/search/router.py`):**
+  - Mounted `/api/v1/search` and `/api/v1/search/suggestions`.
+- **Frontend Universal Search UI:**
+  - TypeScript types added in `frontend/types/index.ts`.
+  - API methods `searchProducts` and `getSearchSuggestions` added in `frontend/lib/api/client.ts`.
+  - Global header updated in `frontend/components/shared/header.tsx` to route queries to `/search?q=...`.
+  - Built full universal search experience in `frontend/app/search/page.tsx` with dynamic category/brand facets, price filters, in-stock toggles, sort selector, responsive product grid, and search engine mode badge (`OpenSearch Instant` vs `SQL Fallback Active`).
+
+**Phase 3F — Observability, Monitoring, Metrics & Dashboards:**
+- **Prometheus Metrics Registry (`app/core/metrics.py`):**
+  - High-performance, thread-safe in-memory metrics registry exposing standard Prometheus 0.0.4 text format at `GET /metrics`.
+  - Monitored metrics:
+    - Counters: `http_requests_total`, `kafka_events_published_total`, `consumer_events_processed_total`, `consumer_duplicates_total`, `consumer_retries_total`, `dlq_events_routed_total`, `search_requests_total`, `search_fallback_total`, `opensearch_indexing_failures_total`.
+    - Histograms: `http_request_duration_seconds`, `search_duration_seconds`, `opensearch_indexing_duration_seconds`.
+    - Gauges: `outbox_pending_events_count`, `outbox_oldest_event_age_seconds`, `circuit_breaker_state`, `db_pool_active_connections`.
+  - Strict low cardinality and privacy compliance: URL paths normalized (`/orders/{id}`), zero customer IDs, zero PII, and zero query strings in label values.
+- **HTTP Request Metrics Middleware:**
+  - Installed in `app/main.py` tracking request count and duration across all HTTP endpoints.
+- **Enhanced Readiness Health Checks (`/ready`):**
+  - Validates PostgreSQL (critical -> 503 if down), Kafka (degraded if down), and OpenSearch (degraded if down).
+- **Deployment Artifacts:**
+  - Prometheus alerting rules: `deploy/observability/alerts.yml`.
+  - Grafana dashboard JSON: `deploy/observability/dashboards/basket-platform.json`.
+
+**Verification & Quality Gates:**
+- **Backend Tests:** 338 passed across all suites (316 baseline + 22 new tests in `test_opensearch.py`, `test_search.py`, `test_observability.py`).
+- **Alembic Head:** Exactly 1 head (`0010_consumer_inbox`). Zero unapproved migrations.
+- **Ruff Lint & Format:** 0 errors across 108 files. 100% formatted.
+- **Frontend TypeScript & Build:** `tsc --noEmit` and `next build` passed cleanly with 0 type errors.
+- **Environment Verification:** `./scripts/verify-environment.sh` ALL VERIFICATION GATES PASSED CLEANLY.
+
+**Status:** PHASE 3D, 3E, 3F COMPLETE AND FULLY VERIFIED. Ready for PR preparation.

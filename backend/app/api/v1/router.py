@@ -9,6 +9,7 @@ from app.modules.orders.router import router as orders_router
 from app.modules.payments.router import internal_router as internal_payments_router
 from app.modules.payments.router import router as payments_router
 from app.modules.pricing.router import router as pricing_router
+from app.modules.search.router import router as search_router
 
 api_router = APIRouter()
 
@@ -19,6 +20,9 @@ api_router.include_router(address_router)
 
 # Mount Catalogue endpoints
 api_router.include_router(catalogue_router)
+
+# Mount Universal Search endpoints (Phase 3E)
+api_router.include_router(search_router)
 
 # Mount Cart endpoints
 api_router.include_router(cart_router)

@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     OPENSEARCH_USERNAME: str | None = None
     OPENSEARCH_PASSWORD: SecretStr | None = None
     OPENSEARCH_INDEX_PREFIX: str = "basket"
+    OPENSEARCH_VERIFY_CERTS: bool = True
+    OPENSEARCH_TIMEOUT_SECONDS: float = 2.0
+    OPENSEARCH_MAX_RETRIES: int = 3
+    OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+    OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -298,6 +303,36 @@ class Settings(BaseSettings):
             raise ValueError("OUTBOX_BATCH_SIZE must be between 1 and 20.")
         return v
 
+    @field_validator("OPENSEARCH_URL", mode="before")
+    @classmethod
+    def clean_opensearch_url(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return str(v)
+
+    @field_validator("OPENSEARCH_URL", mode="after")
+    @classmethod
+    def validate_opensearch_url(cls, v: str | None, info) -> str | None:
+        if not v:
+            return None
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production":
+            if not v.startswith("https://"):
+                raise ValueError("OPENSEARCH_URL must use https:// in production.")
+            cleaned_lower = v.lower()
+            if (
+                "localhost" in cleaned_lower
+                or "127.0.0.1" in cleaned_lower
+                or "mock" in cleaned_lower
+            ):
+                raise ValueError(
+                    "OPENSEARCH_URL in production cannot use mock or localhost addresses."
+                )
+        return v
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
@@ -311,6 +346,10 @@ class Settings(BaseSettings):
         return bool(
             self.KAFKA_BOOTSTRAP_SERVERS and self.KAFKA_BOOTSTRAP_SERVERS.strip()
         )
+
+    @property
+    def has_opensearch(self) -> bool:
+        return bool(self.OPENSEARCH_URL and self.OPENSEARCH_URL.strip())
 
 
 settings = Settings()

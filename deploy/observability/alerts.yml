@@ -1,0 +1,61 @@
+groups:
+  - name: basket_platform_alerts
+    rules:
+      - alert: OutboxPublisherLagging
+        expr: outbox_oldest_event_age_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+          component: outbox_publisher
+        annotations:
+          summary: "Transactional Outbox event delivery is lagging"
+          description: "Oldest pending outbox event age is {{ $value }}s (> 60s), indicating Kafka delivery slowdown or publisher failure."
+
+      - alert: DeadLetterQueueRoutingActive
+        expr: increase(dlq_events_routed_total[5m]) > 0
+        labels:
+          severity: critical
+          component: kafka_consumer
+        annotations:
+          summary: "Events routed to Dead-Letter Queue"
+          description: "{{ $value }} events routed to DLQ in consumer group {{ $labels.consumer_group }} on topic {{ $labels.topic }}."
+
+      - alert: SearchCircuitBreakerOpen
+        expr: circuit_breaker_state{name="opensearch"} == 2
+        for: 1m
+        labels:
+          severity: warning
+          component: search
+        annotations:
+          summary: "OpenSearch Circuit Breaker is OPEN"
+          description: "OpenSearch search circuit breaker has tripped to OPEN; traffic is falling back to PostgreSQL SQL."
+
+      - alert: SearchPostgresFallbackHigh
+        expr: rate(search_fallback_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          component: search
+        annotations:
+          summary: "Elevated Search PostgreSQL Fallback Rate"
+          description: "Search queries are falling back to PostgreSQL at {{ $value }} req/s, risking database CPU exhaustion."
+
+      - alert: OpenSearchIndexingFailure
+        expr: rate(opensearch_indexing_failures_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          component: search_indexing
+        annotations:
+          summary: "OpenSearch document indexing failure rate elevated"
+          description: "Indexing failures on index {{ $labels.index }} at {{ $value }} failures/sec."
+
+      - alert: BackendHighHttp5xxRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Backend HTTP 5xx error rate exceeds 1%"
+          description: "HTTP 5xx rate is currently {{ $value | humanizePercentage }} across all API endpoints."

@@ -307,7 +307,7 @@ class OrderService:
 
         # 5. Generate Human-Readable Order Number
         today_str = now.strftime("%Y%m%d")
-        rand_suffix = uuid.uuid4().hex[:6].upper()
+        rand_suffix = uuid.uuid4().hex[:8].upper()
         order_number = f"BSK-{today_str}-{rand_suffix}"
 
         order_id = uuid.uuid4()

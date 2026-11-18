@@ -32,6 +32,9 @@ import type {
   PaymentVerifyResponse,
   PaymentRefundRequest,
   PaymentRefundResponse,
+  SearchFilterParams,
+  SearchResponse,
+  SuggestionsResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -471,6 +474,36 @@ class ApiClient {
       payload,
       { headers },
     );
+  }
+
+  // Universal Search Methods (Phase 3E)
+  public async searchProducts(
+    params: SearchFilterParams = {},
+  ): Promise<SearchResponse> {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (params.category) query.set("category", params.category);
+    if (params.brand) query.set("brand", params.brand);
+    if (params.retailer_id) query.set("retailer_id", params.retailer_id);
+    if (params.min_price !== undefined) query.set("min_price", String(params.min_price));
+    if (params.max_price !== undefined) query.set("max_price", String(params.max_price));
+    if (params.in_stock !== undefined) query.set("in_stock", String(params.in_stock));
+    if (params.sort) query.set("sort", params.sort);
+    if (params.page !== undefined) query.set("page", String(params.page));
+    if (params.page_size !== undefined) query.set("page_size", String(params.page_size));
+    if (params.force_fallback) query.set("force_fallback", "true");
+
+    const qs = query.toString();
+    const endpoint = qs ? `/api/v1/search?${qs}` : "/api/v1/search";
+    return this.get<SearchResponse>(endpoint);
+  }
+
+  public async getSearchSuggestions(
+    query: string,
+    limit: number = 5,
+  ): Promise<SuggestionsResponse> {
+    const qs = new URLSearchParams({ q: query, limit: String(limit) }).toString();
+    return this.get<SuggestionsResponse>(`/api/v1/search/suggestions?${qs}`);
   }
 }
 
