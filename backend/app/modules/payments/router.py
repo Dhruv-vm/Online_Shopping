@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
+from app.core.exceptions import AppException
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     get_current_user_optional,
@@ -65,6 +66,12 @@ async def initiate_payment(
 
     user = await get_current_user_optional(request, db)
     customer_id, guest_token_hash = _extract_ownership_identifiers(request, user)
+    if not customer_id and not guest_token_hash:
+        raise AppException(
+            code="AUTHENTICATION_REQUIRED",
+            message="Authentication or guest session is required",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
 
     service = PaymentService(db)
     return await service.initiate_payment(
@@ -89,6 +96,12 @@ async def verify_payment(
 ) -> PaymentVerifyResponse:
     user = await get_current_user_optional(request, db)
     customer_id, guest_token_hash = _extract_ownership_identifiers(request, user)
+    if not customer_id and not guest_token_hash:
+        raise AppException(
+            code="AUTHENTICATION_REQUIRED",
+            message="Authentication or guest session is required",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
 
     service = PaymentService(db)
     return await service.verify_payment(
@@ -128,6 +141,12 @@ async def create_refund(
     if not is_internal:
         user = await get_current_user_optional(request, db)
         customer_id, guest_token_hash = _extract_ownership_identifiers(request, user)
+        if not customer_id and not guest_token_hash:
+            raise AppException(
+                code="AUTHENTICATION_REQUIRED",
+                message="Authentication or guest session is required",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
 
     effective_key = idempotency_key or str(uuid.uuid4())
     service = PaymentService(db)
@@ -137,6 +156,7 @@ async def create_refund(
         idempotency_key=effective_key,
         customer_id=customer_id,
         guest_token_hash=guest_token_hash,
+        is_internal=is_internal,
     )
 
 
@@ -166,12 +186,19 @@ async def receive_webhook(
 
     # Trigger async processing if newly ingested
     if response.status == "ok":
-        # Process the newly ingested event immediately for responsiveness
+        # Process the newly ingested event immediately for responsiveness under durable lease
         event = await webhook_service.repo.get_webhook_event_by_provider_event(
             "RAZORPAY", response.event_id
         )
         if event:
-            await webhook_service.process_webhook_event(event.id)
+            worker_id = f"route-worker-{uuid.uuid4().hex[:8]}"
+            claimed = await webhook_service.repo.claim_specific_webhook_event(
+                event.id, worker_id=worker_id, lease_seconds=30
+            )
+            if claimed:
+                await webhook_service.process_webhook_event(
+                    event.id, worker_id=worker_id
+                )
 
     return response
 

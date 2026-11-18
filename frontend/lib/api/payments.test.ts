@@ -35,8 +35,10 @@ test("Payments API Client integration", async (t) => {
   const mockVerifyResponse: PaymentVerifyResponse = {
     payment_id: "pay-uuid-001",
     order_id: "ord-uuid-123",
-    status: "CAPTURED",
+    status: "CONFIRMED",
     order_status: "CONFIRMED",
+    payment_status: "SUCCEEDED",
+    amount_paid_paise: 111200,
     amount_paise: 111200,
     currency: "INR",
     message: "Payment verified and order confirmed successfully",
@@ -112,8 +114,8 @@ test("Payments API Client integration", async (t) => {
       assert.equal(body.razorpay_payment_id, "pay_rzp_789012");
       assert.equal(body.razorpay_signature, "valid_hmac_sha256_signature");
 
-      assert.equal(res.status, "CAPTURED");
-      assert.equal(res.order_status, "CONFIRMED");
+      assert.equal(res.status, "CONFIRMED");
+      assert.equal(res.payment_status, "SUCCEEDED");
     },
   );
 

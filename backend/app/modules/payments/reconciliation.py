@@ -16,8 +16,10 @@ from app.modules.orders.models import (
 )
 from app.modules.payments.client import RazorpayClient
 from app.modules.payments.models import (
+    CaptureStatus,
     Payment,
     PaymentAttemptStatus,
+    RefundStatus,
 )
 from app.modules.payments.repository import PaymentRepository
 from app.modules.payments.schemas import (
@@ -108,13 +110,100 @@ class ReconciliationService:
                 )
 
         # 3. Reclaim and process expired webhook leases
+        worker_id = f"reconciler-{uuid.uuid4().hex[:8]}"
         claimed_events = await self.repo.claim_pending_webhook_events(
-            worker_id="reconciler-worker", batch_size=batch_size, lease_seconds=30
+            worker_id=worker_id, batch_size=batch_size, lease_seconds=30
         )
         for event in claimed_events:
-            success = await self.webhook_service.process_webhook_event(event.id)
+            success = await self.webhook_service.process_webhook_event(
+                event.id, worker_id=worker_id
+            )
             if success:
                 reconciled_webhooks_count += 1
+
+        # 4. Reconcile pending / requested refunds older than 2 minutes
+        cutoff_refunds = now - timedelta(minutes=2)
+        pending_refunds = await self.repo.get_pending_refunds_for_reconciliation(
+            cutoff_datetime=cutoff_refunds, limit=batch_size
+        )
+        for refund in pending_refunds:
+            try:
+                rzp_rfnd = None
+                if refund.provider_refund_id:
+                    rzp_rfnd = await self.client.fetch_refund_by_id(
+                        refund.provider_refund_id
+                    )
+                else:
+                    capture = await self.repo.get_capture_by_id(refund.capture_id)
+                    if capture and capture.provider_payment_id:
+                        rfnds = await self.client.fetch_payment_refunds(
+                            capture.provider_payment_id
+                        )
+                        rzp_rfnd = next(
+                            (
+                                r
+                                for r in rfnds
+                                if r.get("amount") == refund.amount_paise
+                            ),
+                            None,
+                        )
+
+                if rzp_rfnd:
+                    locked_rfnd = await self.repo.get_refund_by_id(refund.id)
+                    if locked_rfnd:
+                        locked_rfnd.provider_refund_id = rzp_rfnd.get("id")
+                        if rzp_rfnd.get("status") == "processed":
+                            locked_rfnd.status = RefundStatus.REFUND_PROCESSED.value
+                            locked_rfnd.processed_at = datetime.now(UTC)
+                            await self.session.flush()
+
+                            locked_capture = (
+                                await self.repo.get_capture_by_id_for_update(
+                                    refund.capture_id
+                                )
+                            )
+                            if locked_capture:
+                                processed_sum = await self.repo.get_processed_refunds_sum_for_capture(
+                                    locked_capture.id
+                                )
+                                if processed_sum >= locked_capture.amount_paise:
+                                    locked_capture.status = CaptureStatus.REFUNDED.value
+                                elif processed_sum > 0:
+                                    locked_capture.status = (
+                                        CaptureStatus.PARTIALLY_REFUNDED.value
+                                    )
+
+                            locked_order = await self.repo.get_order_by_id_for_update(
+                                refund.order_id
+                            )
+                            if locked_order:
+                                order_processed_sum = (
+                                    await self.repo.get_processed_refunds_sum_for_order(
+                                        refund.order_id
+                                    )
+                                )
+                                if (
+                                    order_processed_sum
+                                    >= locked_order.total_payable_paise
+                                ):
+                                    locked_order.payment_status = (
+                                        PaymentStatus.REFUNDED.value
+                                    )
+                                elif order_processed_sum > 0:
+                                    locked_order.payment_status = (
+                                        PaymentStatus.PARTIALLY_REFUNDED.value
+                                    )
+                        elif rzp_rfnd.get("status") == "failed":
+                            locked_rfnd.status = RefundStatus.REFUND_FAILED.value
+                            locked_rfnd.error_code = (
+                                rzp_rfnd.get("error_code") or "PROVIDER_FAILED"
+                            )
+                            locked_rfnd.error_description = rzp_rfnd.get(
+                                "error_description"
+                            )
+                    await self.session.commit()
+            except Exception as exc:
+                logger.error("Error reconciling refund %s: %s", refund.id, str(exc))
 
         return ReconcilePendingResponse(
             reconciled_payments_count=reconciled_payments_count,
@@ -224,7 +313,28 @@ class ReconciliationService:
             if locked_order.fulfilling_capture_id is not None:
                 continue
 
-            # 1. Permanently cancel order
+            # 1. Release inventory hold first under atomic reservation management
+            try:
+                if locked_order.reservation_id:
+                    await self.reservation_service.release_reservation(
+                        reservation_id=locked_order.reservation_id,
+                        reason="AMBIGUITY_SLA_EXPIRED",
+                        internal=True,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Reservation %s could not be released for order %s: %s; blocking payment initiation and deferring cancellation",
+                    locked_order.reservation_id,
+                    locked_order.id,
+                    e,
+                )
+                locked_order.payment_status = (
+                    PaymentStatus.REQUIRES_RECONCILIATION.value
+                )
+                await self.session.commit()
+                continue
+
+            # 2. Only after stock release succeeds, permanently cancel order
             locked_order.status = OrderStatus.CANCELLED.value
             locked_order.payment_status = PaymentStatus.FAILED.value
 
@@ -236,7 +346,7 @@ class ReconciliationService:
             )
             self.session.add(history)
 
-            # 2. Mark any open payment attempts FAILED
+            # 3. Mark any open payment attempts FAILED
             stmt = (
                 select(Payment)
                 .where(
@@ -260,18 +370,6 @@ class ReconciliationService:
                     "Manual review SLA expired at 75m; quarantined stock released"
                 )
 
-            # 3. Release inventory hold exactly once
-            try:
-                await self.reservation_service.release_reservation(
-                    reservation_id=locked_order.reservation_id,
-                    reason="AMBIGUITY_SLA_EXPIRED",
-                    internal=True,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Reservation {locked_order.reservation_id} could not be released for order {locked_order.id}: {e}"
-                )
-
             # 4. Outbox event
             outbox_event = OutboxEvent(
                 aggregate_type="Order",
@@ -287,6 +385,7 @@ class ReconciliationService:
                 status=OutboxStatus.PENDING.value,
             )
             self.session.add(outbox_event)
+
             await self.session.commit()
             cancelled_count += 1
 

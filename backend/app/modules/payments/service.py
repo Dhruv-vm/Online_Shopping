@@ -86,6 +86,12 @@ class PaymentService:
         order_expires_at = order.payment_window_expires_at
 
         # Ownership enforcement
+        if customer_id is None and guest_token_hash is None:
+            raise AppException(
+                code="AUTHENTICATION_REQUIRED",
+                message="Authentication or guest session is required",
+                status_code=401,
+            )
         if customer_id and order_customer_id != customer_id:
             raise AppException(
                 code="ORDER_NOT_FOUND", message="Order not found", status_code=404
@@ -105,6 +111,10 @@ class PaymentService:
                 code="ORDER_NOT_PAYABLE",
                 message="Cannot initiate payment on cancelled order",
                 status_code=409,
+            )
+        if order.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value:
+            raise PaymentAttemptAmbiguousError(
+                "Order payment status requires reconciliation before retrying payment initiation"
             )
 
         # Checkout window expiry validation
@@ -390,6 +400,12 @@ class PaymentService:
             )
 
         # Ownership check
+        if customer_id is None and guest_token_hash is None:
+            raise AppException(
+                code="AUTHENTICATION_REQUIRED",
+                message="Authentication or guest session is required",
+                status_code=401,
+            )
         if customer_id and order.customer_id != customer_id:
             raise AppException(
                 code="ORDER_NOT_FOUND", message="Order not found", status_code=404
@@ -409,6 +425,49 @@ class PaymentService:
             )
         if not payment or payment.order_id != order.id:
             raise PaymentNotFoundError("Payment attempt does not belong to this order")
+
+        if (
+            payment.provider_order_id
+            and payment.provider_order_id != req.razorpay_order_id
+        ):
+            raise AppException(
+                code="PAYMENT_ORDER_MISMATCH",
+                message="Payment attempt provider order does not match verification request",
+                status_code=400,
+            )
+
+        # Currency validation
+        if captured_currency != order.currency:
+            existing_capture = await self.repo.get_capture_by_provider_payment_id(
+                provider="RAZORPAY_SANDBOX",
+                provider_payment_id=req.razorpay_payment_id,
+            )
+            if not existing_capture:
+                currency_anomaly = PaymentCapture(
+                    payment_id=payment.id,
+                    order_id=order.id,
+                    provider="RAZORPAY_SANDBOX",
+                    provider_payment_id=req.razorpay_payment_id,
+                    provider_order_id=req.razorpay_order_id,
+                    amount_paise=captured_amount_paise,
+                    currency=captured_currency,
+                    status=CaptureStatus.CAPTURED.value,
+                    method=pay_data.get("method"),
+                    acquirer_reference=acquirer_ref,
+                    is_fulfillment_eligible=False,
+                    reconciliation_status=CaptureReconciliationStatus.OVERPAYMENT_ANOMALY.value,
+                    captured_at=captured_at,
+                )
+                await self.repo.create_capture(currency_anomaly)
+                await self._queue_automated_refund(
+                    capture=currency_anomaly,
+                    reason="CURRENCY_MISMATCH",
+                )
+            raise AppException(
+                code="CURRENCY_MISMATCH",
+                message="Captured payment currency does not match order currency",
+                status_code=400,
+            )
 
         # If order is already confirmed:
         if order.status == OrderStatus.CONFIRMED.value:
@@ -489,31 +548,52 @@ class PaymentService:
 
         # Check for partial capture
         if captured_amount_paise < order.total_payable_paise:
-            partial_capture = PaymentCapture(
-                payment_id=payment.id,
-                order_id=order.id,
+            existing_capture = await self.repo.get_capture_by_provider_payment_id(
                 provider="RAZORPAY_SANDBOX",
                 provider_payment_id=req.razorpay_payment_id,
-                provider_order_id=req.razorpay_order_id,
-                amount_paise=captured_amount_paise,
-                currency=captured_currency,
-                status=CaptureStatus.CAPTURED.value,
-                method=pay_data.get("method"),
-                acquirer_reference=acquirer_ref,
-                is_fulfillment_eligible=False,
-                reconciliation_status=CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value,
-                captured_at=captured_at,
             )
-            await self.repo.create_capture(partial_capture)
+            if not existing_capture:
+                partial_capture = PaymentCapture(
+                    payment_id=payment.id,
+                    order_id=order.id,
+                    provider="RAZORPAY_SANDBOX",
+                    provider_payment_id=req.razorpay_payment_id,
+                    provider_order_id=req.razorpay_order_id,
+                    amount_paise=captured_amount_paise,
+                    currency=captured_currency,
+                    status=CaptureStatus.CAPTURED.value,
+                    method=pay_data.get("method"),
+                    acquirer_reference=acquirer_ref,
+                    is_fulfillment_eligible=False,
+                    reconciliation_status=CaptureReconciliationStatus.PARTIAL_CAPTURE_REJECTED.value,
+                    captured_at=captured_at,
+                )
+                await self.repo.create_capture(partial_capture)
 
-            # Underpayment: reject capture for fulfillment and auto-refund
-            payment.status = PaymentAttemptStatus.FAILED.value
-            payment.error_code = "PARTIAL_CAPTURE_REJECTED"
+                # Underpayment: reject capture for fulfillment and auto-refund
+                payment.status = PaymentAttemptStatus.FAILED.value
+                payment.error_code = "PARTIAL_CAPTURE_REJECTED"
 
-            await self._queue_automated_refund(
-                capture=partial_capture,
-                reason="PARTIAL_CAPTURE_REJECTED",
-            )
+                if order.status == OrderStatus.PENDING_PAYMENT.value:
+                    order.status = OrderStatus.CANCELLED.value
+                    order.payment_status = PaymentStatus.FAILED.value
+                    if self.reservation_service and order.reservation_id:
+                        try:
+                            await self.reservation_service.release_reservation(
+                                reservation_id=order.reservation_id,
+                                reason="PARTIAL_CAPTURE_REJECTED",
+                                internal=True,
+                            )
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to release reservation on partial capture: %s",
+                                exc,
+                            )
+
+                await self._queue_automated_refund(
+                    capture=partial_capture,
+                    reason="PARTIAL_CAPTURE_REJECTED",
+                )
             raise PartialCaptureRejectedError()
 
         # Normal successful capture:
@@ -604,6 +684,7 @@ class PaymentService:
         idempotency_key: str,
         customer_id: uuid.UUID | None = None,
         guest_token_hash: str | None = None,
+        is_internal: bool = False,
     ) -> RefundResponse:
         """Issues a partial or full refund against a specific capture row under row lock."""
         order = await self.repo.get_order_by_id_for_update(order_id)
@@ -612,16 +693,24 @@ class PaymentService:
                 code="ORDER_NOT_FOUND", message="Order not found", status_code=404
             )
 
-        if customer_id and order.customer_id != customer_id:
-            raise AppException(
-                code="ORDER_NOT_FOUND", message="Order not found", status_code=404
-            )
-        if guest_token_hash and (
-            order.guest_token_hash != guest_token_hash or order.customer_id is not None
-        ):
-            raise AppException(
-                code="ORDER_NOT_FOUND", message="Order not found", status_code=404
-            )
+        if not is_internal:
+            if customer_id is None and guest_token_hash is None:
+                raise AppException(
+                    code="AUTHENTICATION_REQUIRED",
+                    message="Authentication or guest session is required",
+                    status_code=401,
+                )
+            if customer_id and order.customer_id != customer_id:
+                raise AppException(
+                    code="ORDER_NOT_FOUND", message="Order not found", status_code=404
+                )
+            if guest_token_hash and (
+                order.guest_token_hash != guest_token_hash
+                or order.customer_id is not None
+            ):
+                raise AppException(
+                    code="ORDER_NOT_FOUND", message="Order not found", status_code=404
+                )
 
         target_capture_id = req.capture_id or order.fulfilling_capture_id
         if not target_capture_id:
@@ -653,7 +742,7 @@ class PaymentService:
                 status=existing_refund.status,
             )
 
-        # Atomic balance validation under row lock
+        # Atomic balance validation under row lock (sum active requested, pending, processed)
         active_sum = await self.repo.get_active_refunds_sum_for_capture(capture.id)
         if active_sum + req.amount_paise > capture.amount_paise:
             raise ExceedsRefundableBalanceError()
@@ -672,6 +761,8 @@ class PaymentService:
         await self.session.commit()
 
         # Call Razorpay API outside transaction
+        provider_refund_id = None
+        refund_status = RefundStatus.REFUND_PENDING.value
         try:
             rzp_refund = await self.client.create_refund(
                 payment_id=capture.provider_payment_id,
@@ -690,10 +781,32 @@ class PaymentService:
                 if rzp_refund.get("status") == "processed"
                 else RefundStatus.REFUND_PENDING.value
             )
+        except PaymentGatewayTimeoutError as exc:
+            logger.warning(
+                "Refund request timed out; outcome uncertain, leaving in REFUND_PENDING: %s",
+                exc,
+            )
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.status = RefundStatus.REFUND_PENDING.value
+                locked_refund.processed_at = None
+                locked_refund.error_description = f"Gateway timeout: {exc}"
+                await self.session.commit()
+            return RefundResponse(
+                refund_id=refund.id,
+                capture_id=refund.capture_id,
+                payment_id=refund.payment_id,
+                order_id=refund.order_id,
+                provider_refund_id=None,
+                amount_paise=refund.amount_paise,
+                currency=refund.currency,
+                status=RefundStatus.REFUND_PENDING.value,
+            )
         except PaymentGatewayError as exc:
             locked_refund = await self.repo.get_refund_by_id(refund.id)
             if locked_refund:
                 locked_refund.status = RefundStatus.REFUND_FAILED.value
+                locked_refund.processed_at = None
                 locked_refund.error_code = "GATEWAY_REFUND_FAILED"
                 locked_refund.error_description = str(exc)
                 await self.session.commit()
@@ -704,22 +817,33 @@ class PaymentService:
         if locked_refund:
             locked_refund.provider_refund_id = provider_refund_id
             locked_refund.status = refund_status
-            locked_refund.processed_at = datetime.now(UTC)
+            if refund_status == RefundStatus.REFUND_PROCESSED.value:
+                locked_refund.processed_at = datetime.now(UTC)
+            else:
+                locked_refund.processed_at = None
+        await self.session.flush()
 
-        # Calculate total refunded
-        active_sum = await self.repo.get_active_refunds_sum_for_capture(capture.id)
+        # Calculate confirmed processed refund totals ONLY
+        processed_sum = await self.repo.get_processed_refunds_sum_for_capture(
+            capture.id
+        )
         locked_capture = await self.repo.get_capture_by_id_for_update(capture.id)
         if locked_capture:
-            if active_sum >= locked_capture.amount_paise:
+            if processed_sum >= locked_capture.amount_paise:
                 locked_capture.status = CaptureStatus.REFUNDED.value
-            else:
+            elif processed_sum > 0:
                 locked_capture.status = CaptureStatus.PARTIALLY_REFUNDED.value
+            else:
+                locked_capture.status = CaptureStatus.CAPTURED.value
 
+        order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
+            order_id
+        )
         locked_order = await self.repo.get_order_by_id_for_update(order_id)
         if locked_order:
-            if active_sum >= locked_order.total_payable_paise:
+            if order_processed_sum >= locked_order.total_payable_paise:
                 locked_order.payment_status = PaymentStatus.REFUNDED.value
-            else:
+            elif order_processed_sum > 0:
                 locked_order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
 
         await self.session.commit()
@@ -739,9 +863,15 @@ class PaymentService:
         self,
         capture: PaymentCapture,
         reason: str,
-    ) -> None:
-        """Helper to create automated refund intent for anomalies and late captures."""
+    ) -> PaymentRefund:
+        """Helper to create automated refund intent for anomalies and late captures.
+        Guarantees capture and refund intent are committed to PostgreSQL before calling external gateway.
+        """
         refund_idempotency = f"auto-refund-{capture.id}"
+        existing = await self.repo.get_refund_by_idempotency_key(refund_idempotency)
+        if existing:
+            return existing
+
         refund = PaymentRefund(
             capture_id=capture.id,
             payment_id=capture.payment_id,
@@ -753,8 +883,10 @@ class PaymentService:
             reason=reason,
         )
         await self.repo.create_refund(refund)
+        # CRITICAL: Commit capture AND refund intent to database BEFORE calling provider!
+        await self.session.commit()
 
-        # Trigger gateway refund in background or immediately
+        # Trigger gateway refund outside transaction
         try:
             rzp_refund = await self.client.create_refund(
                 payment_id=capture.provider_payment_id,
@@ -763,17 +895,31 @@ class PaymentService:
                 receipt=f"RFND-{str(refund.id)[:30]}",
                 notes={"reason": reason, "capture_id": str(capture.id)},
             )
-            refund.provider_refund_id = rzp_refund.get("id")
-            refund.status = (
-                RefundStatus.REFUND_PROCESSED.value
-                if rzp_refund.get("status") == "processed"
-                else RefundStatus.REFUND_PENDING.value
-            )
-            refund.processed_at = datetime.now(UTC)
-            capture.status = CaptureStatus.REFUNDED.value
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.provider_refund_id = rzp_refund.get("id")
+                if rzp_refund.get("status") == "processed":
+                    locked_refund.status = RefundStatus.REFUND_PROCESSED.value
+                    locked_refund.processed_at = datetime.now(UTC)
+                    locked_capture = await self.repo.get_capture_by_id_for_update(
+                        capture.id
+                    )
+                    if locked_capture:
+                        locked_capture.status = CaptureStatus.REFUNDED.value
+                else:
+                    locked_refund.status = RefundStatus.REFUND_PENDING.value
+                    locked_refund.processed_at = None
+            await self.session.commit()
         except Exception as exc:
-            logger.error(
-                "Automated refund failed to dispatch immediately: %s", str(exc)
+            logger.warning(
+                "Automated refund failed to dispatch immediately; leaving in REFUND_PENDING: %s",
+                str(exc),
             )
-            refund.status = RefundStatus.REFUND_PENDING.value
-            refund.error_description = str(exc)
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.status = RefundStatus.REFUND_PENDING.value
+                locked_refund.processed_at = None
+                locked_refund.error_description = str(exc)
+            await self.session.commit()
+
+        return refund

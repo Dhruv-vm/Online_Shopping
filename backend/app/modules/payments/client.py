@@ -280,6 +280,45 @@ class RazorpayClient:
 
         return response.json()
 
+    async def fetch_refund_by_id(self, refund_id: str) -> dict[str, Any]:
+        """Fetch refund details directly: GET /v1/refunds/{refund_id}."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get(f"/refunds/{refund_id}")
+            except httpx.TimeoutException as exc:
+                raise PaymentGatewayTimeoutError() from exc
+            except httpx.RequestError as exc:
+                raise PaymentGatewayError(
+                    "Network error contacting payment gateway"
+                ) from exc
+
+        if response.status_code != 200:
+            raise PaymentGatewayError(
+                f"Failed to fetch refund: gateway status {response.status_code}"
+            )
+
+        return response.json()
+
+    async def fetch_payment_refunds(self, payment_id: str) -> list[dict[str, Any]]:
+        """Fetch all refunds for a payment: GET /v1/payments/{payment_id}/refunds."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get(f"/payments/{payment_id}/refunds")
+            except httpx.TimeoutException as exc:
+                raise PaymentGatewayTimeoutError() from exc
+            except httpx.RequestError as exc:
+                raise PaymentGatewayError(
+                    "Network error contacting payment gateway"
+                ) from exc
+
+        if response.status_code != 200:
+            raise PaymentGatewayError(
+                f"Failed to fetch payment refunds: gateway status {response.status_code}"
+            )
+
+        data = response.json()
+        return data.get("items", []) if isinstance(data, dict) else []
+
     def verify_payment_signature(
         self,
         razorpay_order_id: str,

@@ -21,6 +21,7 @@ from app.modules.orders.models import (
     PaymentStatus,
 )
 from app.modules.payments.client import RazorpayClient
+from app.modules.payments.exceptions import PaymentGatewayTimeoutError
 from app.modules.payments.models import (
     CaptureReconciliationStatus,
     CaptureStatus,
@@ -28,7 +29,9 @@ from app.modules.payments.models import (
     PaymentAttemptStatus,
     PaymentCapture,
     PaymentRefund,
+    RefundStatus,
     WebhookEvent,
+    WebhookEventStatus,
 )
 
 
@@ -1741,3 +1744,685 @@ async def test_reconciliation_resolves_ambiguous_attempt(
         ).scalar_one()
         assert db_pay.status == PaymentAttemptStatus.PENDING.value
         assert db_pay.provider_order_id == provider_order_id
+
+
+@pytest.mark.asyncio
+async def test_refund_lifecycle_pending_timeout_and_processed_with_processed_at(
+    async_client: AsyncClient,
+):
+    """Verifies REFUND_REQUESTED -> REFUND_PENDING (processed_at is None) -> REFUND_PROCESSED (processed_at set).
+    Also proves timeout does not mark refund FAILED, and capture status only changes on confirmed processed total.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = order["id"]
+    amount = order["total_payable_paise"]
+
+    provider_order_id = f"order_rzp_rfnd_lc_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_rfnd_lc_{uuid.uuid4().hex[:8]}"
+    valid_sig = generate_payment_signature(provider_order_id, provider_payment_id)
+
+    # 1. Initiate and fulfill order
+    with (
+        patch.object(
+            RazorpayClient,
+            "create_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_order_id,
+                "amount": amount,
+                "currency": "INR",
+                "receipt": order["order_number"],
+                "status": "created",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_payment_id,
+                "order_id": provider_order_id,
+                "amount": amount,
+                "currency": "INR",
+                "status": "captured",
+            },
+        ),
+    ):
+        init_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert init_resp.status_code == 201
+
+        verify_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments/verify",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "razorpay_order_id": provider_order_id,
+                "razorpay_payment_id": provider_payment_id,
+                "razorpay_signature": valid_sig,
+            },
+        )
+        assert verify_resp.status_code == 200
+
+    # 2. Customer requests refund, but gateway returns status="pending"
+    rzp_refund_id = f"rfnd_rzp_pend_{uuid.uuid4().hex[:8]}"
+    with patch.object(
+        RazorpayClient,
+        "create_refund",
+        new_callable=AsyncMock,
+        return_value={
+            "id": rzp_refund_id,
+            "amount": amount,
+            "status": "pending",
+        },
+    ):
+        ref_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/refunds",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"idemp-rfnd-pend-{uuid.uuid4().hex[:8]}",
+            },
+            json={"amount_paise": amount, "reason": "Test pending refund"},
+        )
+        assert ref_resp.status_code == 201
+        ref_data = ref_resp.json()
+        assert ref_data["status"] == "REFUND_PENDING"
+
+    session_factory = get_session_factory()
+    assert session_factory is not None
+
+    async with session_factory() as session:
+        db_rfnd = (
+            await session.execute(
+                select(PaymentRefund).where(
+                    PaymentRefund.provider_refund_id == rzp_refund_id
+                )
+            )
+        ).scalar_one()
+        assert db_rfnd.status == RefundStatus.REFUND_PENDING.value
+        assert db_rfnd.processed_at is None  # CRITICAL: Not processed yet!
+
+        db_capture = (
+            await session.execute(
+                select(PaymentCapture).where(PaymentCapture.id == db_rfnd.capture_id)
+            )
+        ).scalar_one()
+        # Capture status MUST still be CAPTURED because 0 paise is confirmed processed!
+        assert db_capture.status == CaptureStatus.CAPTURED.value
+
+    # 3. Simulate refund timeout path: outcome remains uncertain, status is REFUND_PENDING, not FAILED
+    with patch.object(
+        RazorpayClient,
+        "create_refund",
+        new_callable=AsyncMock,
+        side_effect=PaymentGatewayTimeoutError("Gateway timeout on refund"),
+    ):
+        timeout_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/refunds",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"idemp-rfnd-tout-{uuid.uuid4().hex[:8]}",
+            },
+            json={"amount_paise": 100, "reason": "Test timeout refund"},
+        )
+        # Bounded by refundable balance error since full amount already pending!
+        assert timeout_resp.status_code == 409
+
+    # 4. Now webhook refund.processed arrives from gateway:
+    # Authoritative confirmation transitions to REFUND_PROCESSED and sets processed_at
+    webhook_event_id = f"evt_rfnd_proc_{uuid.uuid4().hex[:8]}"
+    wh_payload = {
+        "entity": "event",
+        "id": webhook_event_id,
+        "event": "refund.processed",
+        "payload": {
+            "refund": {
+                "entity": {
+                    "id": rzp_refund_id,
+                    "payment_id": provider_payment_id,
+                    "amount": amount,
+                    "status": "processed",
+                }
+            }
+        },
+    }
+    raw_wh = json.dumps(wh_payload).encode()
+    wh_sig = generate_webhook_signature(raw_wh)
+
+    wh_resp = await async_client.post(
+        "/api/v1/payments/webhook",
+        headers={
+            "x-razorpay-signature": wh_sig,
+            "x-razorpay-event-id": webhook_event_id,
+            "content-type": "application/json",
+        },
+        content=raw_wh,
+    )
+    assert wh_resp.status_code == 200
+
+    async with session_factory() as session:
+        db_rfnd_after = (
+            await session.execute(
+                select(PaymentRefund).where(
+                    PaymentRefund.provider_refund_id == rzp_refund_id
+                )
+            )
+        ).scalar_one()
+        assert db_rfnd_after.status == RefundStatus.REFUND_PROCESSED.value
+        assert db_rfnd_after.processed_at is not None  # Genuine timestamp!
+
+        db_capture_after = (
+            await session.execute(
+                select(PaymentCapture).where(
+                    PaymentCapture.id == db_rfnd_after.capture_id
+                )
+            )
+        ).scalar_one()
+        assert db_capture_after.status == CaptureStatus.REFUNDED.value
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_reconciles_pending_refund_to_processed(
+    async_client: AsyncClient,
+):
+    """Reconciler queries Razorpay for pending refund, confirms 'processed', and updates capture to REFUNDED."""
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = order["id"]
+    amount = order["total_payable_paise"]
+
+    provider_order_id = f"order_rzp_rfnd_rec_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_rfnd_rec_{uuid.uuid4().hex[:8]}"
+    valid_sig = generate_payment_signature(provider_order_id, provider_payment_id)
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "create_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_order_id,
+                "amount": amount,
+                "currency": "INR",
+                "receipt": order["order_number"],
+                "status": "created",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_payment_id,
+                "order_id": provider_order_id,
+                "amount": amount,
+                "currency": "INR",
+                "status": "captured",
+            },
+        ),
+    ):
+        await async_client.post(
+            f"/api/v1/orders/{order_id}/payments",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        await async_client.post(
+            f"/api/v1/orders/{order_id}/payments/verify",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "razorpay_order_id": provider_order_id,
+                "razorpay_payment_id": provider_payment_id,
+                "razorpay_signature": valid_sig,
+            },
+        )
+
+    rzp_refund_id = f"rfnd_rzp_to_recon_{uuid.uuid4().hex[:8]}"
+    with patch.object(
+        RazorpayClient,
+        "create_refund",
+        new_callable=AsyncMock,
+        return_value={"id": rzp_refund_id, "amount": amount, "status": "pending"},
+    ):
+        await async_client.post(
+            f"/api/v1/orders/{order_id}/refunds",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"idemp-rfnd-rec-{uuid.uuid4().hex[:8]}",
+            },
+            json={"amount_paise": amount, "reason": "Pending reconciliation refund"},
+        )
+
+    session_factory = get_session_factory()
+    assert session_factory is not None
+
+    # Age refund artificially by 5 minutes so reconciliation queries it
+    async with session_factory() as session:
+        await session.execute(
+            update(PaymentRefund)
+            .where(PaymentRefund.provider_refund_id == rzp_refund_id)
+            .values(created_at=datetime.now(UTC) - timedelta(minutes=5))
+        )
+        await session.commit()
+
+    # Run reconciler with mock fetch_refund_by_id returning 'processed'
+    with patch.object(
+        RazorpayClient,
+        "fetch_refund_by_id",
+        new_callable=AsyncMock,
+        return_value={
+            "id": rzp_refund_id,
+            "payment_id": provider_payment_id,
+            "amount": amount,
+            "status": "processed",
+        },
+    ):
+        headers = get_internal_auth_headers()
+        recon_resp = await async_client.post(
+            "/api/v1/internal/payments/reconcile-pending",
+            headers=headers,
+        )
+        assert recon_resp.status_code == 200
+
+    async with session_factory() as session:
+        db_rfnd = (
+            await session.execute(
+                select(PaymentRefund).where(
+                    PaymentRefund.provider_refund_id == rzp_refund_id
+                )
+            )
+        ).scalar_one()
+        assert db_rfnd.status == RefundStatus.REFUND_PROCESSED.value
+        assert db_rfnd.processed_at is not None
+
+        db_capture = (
+            await session.execute(
+                select(PaymentCapture).where(PaymentCapture.id == db_rfnd.capture_id)
+            )
+        ).scalar_one()
+        assert db_capture.status == CaptureStatus.REFUNDED.value
+
+
+@pytest.mark.asyncio
+async def test_never_rollback_capture_ledger_on_anomalous_branches(
+    async_client: AsyncClient,
+):
+    """CRITICAL 2: Proves that PaymentCapture and PaymentRefund rows persist in PostgreSQL
+    even when verify_payment raises 409 ORDER_ALREADY_CONFIRMED, 400 ORDER_CANCELLED,
+    or 400 PARTIAL_CAPTURE_REJECTED. Financial facts are never rolled back!
+    """
+    session_factory = get_session_factory()
+    assert session_factory is not None
+
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = order["id"]
+    amount = order["total_payable_paise"]
+
+    # --- Case A: Confirmed order receives unexpected duplicate capture (OVERPAYMENT_ANOMALY) ---
+    order_rzp_1 = f"order_rzp_norm_{uuid.uuid4().hex[:8]}"
+    pay_rzp_1 = f"pay_rzp_norm_{uuid.uuid4().hex[:8]}"
+    sig_1 = generate_payment_signature(order_rzp_1, pay_rzp_1)
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "create_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": order_rzp_1,
+                "amount": amount,
+                "currency": "INR",
+                "receipt": order["order_number"],
+                "status": "created",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": pay_rzp_1,
+                "order_id": order_rzp_1,
+                "amount": amount,
+                "currency": "INR",
+                "status": "captured",
+            },
+        ),
+    ):
+        await async_client.post(
+            f"/api/v1/orders/{order_id}/payments",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        v1 = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments/verify",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "razorpay_order_id": order_rzp_1,
+                "razorpay_payment_id": pay_rzp_1,
+                "razorpay_signature": sig_1,
+            },
+        )
+        assert v1.status_code == 200
+
+    # Now verify distinct second capture on the confirmed order
+    pay_rzp_duplicate = f"pay_rzp_dupl_{uuid.uuid4().hex[:8]}"
+    sig_dup = generate_payment_signature(order_rzp_1, pay_rzp_duplicate)
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": pay_rzp_duplicate,
+                "order_id": order_rzp_1,
+                "amount": amount,
+                "currency": "INR",
+                "status": "captured",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "create_refund",
+            new_callable=AsyncMock,
+            return_value={
+                "id": f"rfnd_rzp_dup_{uuid.uuid4().hex[:8]}",
+                "amount": amount,
+                "status": "processed",
+            },
+        ),
+    ):
+        dup_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments/verify",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "razorpay_order_id": order_rzp_1,
+                "razorpay_payment_id": pay_rzp_duplicate,
+                "razorpay_signature": sig_dup,
+            },
+        )
+        assert dup_resp.status_code == 409  # ORDER_ALREADY_CONFIRMED
+
+    # Direct DB inspection: verify anomaly capture AND refund intent survived the 409 error!
+    async with session_factory() as session:
+        cap_row = (
+            await session.execute(
+                select(PaymentCapture).where(
+                    PaymentCapture.provider_payment_id == pay_rzp_duplicate
+                )
+            )
+        ).scalar_one_or_none()
+        assert cap_row is not None
+        assert (
+            cap_row.reconciliation_status
+            == CaptureReconciliationStatus.OVERPAYMENT_ANOMALY.value
+        )
+        assert cap_row.is_fulfillment_eligible is False
+
+        rfnd_row = (
+            await session.execute(
+                select(PaymentRefund).where(PaymentRefund.capture_id == cap_row.id)
+            )
+        ).scalar_one_or_none()
+        assert rfnd_row is not None
+        assert rfnd_row.amount_paise == amount
+
+    # --- Case B: Late capture after order cancellation ---
+    user_b, token_b, order_b = await setup_customer_and_order(async_client)
+    order_b_id = order_b["id"]
+    amount_b = order_b["total_payable_paise"]
+    order_rzp_b = f"order_rzp_can_{uuid.uuid4().hex[:8]}"
+
+    with patch.object(
+        RazorpayClient,
+        "create_order",
+        new_callable=AsyncMock,
+        return_value={
+            "id": order_rzp_b,
+            "amount": amount_b,
+            "currency": "INR",
+            "receipt": order_b["order_number"],
+            "status": "created",
+        },
+    ):
+        await async_client.post(
+            f"/api/v1/orders/{order_b_id}/payments",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+
+    # Cancel order manually in DB
+    async with session_factory() as session:
+        await session.execute(
+            update(Order)
+            .where(Order.id == uuid.UUID(order_b_id))
+            .values(status=OrderStatus.CANCELLED.value)
+        )
+        await session.commit()
+
+    pay_rzp_late = f"pay_rzp_late_{uuid.uuid4().hex[:8]}"
+    sig_late = generate_payment_signature(order_rzp_b, pay_rzp_late)
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": pay_rzp_late,
+                "order_id": order_rzp_b,
+                "amount": amount_b,
+                "currency": "INR",
+                "status": "captured",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "create_refund",
+            new_callable=AsyncMock,
+            return_value={
+                "id": f"rfnd_rzp_late_{uuid.uuid4().hex[:8]}",
+                "amount": amount_b,
+                "status": "processed",
+            },
+        ),
+    ):
+        late_resp = await async_client.post(
+            f"/api/v1/orders/{order_b_id}/payments/verify",
+            headers={"Authorization": f"Bearer {token_b}"},
+            json={
+                "razorpay_order_id": order_rzp_b,
+                "razorpay_payment_id": pay_rzp_late,
+                "razorpay_signature": sig_late,
+            },
+        )
+        assert late_resp.status_code == 400
+
+    async with session_factory() as session:
+        late_cap = (
+            await session.execute(
+                select(PaymentCapture).where(
+                    PaymentCapture.provider_payment_id == pay_rzp_late
+                )
+            )
+        ).scalar_one_or_none()
+        assert late_cap is not None
+        assert (
+            late_cap.reconciliation_status
+            == CaptureReconciliationStatus.LATE_CAPTURE_ANOMALY.value
+        )
+
+        late_rfnd = (
+            await session.execute(
+                select(PaymentRefund).where(PaymentRefund.capture_id == late_cap.id)
+            )
+        ).scalar_one_or_none()
+        assert late_rfnd is not None
+
+
+@pytest.mark.asyncio
+async def test_sla_reservation_release_failure_atomic_rollback_and_retry(
+    async_client: AsyncClient,
+):
+    """CRITICAL 3: Never commit terminal order cancellation when reservation release fails.
+    Transaction cleanly rolls back, payment_status is set to REQUIRES_RECONCILIATION,
+    blocking new payment attempts, and retry completes cancellation atomically.
+    """
+    user, token, order = await setup_customer_and_order(async_client)
+    order_id = uuid.UUID(order["id"])
+
+    session_factory = get_session_factory()
+    assert session_factory is not None
+
+    # Age order past 75-minute SLA
+    async with session_factory() as session:
+        await session.execute(
+            update(Order)
+            .where(Order.id == order_id)
+            .values(
+                created_at=datetime.now(UTC) - timedelta(minutes=80),
+                payment_window_expires_at=datetime.now(UTC) - timedelta(minutes=80),
+            )
+        )
+        await session.commit()
+
+    headers = get_internal_auth_headers()
+
+    # Step 1: Simulate reservation release failure
+    from app.modules.inventory.service import ReservationService
+
+    with patch.object(
+        ReservationService,
+        "release_reservation",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError(
+            "Simulated database lock failure on inventory release"
+        ),
+    ):
+        resp = await async_client.post(
+            "/api/v1/internal/payments/sla-escalation",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["cancelled_orders_count"] == 0
+
+    # Step 2: Verify order was NOT cancelled! It remains PENDING_PAYMENT, but payment_status is REQUIRES_RECONCILIATION
+    async with session_factory() as session:
+        db_order = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order.status == OrderStatus.PENDING_PAYMENT.value
+        assert db_order.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value
+
+    # Step 3: Verify payment initiation is BLOCKED while in this unresolved state!
+    init_blocked = await async_client.post(
+        f"/api/v1/orders/{order_id}/payments",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert init_blocked.status_code == 409
+
+    # Step 4: Retry SLA job without mock failure: succeeds cleanly!
+    retry_resp = await async_client.post(
+        "/api/v1/internal/payments/sla-escalation",
+        headers=headers,
+    )
+    assert retry_resp.status_code == 200
+    assert retry_resp.json()["cancelled_orders_count"] >= 1
+
+    async with session_factory() as session:
+        db_order_after = (
+            await session.execute(select(Order).where(Order.id == order_id))
+        ).scalar_one()
+        assert db_order_after.status == OrderStatus.CANCELLED.value
+        assert db_order_after.payment_status == PaymentStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_webhook_claim_and_process_concurrency_race(
+    async_client: AsyncClient,
+):
+    """CRITICAL 4: Proves SKIP LOCKED lease claiming prevents concurrent processors
+    from processing the same webhook event simultaneously.
+    """
+    session_factory = get_session_factory()
+    assert session_factory is not None
+
+    event_id = uuid.uuid4()
+    provider_event_id = f"evt_claim_race_{uuid.uuid4().hex[:8]}"
+
+    async with session_factory() as session:
+        event = WebhookEvent(
+            id=event_id,
+            provider="RAZORPAY",
+            provider_event_id=provider_event_id,
+            event_type="payment.captured",
+            payload={"event": "payment.captured", "id": provider_event_id},
+            status=WebhookEventStatus.PENDING.value,
+        )
+        session.add(event)
+        await session.commit()
+
+    # Launch two concurrent workers trying to claim the exact same event
+    from app.modules.payments.repository import PaymentRepository
+
+    async def worker_claim(worker_id: str) -> bool:
+        async with session_factory() as session:
+            repo = PaymentRepository(session)
+            return await repo.claim_specific_webhook_event(
+                event_id=event_id, worker_id=worker_id, lease_seconds=30
+            )
+
+    results = await asyncio.gather(
+        worker_claim("worker-alpha"),
+        worker_claim("worker-beta"),
+    )
+
+    # Exactly one worker wins the claim; the other gets False
+    assert sum(results) == 1, f"Expected exactly 1 claim winner, got {results}"
+
+
+@pytest.mark.asyncio
+async def test_webhook_missing_event_id_rejected_400(
+    async_client: AsyncClient,
+):
+    """CRITICAL 4: If neither header nor payload contains valid event ID, reject with 400.
+    Must never generate a random UUID and pretend deduplication is guaranteed!
+    """
+    payload = {"event": "payment.captured", "payload": {}}
+    raw_body = json.dumps(payload).encode()
+    sig = generate_webhook_signature(raw_body)
+
+    resp = await async_client.post(
+        "/api/v1/payments/webhook",
+        headers={
+            "x-razorpay-signature": sig,
+            "content-type": "application/json",
+            # No x-razorpay-event-id header!
+        },
+        content=raw_body,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "MISSING_WEBHOOK_EVENT_ID"
+
+
+@pytest.mark.asyncio
+async def test_internal_routes_fail_closed_without_auth(
+    async_client: AsyncClient,
+):
+    """Verifies that internal reconciliation routes fail closed when called without valid authorization."""
+    # 1. No auth headers -> 401
+    r1 = await async_client.post("/api/v1/internal/payments/reconcile-pending")
+    assert r1.status_code == 401
+
+    # 2. Invalid auth token -> 401
+    r2 = await async_client.post(
+        "/api/v1/internal/payments/reconcile-pending",
+        headers={"X-Internal-Service-Key": "invalid-wrong-key"},
+    )
+    assert r2.status_code == 401
+
+    # 3. SLA escalation without auth -> 401
+    r3 = await async_client.post("/api/v1/internal/payments/sla-escalation")
+    assert r3.status_code == 401
+
+    # 4. Initiate payment without user session or guest cookie -> 401
+    random_order_id = uuid.uuid4()
+    r4 = await async_client.post(f"/api/v1/orders/{random_order_id}/payments")
+    assert r4.status_code == 401

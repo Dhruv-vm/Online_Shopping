@@ -445,9 +445,11 @@ export type PaymentStatus =
   | "NOT_INITIATED"
   | "PENDING"
   | "PAID"
+  | "SUCCEEDED"
   | "PARTIALLY_REFUNDED"
   | "REFUNDED"
-  | "FAILED";
+  | "FAILED"
+  | "REQUIRES_RECONCILIATION";
 
 export interface DeliveryAddressSnapshot {
   full_name: string;
@@ -512,6 +514,7 @@ export interface Order {
   currency: string;
   status: OrderStatus;
   payment_status: PaymentStatus;
+  fulfilling_capture_id?: string | null;
   payment_window_expires_at?: string | null;
   items: OrderItem[];
   status_history?: OrderStatusHistoryEntry[];
@@ -520,7 +523,7 @@ export interface Order {
 }
 
 export interface CreateOrderRequest {
-  quote_id: string;
+  quote_id?: string;
   reservation_id: string;
   delivery_address_id?: string | null;
   delivery_address?: {
@@ -573,13 +576,18 @@ export interface PaymentVerifyRequest {
 }
 
 export interface PaymentVerifyResponse {
-  payment_id: string;
+  payment_id?: string;
   order_id: string;
-  status: PaymentAttemptStatus;
-  order_status: OrderStatus;
-  amount_paise: number;
-  currency: string;
-  message: string;
+  order_number?: string;
+  status: OrderStatus;
+  order_status?: OrderStatus;
+  payment_status: PaymentStatus;
+  fulfilling_capture_id?: string | null;
+  amount_paid_paise?: number;
+  amount_paise?: number;
+  currency?: string;
+  message?: string;
+  confirmed_at?: string;
 }
 
 export interface PaymentRefundRequest {

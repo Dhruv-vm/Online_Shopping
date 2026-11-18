@@ -182,6 +182,45 @@ class PaymentRepository:
         res = await self.session.execute(stmt)
         return res.scalar_one()
 
+    async def get_processed_refunds_sum_for_capture(self, capture_id: uuid.UUID) -> int:
+        """Returns the confirmed processed refund total for a capture."""
+        stmt = select(func.coalesce(func.sum(PaymentRefund.amount_paise), 0)).where(
+            PaymentRefund.capture_id == capture_id,
+            PaymentRefund.status == RefundStatus.REFUND_PROCESSED.value,
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one()
+
+    async def get_processed_refunds_sum_for_order(self, order_id: uuid.UUID) -> int:
+        """Returns the confirmed processed refund total for an order."""
+        stmt = select(func.coalesce(func.sum(PaymentRefund.amount_paise), 0)).where(
+            PaymentRefund.order_id == order_id,
+            PaymentRefund.status == RefundStatus.REFUND_PROCESSED.value,
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one()
+
+    async def get_pending_refunds_for_reconciliation(
+        self, cutoff_datetime: datetime, limit: int = 50
+    ) -> list[PaymentRefund]:
+        """Fetch pending/requested refunds needing reconciliation with gateway."""
+        stmt = (
+            select(PaymentRefund)
+            .where(
+                PaymentRefund.status.in_(
+                    [
+                        RefundStatus.REFUND_REQUESTED.value,
+                        RefundStatus.REFUND_PENDING.value,
+                    ]
+                ),
+                PaymentRefund.created_at <= cutoff_datetime,
+            )
+            .order_by(PaymentRefund.created_at.asc())
+            .limit(limit)
+        )
+        res = await self.session.execute(stmt)
+        return list(res.scalars().all())
+
     async def create_refund(self, refund: PaymentRefund) -> PaymentRefund:
         self.session.add(refund)
         await self.session.flush()
@@ -238,6 +277,44 @@ class PaymentRepository:
 
         res = await self.session.execute(claim_stmt)
         return list(res.scalars().all())
+
+    async def claim_specific_webhook_event(
+        self, event_id: uuid.UUID, worker_id: str, lease_seconds: int = 30
+    ) -> bool:
+        """Claim a specific webhook event for processing using FOR UPDATE SKIP LOCKED."""
+        now = datetime.now(UTC)
+        lease_expiry = now + timedelta(seconds=lease_seconds)
+
+        subquery = (
+            select(WebhookEvent.id)
+            .where(
+                WebhookEvent.id == event_id,
+                (WebhookEvent.status == WebhookEventStatus.PENDING.value)
+                | (
+                    (WebhookEvent.status == WebhookEventStatus.PROCESSING.value)
+                    & (WebhookEvent.claim_expires_at < now)
+                ),
+            )
+            .with_for_update(skip_locked=True)
+        )
+
+        claim_stmt = (
+            update(WebhookEvent)
+            .where(WebhookEvent.id.in_(subquery))
+            .values(
+                status=WebhookEventStatus.PROCESSING.value,
+                claimed_by=worker_id,
+                claim_expires_at=lease_expiry,
+                retry_count=WebhookEvent.retry_count + 1,
+                updated_at=now,
+            )
+            .returning(WebhookEvent.id)
+        )
+
+        res = await self.session.execute(claim_stmt)
+        claimed_id = res.scalar_one_or_none()
+        await self.session.commit()
+        return claimed_id is not None
 
     async def get_expired_ambiguous_payments(
         self, cutoff_datetime: datetime, limit: int = 50

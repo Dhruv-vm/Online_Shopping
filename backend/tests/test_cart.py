@@ -21,6 +21,7 @@ async def get_test_listings(async_client: AsyncClient) -> list[dict]:
                     and listing.get("available_quantity", 0) > 0
                 ):
                     listings.append(listing)
+    listings.sort(key=lambda item: item.get("available_quantity", 0), reverse=True)
     return listings
 
 

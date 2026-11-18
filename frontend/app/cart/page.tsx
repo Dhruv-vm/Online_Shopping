@@ -809,9 +809,15 @@ export default function CartPage() {
                       >
                         {isReleasing ? "Releasing..." : "Release Hold"}
                       </Button>
-                      <span className="text-[10px] text-muted-foreground">
-                        Phase 2E will consume hold
-                      </span>
+                      <Link href={`/checkout?reservation_id=${reservation.id}`}>
+                        <Button
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-8 px-3"
+                        >
+                          Checkout
+                          <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+                        </Button>
+                      </Link>
                     </div>
                   </div>
                 ) : (

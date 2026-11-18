@@ -29,6 +29,7 @@ interface RazorpayPaymentButtonProps {
   className?: string;
   onSuccess: (result: PaymentVerifyResponse) => void;
   onError: (error: Error) => void;
+  onDismissOrAmbiguous?: () => void;
 }
 
 export function RazorpayPaymentButton({
@@ -42,6 +43,7 @@ export function RazorpayPaymentButton({
   className,
   onSuccess,
   onError,
+  onDismissOrAmbiguous,
 }: RazorpayPaymentButtonProps) {
   const [loading, setLoading] = React.useState(false);
 
@@ -113,6 +115,9 @@ export function RazorpayPaymentButton({
                 ? verifyErr
                 : new Error("Payment verification failed")
             );
+            if (onDismissOrAmbiguous) {
+              onDismissOrAmbiguous();
+            }
           } finally {
             setLoading(false);
           }
@@ -120,6 +125,9 @@ export function RazorpayPaymentButton({
         modal: {
           ondismiss: () => {
             setLoading(false);
+            if (onDismissOrAmbiguous) {
+              onDismissOrAmbiguous();
+            }
           },
         },
       };

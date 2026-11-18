@@ -81,7 +81,14 @@ class WebhookService:
                 code="INVALID_JSON", message="Malformed webhook body", status_code=400
             ) from exc
 
-        event_id = event_id_header or payload.get("id") or str(uuid.uuid4())
+        event_id = event_id_header or payload.get("id") or payload.get("event_id")
+        if not event_id or not str(event_id).strip():
+            raise AppException(
+                code="MISSING_WEBHOOK_EVENT_ID",
+                message="Valid provider event ID is required in header or payload for deduplication",
+                status_code=400,
+            )
+        event_id = str(event_id).strip()
         event_type = payload.get("event", "unknown")
 
         # Deduplication check
@@ -107,11 +114,35 @@ class WebhookService:
 
         return WebhookIngestResponse(status="ok", event_id=event_id)
 
-    async def process_webhook_event(self, event_id: uuid.UUID) -> bool:
+    async def process_webhook_event(
+        self, event_id: uuid.UUID, worker_id: str | None = None
+    ) -> bool:
         """Phase 2: Business execution for a single claimed webhook event."""
-        event = await self.session.get(WebhookEvent, event_id)
-        if not event:
-            return False
+        now = datetime.now(UTC)
+        if worker_id:
+            stmt = (
+                select(WebhookEvent)
+                .where(
+                    WebhookEvent.id == event_id,
+                    WebhookEvent.claimed_by == worker_id,
+                    WebhookEvent.status == WebhookEventStatus.PROCESSING.value,
+                    WebhookEvent.claim_expires_at > now,
+                )
+                .with_for_update()
+            )
+            res = await self.session.execute(stmt)
+            event = res.scalar_one_or_none()
+            if not event:
+                logger.warning(
+                    "Worker %s cannot process webhook event %s; missing or expired claim",
+                    worker_id,
+                    event_id,
+                )
+                return False
+        else:
+            event = await self.session.get(WebhookEvent, event_id)
+            if not event:
+                return False
 
         event_type = event.event_type
         payload = event.payload
@@ -123,11 +154,15 @@ class WebhookService:
                 await self._handle_payment_failed(payload)
             elif event_type == "refund.processed":
                 await self._handle_refund_processed(payload)
+            elif event_type == "refund.failed":
+                await self._handle_refund_failed(payload)
             else:
                 logger.info("Ignoring unhandled webhook event type: %s", event_type)
 
             event.status = WebhookEventStatus.PROCESSED.value
             event.processed_at = datetime.now(UTC)
+            event.claimed_by = None
+            event.claim_expires_at = None
             await self.session.commit()
             return True
         except Exception as exc:
@@ -146,6 +181,8 @@ class WebhookService:
                     event.status = WebhookEventStatus.FAILED.value
                 else:
                     event.status = WebhookEventStatus.PENDING.value
+                event.claimed_by = None
+                event.claim_expires_at = None
                 await self.session.commit()
             return False
 
@@ -373,11 +410,25 @@ class WebhookService:
         if not order:
             return
 
-        # Invariant: Never allow an older/stale failed event to regress a confirmed order!
-        if order.status == OrderStatus.CONFIRMED.value:
+        # Invariant: Never allow an older/stale failed event to regress a confirmed order or succeeded payment!
+        if (
+            order.status == OrderStatus.CONFIRMED.value
+            or order.fulfilling_capture_id is not None
+        ):
             logger.info(
                 "Ignoring payment.failed webhook for already confirmed order %s",
                 order.id,
+            )
+            return
+
+        if payment.status in (
+            PaymentAttemptStatus.SUCCEEDED.value,
+            PaymentAttemptStatus.PARTIALLY_REFUNDED.value,
+            PaymentAttemptStatus.REFUNDED.value,
+        ):
+            logger.info(
+                "Ignoring payment.failed webhook for already succeeded payment %s",
+                payment.id,
             )
             return
 
@@ -407,27 +458,57 @@ class WebhookService:
 
         refund.status = RefundStatus.REFUND_PROCESSED.value
         refund.processed_at = datetime.now(UTC)
+        await self.session.flush()
 
         capture = await self.repo.get_capture_by_id_for_update(refund.capture_id)
         if capture:
-            active_sum = await self.repo.get_active_refunds_sum_for_capture(capture.id)
-            if active_sum >= capture.amount_paise:
+            processed_sum = await self.repo.get_processed_refunds_sum_for_capture(
+                capture.id
+            )
+            if processed_sum >= capture.amount_paise:
                 capture.status = CaptureStatus.REFUNDED.value
-            else:
+            elif processed_sum > 0:
                 capture.status = CaptureStatus.PARTIALLY_REFUNDED.value
+            else:
+                capture.status = CaptureStatus.CAPTURED.value
 
         order = await self.repo.get_order_by_id_for_update(refund.order_id)
         if order:
-            active_sum = await self.repo.get_active_refunds_sum_for_capture(
-                refund.capture_id
+            order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
+                refund.order_id
             )
-            if active_sum >= order.total_payable_paise:
+            if order_processed_sum >= order.total_payable_paise:
                 order.payment_status = PaymentStatus.REFUNDED.value
-            else:
+            elif order_processed_sum > 0:
                 order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
+
+    async def _handle_refund_failed(self, payload: dict[str, Any]) -> None:
+        """Handles refund.failed event to mark refund FAILED without regressing capture status."""
+        refund_entity = payload.get("payload", {}).get("refund", {}).get("entity", {})
+        provider_refund_id = refund_entity.get("id")
+        if not provider_refund_id:
+            return
+
+        stmt = select(PaymentRefund).where(
+            PaymentRefund.provider_refund_id == provider_refund_id
+        )
+        res = await self.session.execute(stmt)
+        refund = res.scalar_one_or_none()
+        if not refund:
+            return
+
+        refund.status = RefundStatus.REFUND_FAILED.value
+        refund.error_code = refund_entity.get("error_code") or "PROVIDER_REFUND_FAILED"
+        refund.error_description = (
+            refund_entity.get("error_description") or "Refund rejected by gateway"
+        )
 
     async def _trigger_auto_refund(self, capture: PaymentCapture, reason: str) -> None:
         refund_idempotency = f"webhook-auto-refund-{capture.id}"
+        existing = await self.repo.get_refund_by_idempotency_key(refund_idempotency)
+        if existing:
+            return
+
         refund = PaymentRefund(
             capture_id=capture.id,
             payment_id=capture.payment_id,
@@ -439,6 +520,8 @@ class WebhookService:
             reason=reason,
         )
         await self.repo.create_refund(refund)
+        # Commit capture and refund intent before calling external gateway
+        await self.session.commit()
 
         try:
             rzp_refund = await self.client.create_refund(
@@ -448,15 +531,25 @@ class WebhookService:
                 receipt=f"RFND-{str(refund.id)[:30]}",
                 notes={"reason": reason, "capture_id": str(capture.id)},
             )
-            refund.provider_refund_id = rzp_refund.get("id")
-            refund.status = (
-                RefundStatus.REFUND_PROCESSED.value
-                if rzp_refund.get("status") == "processed"
-                else RefundStatus.REFUND_PENDING.value
-            )
-            refund.processed_at = datetime.now(UTC)
-            capture.status = CaptureStatus.REFUNDED.value
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.provider_refund_id = rzp_refund.get("id")
+                if rzp_refund.get("status") == "processed":
+                    locked_refund.status = RefundStatus.REFUND_PROCESSED.value
+                    locked_refund.processed_at = datetime.now(UTC)
+                    locked_capture = await self.repo.get_capture_by_id_for_update(
+                        capture.id
+                    )
+                    if locked_capture:
+                        locked_capture.status = CaptureStatus.REFUNDED.value
+                else:
+                    locked_refund.status = RefundStatus.REFUND_PENDING.value
+                    locked_refund.processed_at = None
+            await self.session.commit()
         except Exception as exc:
             logger.error("Auto-refund dispatch error in webhook: %s", str(exc))
-            refund.status = RefundStatus.REFUND_PENDING.value
-            refund.error_description = str(exc)
+            locked_refund = await self.repo.get_refund_by_id(refund.id)
+            if locked_refund:
+                locked_refund.status = RefundStatus.REFUND_PENDING.value
+                locked_refund.error_description = str(exc)
+            await self.session.commit()
