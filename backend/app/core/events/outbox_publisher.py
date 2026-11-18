@@ -195,10 +195,15 @@ def sanitize_error_message(exc: Exception, max_length: int = 1000) -> str:
     """
     raw = f"{type(exc).__name__}: {str(exc)}"
     sanitized = re.sub(
-        r"(key|secret|password|token|auth|cvv|card|card_number|account)=['\"][^'\"]+['\"]",
-        r"\1=***",
+        r"(['\"]?(?:key|secret|password|token|auth|cvv|card|card_number|account)['\"]?\s*[:=]\s*)['\"][^'\"]+['\"]",
+        r"\1***",
         raw,
         flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"\b(?:\d{4}[ -]?){3}\d{4}\b",
+        "****-****-****-****",
+        sanitized,
     )
     sanitized = re.sub(
         r"(rzp_live_|rzp_test_)[A-Za-z0-9]+",

@@ -476,17 +476,46 @@ Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.1.0 Distribute
   - Added partial index `ix_outbox_lease_poll`:
     `ON outbox_events (status, next_attempt_at, claim_expires_at) WHERE status IN ('PENDING', 'PROCESSING')`
 
-### `consumer_inbox` Table (`0010_consumer_inbox` — Scheduled for Slice 3C)
+### `consumer_inbox` Table (`0010_consumer_inbox` — Implemented in Phase 3C)
 Durable deduplication table providing effectively-once consumer side effects across crashes and at-least-once Kafka deliveries:
 - `id`: UUID (PK, default `uuid.uuid4`)
-- `consumer_group`: VARCHAR(128) (Nullable=False, indexed, e.g. `'basket-opensearch-sync'`)
-- `event_id`: UUID (Nullable=False, indexed, references `EventEnvelope.event_id`)
+- `consumer_group`: VARCHAR(128) (Nullable=False, indexed, e.g. `'basket-order-projection'`)
+- `event_id`: UUID (Nullable=False, references `EventEnvelope.event_id`)
+- `event_type`: VARCHAR(128) (Nullable=False)
+- `schema_version`: INTEGER (Default 1, nullable=False)
 - `aggregate_type`: VARCHAR(64) (Nullable=False)
 - `aggregate_id`: UUID (Nullable=False)
-- `processed_at`: TIMESTAMPTZ (Default `now()`, indexed)
+- `aggregate_version`: INTEGER (Nullable=True)
+- `status`: VARCHAR(32) (Default `'PENDING'`, nullable=False)
+- `first_seen_at`: TIMESTAMPTZ (Default `now()`, nullable=False)
+- `processed_at`: TIMESTAMPTZ (Nullable=True)
+- `retry_count`: INTEGER (Default 0, nullable=False)
+- `last_error`: VARCHAR(1000) (Nullable=True, redacted and sanitized)
+- `correlation_id`: VARCHAR(128) (Nullable=True)
 - **Constraints & Indexes**:
+  - `chk_consumer_inbox_status`: `CHECK status IN ('PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'DEAD_LETTER')`
   - `uq_consumer_inbox_group_event`: UNIQUE on `(consumer_group, event_id)`
-  - Index `ix_consumer_inbox_retention`: `(processed_at)` (For 30-day inbox pruning)
+  - Index `ix_consumer_inbox_group_event`: `(consumer_group, event_id)`
+  - Index `ix_consumer_inbox_aggregate`: `(aggregate_type, aggregate_id, aggregate_version)`
+  - Index `ix_consumer_inbox_retention`: `(status, processed_at)` (For retention pruning)
+
+### `order_summary_projections` Table (`0010_consumer_inbox` — Implemented in Phase 3C)
+PostgreSQL read-model projection table maintained by `OrderProjectionConsumer` demonstrating Strategy A ACID atomic mutations:
+- `order_id`: UUID (PK, nullable=False)
+- `order_number`: VARCHAR(64) (Unique=True, nullable=False)
+- `customer_id`: UUID (Nullable=True)
+- `status`: VARCHAR(32) (Nullable=False)
+- `payment_status`: VARCHAR(32) (Default `'NOT_INITIATED'`, nullable=False)
+- `total_payable_paise`: BIGINT (Nullable=False)
+- `currency`: VARCHAR(3) (Default `'INR'`, nullable=False)
+- `item_count`: INTEGER (Default 0, nullable=False)
+- `last_event_type`: VARCHAR(128) (Nullable=False)
+- `last_aggregate_version`: INTEGER (Default 1, nullable=False)
+- `created_at`: TIMESTAMPTZ (Default `now()`, nullable=False)
+- `updated_at`: TIMESTAMPTZ (Default `now()`, nullable=False)
+- **Indexes**:
+  - Index `ix_order_projections_status`: `(status)`
+  - Index `ix_order_projections_customer`: `(customer_id)`
 
 ### OpenSearch Derived Document Projection (`basket_products` Index)
 *Note: Stored in OpenSearch, not PostgreSQL. Documented here for cross-system data model alignment.*

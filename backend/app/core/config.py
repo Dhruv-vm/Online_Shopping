@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     OUTBOX_PER_EVENT_TIMEOUT_SECONDS: float = 2.0
     OUTBOX_MAX_RETRIES: int = 5
 
+    # Kafka Consumer (Phase 3C)
+    KAFKA_CONSUMER_MAX_POLL_RECORDS: int = 50
+    KAFKA_CONSUMER_SESSION_TIMEOUT_MS: int = 30000
+    KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS: int = 300000
+    KAFKA_CONSUMER_AUTO_OFFSET_RESET: str = "earliest"
+    KAFKA_CONSUMER_MAX_RETRIES: int = 5
+    KAFKA_DLQ_TOPIC: str = "basket.events.dead-letter"
+
     # OpenSearch (Aiven OpenSearch)
     OPENSEARCH_URL: str | None = None
     OPENSEARCH_USERNAME: str | None = None
