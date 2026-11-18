@@ -8,6 +8,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     # Application
@@ -114,24 +115,36 @@ class Settings(BaseSettings):
             if not v or not v.get_secret_value() or not v.get_secret_value().strip():
                 raise ValueError(f"{field_name} must be configured in production.")
             secret = v.get_secret_value().strip()
+
+            if field_name == "RAZORPAY_KEY_ID":
+                if secret.startswith("rzp_test_"):
+                    raise ValueError(
+                        "RAZORPAY_KEY_ID cannot use test credentials (rzp_test_) in production; live key (rzp_live_) is required."
+                    )
+                if not secret.startswith("rzp_live_"):
+                    raise ValueError(
+                        "RAZORPAY_KEY_ID must begin with 'rzp_live_' in production."
+                    )
+
+            secret_lower = secret.lower()
             known_mock_values = {
-                "rzp_test_basket_mock_key_id",
                 "mock_secret_key_at_least_16_chars",
                 "mock_webhook_secret_at_least_16_chars",
-                "rzp_test_placeholder",
-                "rzp_test_replace_with_your_key_id",
                 "replace_with_your_key_secret_at_least_16_chars",
                 "replace_with_your_webhook_secret_at_least_16_chars",
                 "secret",
                 "mock",
+                "example",
+                "placeholder",
                 "changeme",
                 "change-me",
             }
             if (
                 secret in known_mock_values
-                or "mock" in secret.lower()
-                or "replace" in secret.lower()
-                or "placeholder" in secret.lower()
+                or "mock" in secret_lower
+                or "replace" in secret_lower
+                or "placeholder" in secret_lower
+                or "example" in secret_lower
             ):
                 raise ValueError(
                     f"{field_name} must be configured with genuine production credentials; mock or placeholder values are not permitted in production."
