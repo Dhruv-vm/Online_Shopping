@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,6 +20,8 @@ from app.modules.orders.models import (
 from app.modules.orders.repository import OrderRepository
 from app.modules.orders.schemas import CreateOrderRequest
 from app.modules.pricing.models import QuoteStatus
+
+logger = logging.getLogger(__name__)
 
 
 def compute_canonical_request_hash(
@@ -330,6 +333,7 @@ class OrderService:
             currency=quote.currency,
             status=OrderStatus.PENDING_PAYMENT.value,
             payment_status=PaymentStatus.NOT_INITIATED.value,
+            version=1,
             idempotency_key=req.idempotency_key,
             payment_window_expires_at=payment_window_expires_at,
             items=[
@@ -433,6 +437,7 @@ class OrderService:
                 for item in quote.items
             ],
             "created_at": now.isoformat(),
+            "aggregate_version": order.version,
         }
         await self.repo.create_outbox_event(
             aggregate_type="order",
@@ -440,6 +445,7 @@ class OrderService:
             event_type="order.created",
             schema_version=1,
             payload=outbox_payload,
+            aggregate_version=order.version,
         )
 
         # 11. Record Idempotency
@@ -570,3 +576,114 @@ class OrderService:
             for o in orders
         ]
         return items, total
+
+    async def cancel_order(
+        self,
+        order_id: uuid.UUID,
+        reason: str = "CUSTOMER_CANCELLED",
+        customer_id: uuid.UUID | None = None,
+        guest_token_hash: str | None = None,
+    ) -> Order:
+        """Transactionally cancels an order with strictly monotonic aggregate versioning and idempotency.
+
+        Invariants:
+        1. Exclusively locks the order row with SELECT ... FOR UPDATE.
+        2. Validates tenant ownership (customer or guest).
+        3. If already CANCELLED: returns order idempotently without allocating new version or outbox event.
+        4. Validates valid transition state (PENDING_PAYMENT or CONFIRMED).
+        5. Atomically increments order.version (monotonic aggregate version).
+        6. Persists OrderStatusHistory and OutboxEvent transactionally in the same DB transaction.
+        7. If reservation hold is active, safely releases it.
+        """
+        order = await self.repo.get_order_by_id_for_update(order_id)
+        if not order:
+            raise AppException(
+                code="ORDER_NOT_FOUND",
+                message="Order was not found.",
+                status_code=404,
+            )
+
+        if customer_id:
+            if order.customer_id != customer_id:
+                raise AppException(
+                    code="ORDER_NOT_FOUND",
+                    message="Order was not found.",
+                    status_code=404,
+                )
+        elif guest_token_hash:
+            if (
+                order.guest_token_hash != guest_token_hash
+                or order.customer_id is not None
+            ):
+                raise AppException(
+                    code="ORDER_NOT_FOUND",
+                    message="Order was not found.",
+                    status_code=404,
+                )
+
+        # Idempotent check: repeated cancellations are no-ops with zero new version/outbox allocation
+        if order.status == OrderStatus.CANCELLED.value:
+            return order
+
+        # Transition validation
+        if order.status not in (
+            OrderStatus.PENDING_PAYMENT.value,
+            OrderStatus.CONFIRMED.value,
+        ):
+            raise AppException(
+                code="INVALID_ORDER_STATE",
+                message=f"Order in status {order.status} cannot be cancelled.",
+                status_code=400,
+            )
+
+        from_status = order.status
+        order.version += 1
+        order.status = OrderStatus.CANCELLED.value
+        if from_status == OrderStatus.PENDING_PAYMENT.value:
+            order.payment_status = PaymentStatus.FAILED.value
+
+        history = OrderStatusHistory(
+            order_id=order.id,
+            from_status=from_status,
+            to_status=OrderStatus.CANCELLED.value,
+            reason=reason,
+        )
+        self.session.add(history)
+
+        outbox_payload = {
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "status": order.status,
+            "payment_status": order.payment_status,
+            "cancel_reason": reason,
+            "aggregate_version": order.version,
+        }
+        await self.repo.create_outbox_event(
+            aggregate_type="order",
+            aggregate_id=order.id,
+            event_type="order.cancelled",
+            schema_version=1,
+            payload=outbox_payload,
+            aggregate_version=order.version,
+        )
+
+        # Release reservation hold if order was unpaid
+        if from_status == OrderStatus.PENDING_PAYMENT.value and order.reservation_id:
+            try:
+                from app.modules.inventory.service import ReservationService
+
+                res_service = ReservationService(self.session)
+                await res_service.release_reservation(
+                    reservation_id=order.reservation_id,
+                    reason=reason,
+                    internal=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to release reservation on cancel for order %s: %s",
+                    order.id,
+                    e,
+                )
+
+        await self.session.flush()
+        return order

@@ -94,6 +94,7 @@ async def reconcile_rejected_partial_capture_order(
             release_succeeded = False
 
     if release_succeeded:
+        order.version += 1
         order.status = OrderStatus.CANCELLED.value
         order.payment_status = PaymentStatus.FAILED.value
     else:
@@ -522,6 +523,7 @@ async def process_payment_capture_and_fulfillment(
     if reservation_confirmed:
         order.fulfilling_capture_id = capture.id
         from_status = order.status
+        order.version += 1
         order.status = OrderStatus.CONFIRMED.value
         order.payment_status = PaymentStatus.SUCCEEDED.value
 
@@ -542,6 +544,7 @@ async def process_payment_capture_and_fulfillment(
             aggregate_id=order.id,
             event_type="order.confirmed",
             schema_version=1,
+            aggregate_version=order.version,
             payload={
                 "order_id": str(order.id),
                 "order_number": order.order_number,
@@ -550,6 +553,7 @@ async def process_payment_capture_and_fulfillment(
                 "fulfilling_capture_id": str(capture.id),
                 "total_payable_paise": order.total_payable_paise,
                 "currency": order.currency,
+                "aggregate_version": order.version,
             },
             status=OutboxStatus.PENDING.value,
         )

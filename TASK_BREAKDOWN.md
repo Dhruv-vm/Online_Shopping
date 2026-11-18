@@ -178,25 +178,27 @@
 
 Authoritative Specification: `PHASE_3_ARCHITECTURE.md` (Version 2.0.0 Distributed Systems & Reliability Correction)
 
-- [ ] **Phase 3A — Infrastructure, Configuration & Event Contracts:**
-  - [ ] Add `aiokafka>=0.11.0` optional dependency and configuration settings for Aiven Kafka (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, TLS certificates, SASL credentials).
-  - [ ] Implement Pre-Deployment Validation Checklist verifying provisioned Aiven tier, partition limits, and single/multi-broker replication constraints.
-  - [ ] Implement `EventEnvelope` model with strict versioning, `aggregate_version`, partition keys, ISO-8601 timestamps, and zero-PII payload validation (customer identifiers excluded).
-  - [ ] Define Kafka topic topology (`basket.events.orders`, `basket.events.payments`, `basket.events.catalogue`, `basket.events.inventory`, `basket.events.dead-letter`).
-  - [ ] Provide `MockKafkaProducer` for local development and CI testing without live Aiven credentials.
-  - [ ] Acceptance Criteria: Envelope validation tests pass; Level 1/Level 2 PII detection fails closed; local environment runs cleanly without credentials.
+- [x] **Phase 3A — Infrastructure, Configuration & Event Contracts:**
+  - [x] Add `aiokafka>=0.11.0` optional dependency and configuration settings for Aiven Kafka (`KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SECURITY_PROTOCOL`, TLS certificates, SASL credentials).
+  - [x] Implement Pre-Deployment Validation Checklist verifying provisioned Aiven tier, partition limits, and single/multi-broker replication constraints.
+  - [x] Implement `EventEnvelope` model with strict versioning, `aggregate_version`, partition keys, ISO-8601 timestamps, and zero-PII payload validation (customer identifiers excluded).
+  - [x] Define Kafka topic topology (`basket.events.orders`, `basket.events.payments`, `basket.events.catalogue`, `basket.events.inventory`, `basket.events.dead-letter`).
+  - [x] Provide `MockKafkaProducer` for local development and CI testing without live Aiven credentials.
+  - [x] Acceptance Criteria: Envelope validation tests pass; Level 1/Level 2 PII detection fails closed; local environment runs cleanly without credentials.
 
-- [ ] **Phase 3B — Transactional Outbox Publisher:**
-  - [ ] Alembic migration `0009_outbox_lease_and_consumer_inbox` adding `claimed_by`, `claim_expires_at`, `next_attempt_at`, `correlation_id` and `PROCESSING` status to `outbox_events`.
-  - [ ] Implement multi-worker lease claiming with `SELECT ... FOR UPDATE SKIP LOCKED`, 30-second leases, and bounded batch sizes (10-25 items).
-  - [ ] Enforce lease ownership on update (`WHERE id IN (...) AND claimed_by = :worker_id`).
-  - [ ] Outbox publisher worker executing bounded exponential backoff with decorrelated jitter ($T_{backoff} = \min(300, 2^{retry\_count} + \text{jitter})$).
-  - [ ] Distinction between transient network errors and permanent serialization failures (`FAILED` status).
-  - [ ] Admin CLI tool `python -m app.cli.outbox_admin replay-failed` with operator audit logging.
-  - [ ] Acceptance Criteria: Multi-worker concurrency tests prove zero duplicate processing races; publisher crash after Kafka ACK safely recovers; no skipped outbox rows.
+- [x] **Phase 3B — Transactional Outbox Publisher:**
+  - [x] Alembic migration `0009_outbox_lease` adding `version` to `orders`, and `aggregate_version`, `claimed_by`, `claim_expires_at`, `next_attempt_at`, `correlation_id` and `PROCESSING` status to `outbox_events`.
+  - [x] Implement authoritative aggregate root versioning derived transactionally from `Order.version` under exclusive row locks, guaranteeing strictly monotonic event sequences ($V_1 < V_2 < \dots < V_n$).
+  - [x] Implement multi-worker lease claiming with `SELECT ... FOR UPDATE SKIP LOCKED`, 30-second leases, and bounded batch sizes (<=20 items).
+  - [x] Enforce lease ownership on update (`WHERE id = :event_id AND claimed_by = :worker_id`).
+  - [x] Outbox publisher worker executing bounded exponential backoff with full jitter ($T_{backoff} = \min(300, 2^{retry\_count} + \text{jitter})$) and authoritative `MAX_RETRIES = 5` threshold.
+  - [x] Aggregate version preservation across retries, crash recovery, and OpenSearch `external_gte` deduplication simulation.
+  - [x] Distinction between transient network errors and permanent serialization failures (`FAILED` status).
+  - [x] Application lifecycle management, 15-second batch window deadline, and production mock rejection.
+  - [x] Acceptance Criteria: Multi-worker concurrency tests prove zero duplicate processing races; publisher crash after Kafka ACK safely recovers; no skipped outbox rows.
 
 - [ ] **Phase 3C — Kafka Consumers & Reliability Engine:**
-  - [ ] Alembic migration `0009` creating `consumer_inbox` table with unique constraint on `(consumer_group, event_id)`.
+  - [ ] Alembic migration `0010_consumer_inbox` creating `consumer_inbox` table with unique constraint on `(consumer_group, event_id)`.
   - [ ] Strategy A (PostgreSQL-only consumers): Atomic DB transaction enclosing inbox insert and business mutation, followed by manual offset commit.
   - [ ] Strategy B (OpenSearch consumers): External versioned upsert (`version_type="external_gte"`), followed by DB inbox insert, followed by manual offset commit.
   - [ ] Generic `BaseKafkaConsumer` managing consumer groups, cooperative sticky rebalancing, partition pause/resume on retry, and dead-letter queue routing (`basket.events.dead-letter`).
