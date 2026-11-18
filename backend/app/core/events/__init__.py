@@ -1,7 +1,24 @@
+from app.core.events.consumer import (
+    BaseKafkaConsumer,
+    ConsumerCommitError,
+    ConsumerError,
+    ConsumerRecord,
+    DeadLetterPublishError,
+    EventConsumer,
+    MockKafkaConsumer,
+    PoisonMessageError,
+    get_kafka_consumer,
+)
 from app.core.events.envelope import (
     FORBIDDEN_PII_KEYS,
     EventEnvelope,
     resolve_partition_key,
+)
+from app.core.events.inbox import (
+    ConsumerInbox,
+    InboxStatus,
+    OrderSummaryProjection,
+    get_inbox_record,
 )
 from app.core.events.kafka import (
     AioKafkaEventProducer,
@@ -42,4 +59,17 @@ __all__ = [
     "get_topic_for_event",
     "resolve_aggregate_version",
     "sanitize_error_message",
+    "ConsumerInbox",
+    "InboxStatus",
+    "OrderSummaryProjection",
+    "get_inbox_record",
+    "BaseKafkaConsumer",
+    "ConsumerError",
+    "ConsumerCommitError",
+    "PoisonMessageError",
+    "DeadLetterPublishError",
+    "ConsumerRecord",
+    "EventConsumer",
+    "MockKafkaConsumer",
+    "get_kafka_consumer",
 ]

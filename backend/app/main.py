@@ -45,9 +45,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "DATABASE_URL not configured. Running without database connection."
         )
 
+    # Initialize and start Kafka consumer if configured, without blocking API startup
+    consumer = None
+    if settings.has_kafka:
+        try:
+            from app.core.database import get_session_factory
+            from app.modules.orders.consumer import OrderProjectionConsumer
+
+            session_factory = get_session_factory()
+            consumer = OrderProjectionConsumer(session_factory=session_factory)
+            await consumer.start()
+            logger.info(
+                "OrderProjectionConsumer initialized and started during lifespan."
+            )
+        except Exception as exc:
+            logger.warning(
+                "OrderProjectionConsumer could not start at lifespan startup: %s. Continuing in degraded mode.",
+                exc,
+            )
+            consumer = None
+
     yield
 
     # Shutdown logic
+    if consumer is not None:
+        try:
+            logger.info("Stopping OrderProjectionConsumer...")
+            await consumer.stop()
+        except Exception as exc:
+            logger.warning("Error stopping consumer during shutdown: %s", exc)
+
     engine = get_engine()
     if engine is not None:
         logger.info("Closing database engine connections...")

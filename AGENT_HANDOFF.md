@@ -1227,4 +1227,140 @@ Copy this section for every new request.
 - Frontend production build: Next.js 15.5.29 compiled successfully.
 - `./scripts/verify-environment.sh`: ALL VERIFICATION GATES PASSED CLEANLY.
 
-**Status:** SLICE 3B COMPLETE & VERIFIED — Ready for review and merge.
+**Status:** SLICE 3B COMPLETE & VERIFIED — Merged in PR #10.
+
+---
+
+### [2026-11-18 23:55 IST] — Developer A / Senior Distributed Systems Engineer — Phase 3C Implementation Complete: Kafka Consumers, Consumer Inbox, Idempotency & Reliability
+
+**Related branch / PR / task:**
+- Target Branch: `feature/phase3-consumer-reliability`
+- Merged Base: `origin/integration` commit `857256c` (PR #10)
+- Task: Phase 3C — Kafka Consumers, Consumer Inbox, Idempotency & Reliability Engine
+
+**Affected module(s):**
+- `backend/alembic/versions/0010_consumer_inbox.py`
+- `backend/app/core/events/inbox.py`
+- `backend/app/core/events/consumer.py`
+- `backend/app/core/events/__init__.py`
+- `backend/app/core/config.py`
+- `backend/app/modules/orders/consumer.py`
+- `backend/app/modules/orders/__init__.py`
+- `backend/tests/test_consumer.py`
+- `DATA_MODEL.md`
+- `TASK_BREAKDOWN.md`
+- `AGENT_HANDOFF.md`
+
+**What Was Implemented:**
+
+1. **Alembic Migration `0010_consumer_inbox.py`:**
+   - Creates `consumer_inbox` table with columns: `id` (UUID PK), `consumer_group` (VARCHAR(128)), `event_id` (UUID), `event_type` (VARCHAR(128)), `schema_version` (INT, default 1), `aggregate_type` (VARCHAR(64)), `aggregate_id` (UUID), `aggregate_version` (INT, nullable), `status` (VARCHAR(32), default 'PENDING'), `first_seen_at` (TIMESTAMPTZ, default now()), `processed_at` (TIMESTAMPTZ, nullable), `retry_count` (INT, default 0), `last_error` (VARCHAR(1000), nullable), `correlation_id` (VARCHAR(128), nullable).
+   - Constraints: `uq_consumer_inbox_group_event` (UNIQUE on `(consumer_group, event_id)`), `chk_consumer_inbox_status` (`CHECK status IN ('PENDING', 'PROCESSING', 'SUCCEEDED', 'FAILED', 'DEAD_LETTER')`).
+   - Indexes: `ix_consumer_inbox_group_event`, `ix_consumer_inbox_aggregate`, `ix_consumer_inbox_retention`.
+   - Creates `order_summary_projections` table for authoritative read-model projection mutations under Strategy A ACID guarantees.
+   - Clean, verified reversible migration with tested `upgrade()` and `downgrade()`.
+
+2. **SQLAlchemy ORM Models (`backend/app/core/events/inbox.py`):**
+   - `InboxStatus` enum: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `DEAD_LETTER`.
+   - `ConsumerInbox`: mapped ORM model for deduplication tracking.
+   - `OrderSummaryProjection`: mapped read-model table for domain projection mutations.
+   - `get_inbox_record`: async query helper with optional `for_update=True` lock.
+
+3. **Asynchronous Consumer Engine (`backend/app/core/events/consumer.py`):**
+   - **`BaseKafkaConsumer` implementing Strategy A ACID Reliability:**
+     - Enforces single ACID database transaction enclosing inbox claim and domain business mutation.
+     - **Offset Commit Guarantee:** Kafka offset is manually committed strictly AFTER database transaction commits.
+     - **Idempotent Replay Handling:** Duplicate deliveries detect existing `SUCCEEDED` status in `consumer_inbox`, skip business mutations, and immediately commit offset.
+     - **Crash Recovery:** If consumer crashes between DB commit and Kafka offset commit, re-delivered event hits the deduplication check, skips domain mutation, and safely commits offset.
+     - **Durable Exponential Backoff & Jitter:** Transient errors use bounded backoff $T_{backoff} = \min(300, 1.0 \times 2^{retry\_count} + \text{jitter})$ with uniform jitter $[0, 2.0)$ seconds.
+     - **Authoritative Retry Threshold:** Configured to `max_retries = 5`.
+     - **Dead-Letter Queue (DLQ) Routing:** Poison messages (corrupt JSON or schema violations) and retry-exhausted events are routed to `basket.events.dead-letter`.
+     - **DLQ Receipt Gate Invariant:** Original topic offset is committed strictly AFTER DLQ broker confirms durable receipt.
+     - **Error Sanitization:** Redacts passwords, tokens, API keys, bearer tokens, and card numbers; truncates to 1000 characters.
+     - **Production Safety Check:** Strictly rejects `MockKafkaConsumer` with `RuntimeError` in production environment.
+   - **`MockKafkaConsumer`:** In-memory mock with support for manual offsets, seeks, redeliveries, rebalance simulation, and poison message injection.
+
+4. **Domain Read-Model Consumer (`backend/app/modules/orders/consumer.py`):**
+   - `OrderProjectionConsumer`: Listens to `basket.events.orders` and `basket.events.payments` (group: `basket-order-projection`).
+   - Updates `order_summary_projections` in PostgreSQL with:
+     - Monotonic aggregate version checks: stale versions ($V_{incoming} \le V_{existing}$) are rejected without state regression.
+     - Terminal state protections: orders in `CONFIRMED` or `CANCELLED` states cannot regress to `PENDING_PAYMENT`; cancelled orders cannot be confirmed.
+     - Cross-topic ordering resilience: handles `payment.succeeded` arriving before `order.created` by buffering provisional projections without crashing.
+
+5. **Comprehensive Verification & Test Suite (`backend/tests/test_consumer.py`):**
+   - 19 new tests covering:
+     - Pure logic & backoff formula compliance.
+     - Error sanitization (tokens, Razorpay keys, passwords).
+     - Production safety checks rejecting mock consumers in production.
+     - Strategy A atomic processing success.
+     - Duplicate event deduplication skipping business mutations.
+     - Crash recovery after DB commit before offset commit.
+     - Business error transaction rollback (zero orphan mutations).
+     - Monotonic version transitions and stale version rejection.
+     - Terminal state protection (`CANCELLED` and `CONFIRMED`).
+     - Cross-topic ordering resilience (`payment.succeeded` before `order.created`).
+     - Poison message isolation and immediate DLQ routing.
+     - Retry exhaustion routing to DLQ after 5 attempts.
+     - DLQ broker failure preventing offset commit.
+     - Consumer start/stop lifecycle and batch polling.
+     - Multi-worker concurrent duplicate delivery race handling.
+   - **Full Test Suite:** 296 passed (277 baseline + 19 new Phase 3C tests).
+   - Single Alembic head `0010_consumer_inbox (head)`.
+   - Clean Ruff linting & formatting.
+   - `./scripts/verify-environment.sh` ALL VERIFICATION GATES PASSED CLEANLY.
+
+**Strict Scope Enforcement:**
+- Did NOT implement OpenSearch client or indexing (Phase 3D).
+- Did NOT implement search API or circuit breaker (Phase 3E/3F).
+- Did NOT push or commit without explicit review.
+
+### [2026-11-19 00:30 IST] — Developer A / Senior Distributed Systems Engineer — Phase 3C Final Three-Issue Audit Corrections Complete
+
+**Related branch / PR / task:**
+- Target Branch: `feature/phase3-consumer-reliability`
+- Merged Base: `origin/integration` commit `857256c` (PR #10)
+- Task: Phase 3C Final Reliability Audit Corrections (Durable Retry Scheduling, DLQ Crash-Window Idempotency, Aggregate Version Gaps & Reconciliation)
+
+**Three Issues Resolved:**
+
+1. **Durable Retry Scheduling & Hot Redelivery Loop Prevention:**
+   - Implemented partition-level pausing (`pause_partition`) and resuming (`resume_ready_partitions`) in `BaseKafkaConsumer` and `MockKafkaConsumer`.
+   - When a transient error occurs or when redelivering an unexpired retry (`next_attempt_at > now`), the failing partition is paused via `consumer.pause(TopicPartition)` and the fetch offset is rewound to the uncommitted record (`seek(TopicPartition, offset)`).
+   - Subsequent `poll_and_process_batch` loops skip paused partitions, completely eliminating hot redelivery and busy-polling loops.
+   - Unrelated partitions continue fetching and processing concurrently without obstruction.
+   - Survives worker crashes and restarts by persisting `next_attempt_at` in `consumer_inbox`. Restarted workers observe `next_attempt_at > now` and immediately pause the partition.
+   - Safely handles consumer rebalances by isolating pause state to specific `TopicPartition` instances.
+
+2. **DLQ Crash-Window Idempotency Across All 4 Boundaries:**
+   - Added `dlq_published_at: DateTime(timezone=True)` column to `consumer_inbox` (migration `0010_consumer_inbox.py` and SQLAlchemy model).
+   - Enforced a strict 4-step sequence for Dead-Letter Queue publication:
+     - **Step A:** In an isolated DB transaction, record intent: `status = 'DEAD_LETTER'`, `dlq_published_at = NULL`.
+     - **Step B:** Publish to DLQ broker using deterministic UUIDv5 (`uuid.uuid5(uuid.NAMESPACE_DNS, f"dlq:{consumer_group}:{topic}:{partition}:{offset}")`) and await broker ACK.
+     - **Step C:** In a DB transaction, update `dlq_published_at = now()`, `processed_at = now()`.
+     - **Step D:** Commit Kafka offset strictly AFTER DLQ broker receipt and DB confirmation.
+   - On redelivery after crash:
+     - If `dlq_published_at IS NOT NULL`: skips publishing to DLQ broker entirely (0 duplicate messages to broker) and immediately commits Kafka offset.
+     - If `dlq_published_at IS NULL`: resumes DLQ send with identical deterministic UUIDv5, ensuring downstream deduplication.
+   - Verified crash tests at every boundary: before Step A, between A and B, between B and C, between C and D, and for poison messages.
+
+3. **Aggregate Version Gaps, Durable Deferral & Reconciliation:**
+   - Analyzed event payloads in BASKET: events represent partial/incremental state mutations (e.g. `order.created` has items/tax lines; `order.confirmed` has capture ID and status). Silently dropping missing older events results in permanent loss of intermediate data.
+   - Implemented version gap detection: detects when $V_{incoming} > V_{current} + 1$.
+   - Durable Deferral: for non-terminal gaps, optional gap deferral raises `OrderVersionGapError` to allow in-flight preceding events to arrive before proceeding.
+   - Reconciliation Engine: when delayed preceding events ($V_{delayed} \le V_{current}$) arrive:
+     - Reconciles and backfills missing baseline data (`item_count`, `total_payable_paise`, order number) into the projection.
+     - Maintains strict irreversible terminal state protections (orders in `CONFIRMED` or `CANCELLED` never regress to `PENDING_PAYMENT`; cancelled orders can never be confirmed).
+     - Handles cross-topic ordering resilience between `basket.events.orders` and `basket.events.payments` (`payment.succeeded` before `order.created` reconciles order details while preserving payment confirmation).
+
+**Verification Results:**
+- **Full Test Suite:** 316 passed (39 comprehensive consumer tests).
+- Single Alembic head `0010_consumer_inbox (head)`.
+- Clean Ruff linting & formatting (0 errors, 93 files clean).
+- Alembic downgrade and upgrade verified cleanly against PostgreSQL.
+- `./scripts/verify-environment.sh` verified.
+
+**Strict Scope Enforcement:**
+- Did NOT commit, push, or merge.
+- Did NOT implement OpenSearch client or indexing (Phase 3D).
+
+**Status:** PHASE 3C AUDIT CORRECTIONS COMPLETE & FULLY VERIFIED. Ready for user inspection.

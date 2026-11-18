@@ -230,10 +230,32 @@ sequenceDiagram
 #### Crash Scenario Between DB Commit and Offset Commit (Strategy A):
 - If the consumer process crashes after the PostgreSQL transaction commits but before `commit_offset()` completes in Kafka:
 - Upon consumer restart, Kafka re-delivers the exact same record.
-- The consumer begins a transaction and attempts `INSERT INTO consumer_inbox ... ON CONFLICT DO NOTHING`.
-- The insertion affects 0 rows because `(consumer_group, event_id)` already exists in the database.
-- The consumer detects the conflict, skips executing any duplicate business logic, rolls back the empty transaction, and immediately calls `commit_offset()`.
+- The consumer begins a transaction and attempts `INSERT INTO consumer_inbox ... ON CONFLICT DO NOTHING` (or queries `consumer_inbox` FOR UPDATE).
+- The consumer detects the row already exists in `SUCCEEDED` status, skips executing any duplicate business logic, rolls back the empty transaction, and immediately calls `commit_offset()`.
 - **Guarantee:** Business side effects are executed **effectively exactly once**.
+
+#### Durable Retry Scheduling & Partition Pausing (Strategy A):
+- When a transient error occurs during event processing:
+  1. The consumer computes the bounded exponential backoff with full jitter and records `status = 'FAILED'`, `retry_count += 1`, and `next_attempt_at` in `consumer_inbox`.
+  2. The consumer **pauses the failing partition** via `consumer.pause(TopicPartition)` and rewinds the fetch offset to the uncommitted record (`seek(TopicPartition, record.offset)`).
+  3. **No Hot Redelivery Loops:** Because the partition is paused, subsequent consumer poll loops completely skip fetching from this partition until `next_attempt_at` is reached.
+  4. **Non-Blocking Partition Isolation:** Other assigned partitions are NOT paused and continue polling and processing without interruption.
+  5. **Crash & Restart Recovery:** `next_attempt_at` is persisted in PostgreSQL. If the consumer crashes and restarts before the scheduled retry time, the restarted consumer polls the uncommitted record, inspects `consumer_inbox`, observes `next_attempt_at > now()`, and immediately pauses the partition until the persisted retry time.
+  6. **Automatic Resumption:** At the start of each poll batch, `resume_ready_partitions()` checks active paused partitions; any partition whose scheduled retry backoff has elapsed is resumed via `consumer.resume(TopicPartition)`.
+  7. **Safe Rebalances:** Partition pause and resume state is tracked per `TopicPartition`. Rebalance revocations safely clear in-memory partition pause records without affecting other partitions.
+
+#### Dead-Letter Queue (DLQ) Crash-Window Idempotency (Strategy A):
+When an event encounters unparseable poison data or exhausts maximum retries (>= 5), it is routed to the DLQ (`basket.events.dead-letter`). To prevent uncontrolled duplicate DLQ publications across crashes, the consumer executes a strict 4-step sequence:
+1. **Step A (Record Intent in Database):** In an isolated database transaction, update `consumer_inbox` to `status = 'DEAD_LETTER'` with `dlq_published_at = NULL` and commit.
+2. **Step B (Publish to DLQ Broker):** Publish the dead-letter envelope to Kafka using a **deterministic envelope ID** (`uuid.uuid5(uuid.NAMESPACE_DNS, f"dlq:{consumer_group}:{topic}:{partition}:{offset}")`) and await broker ACK.
+3. **Step C (Confirm Publication in Database):** In a database transaction, update `consumer_inbox.dlq_published_at = now()` and commit.
+4. **Step D (Commit Kafka Offset):** Manually commit the original Kafka record offset.
+
+**Crash Recovery Across DLQ Boundaries:**
+- **Crash before Step A:** No DB state or DLQ message. On redelivery, event is retried normally.
+- **Crash between Step A and Step B:** DB has `status = 'DEAD_LETTER'` and `dlq_published_at IS NULL`. On redelivery, consumer resumes DLQ flow (Step B).
+- **Crash between Step B and Step C:** Broker received DLQ message, but DB has `dlq_published_at IS NULL`. On redelivery, consumer re-sends to DLQ. Because the envelope ID is derived deterministically via UUIDv5, duplicate publications carry identical IDs, enabling downstream deduplication.
+- **Crash between Step C and Step D:** DB has `status = 'DEAD_LETTER'` and `dlq_published_at IS NOT NULL`. On redelivery, consumer detects `dlq_published_at IS NOT NULL`, **skips broker publication entirely**, and immediately commits the Kafka offset. Broker flooding is prevented.
 
 ### 3.2 Strategy B: OpenSearch Derived Read-Model Consumers
 OpenSearch is an external, eventual-consistency document store. The consumer executes a two-phase idempotent sequence:
@@ -351,6 +373,29 @@ sequenceDiagram
   - If a consumer on `payments` receives `payment.succeeded` for an `order_id` before the consumer on `orders` has processed `order.created`, the consumer must not block or crash.
   - Consumers implement non-blocking eventual consistency: they buffer pending payment ledger projections or record payment facts against unresolved order references.
   - **Terminal-State Protections:** State machines enforce irreversible terminal transitions. An order in state `CONFIRMED` can never regress to `PENDING_PAYMENT`, even if a delayed `order.created` event is processed late. An order in state `CANCELLED` can never be confirmed.
+
+### 6.2 Aggregate Version Gaps, Incremental Payloads & Reconciliation
+In BASKET, domain events represent **incremental state mutations** rather than full database snapshots:
+- `order.created` (v1) carries full baseline details (order lines, quote reference, tax breakdown, and item counts).
+- `order.confirmed` (v2) carries status changes (`CONFIRMED`, `payment_status = SUCCEEDED`) and `fulfilling_capture_id`, but does NOT duplicate line items.
+- `order.cancelled` (v2/v3) carries cancellation status and reason.
+
+#### The Danger of Silently Skipping Older Versions:
+If an event arrives with an aggregate version gap (e.g. version 3 arrives when the consumer has only processed version 1, or version 2 arrives before version 1):
+- A naive monotonic check would advance the projection's aggregate version to 3, and subsequently reject version 2 as "stale" ($2 \le 3$).
+- Because version 2 contains state transitions or fields omitted from version 3, silently dropping version 2 results in **permanent loss of intermediate data**.
+- *Exception:* Terminal states take precedence over non-terminal states. If version 3 is `CANCELLED`, rejecting a delayed version 2's request to set `CONFIRMED` is necessary to protect the terminal state invariant.
+
+#### Gap Detection, Durable Deferral & Reconciliation Strategy:
+1. **Gap Detection:** When an incoming event has $V_{incoming} > V_{current} + 1$:
+   - If the event is non-terminal (e.g. `order.confirmed` arriving before `order.created`), the consumer detects the version gap.
+   - When gap deferral is enabled (`enable_gap_deferral=True`), the consumer defers processing by scheduling a retry backoff (via `OrderVersionGapError`), pausing the partition and giving the in-flight preceding event a window to arrive in-order.
+2. **Reconciliation Fallback (State Reconstitution):**
+   - If the preceding event is delayed beyond the deferral window or gap deferral is bypassed, the projection is created/advanced to $V_{incoming}$ with available payload data.
+   - When the delayed preceding event ($V_{delayed} \le V_{current}$) eventually arrives, the consumer **reconciles** rather than silently dropping it:
+     - Missing baseline attributes (e.g. `item_count`, `total_payable_paise`, order number) are backfilled into the existing projection.
+     - Terminal status protections are strictly maintained (e.g. `CONFIRMED` or `CANCELLED` is never regressed to `PENDING_PAYMENT`).
+     - Reconciliation is durably audited in PostgreSQL logs and projections.
 
 ### 6.2 Aggregate Ownership & Partition Key Mapping
 
