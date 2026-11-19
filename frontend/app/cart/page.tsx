@@ -809,7 +809,7 @@ export default function CartPage() {
                       >
                         {isReleasing ? "Releasing..." : "Release Hold"}
                       </Button>
-                      <Link href={`/checkout?reservation_id=${reservation.id}`}>
+                      <Link href={`/checkout?reservation_id=${reservation.id}&quote_id=${reservation.quote_id}`}>
                         <Button
                           size="sm"
                           className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-8 px-3"

@@ -45,6 +45,26 @@ class OrderRepository:
         res = await self.session.execute(stmt)
         return res.scalar_one_or_none()
 
+    async def get_reservation_by_id(
+        self, reservation_id: uuid.UUID
+    ) -> InventoryReservation | None:
+        stmt = (
+            select(InventoryReservation)
+            .where(InventoryReservation.id == reservation_id)
+            .options(selectinload(InventoryReservation.items))
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
+    async def get_quote_by_id(self, quote_id: uuid.UUID) -> CheckoutQuote | None:
+        stmt = (
+            select(CheckoutQuote)
+            .where(CheckoutQuote.id == quote_id)
+            .options(selectinload(CheckoutQuote.items))
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
+
     async def get_customer_address(
         self, address_id: uuid.UUID, customer_id: uuid.UUID
     ) -> Address | None:
@@ -54,6 +74,30 @@ class OrderRepository:
         )
         res = await self.session.execute(stmt)
         return res.scalar_one_or_none()
+
+    async def get_default_customer_address(
+        self, customer_id: uuid.UUID
+    ) -> Address | None:
+        stmt = (
+            select(Address)
+            .where(
+                Address.user_id == customer_id,
+                Address.is_default.is_(True),
+            )
+            .limit(1)
+        )
+        res = await self.session.execute(stmt)
+        addr = res.scalar_one_or_none()
+        if addr:
+            return addr
+        stmt_fallback = (
+            select(Address)
+            .where(Address.user_id == customer_id)
+            .order_by(Address.created_at.desc())
+            .limit(1)
+        )
+        res_fallback = await self.session.execute(stmt_fallback)
+        return res_fallback.scalar_one_or_none()
 
     async def get_idempotency_record(
         self,

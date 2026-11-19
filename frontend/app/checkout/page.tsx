@@ -18,19 +18,23 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RazorpayPaymentButton } from "@/components/checkout/razorpay-modal";
+import { apiClient, ApiClientError } from "@/lib/api/client";
 import { createOrder, getOrder } from "@/lib/api/orders";
 import { formatPrice } from "@/lib/utils";
-import type { Order, PaymentVerifyResponse } from "@/types";
+import type { Address, Order, PaymentVerifyResponse } from "@/types";
 
 function CheckoutContent() {
   const searchParams = useSearchParams();
   const reservationIdParam = searchParams.get("reservation_id");
+  const quoteIdParam = searchParams.get("quote_id");
   const orderIdParam = searchParams.get("order_id");
 
   const [order, setOrder] = useState<Order | null>(null);
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [derivedQuoteId, setDerivedQuoteId] = useState<string | null>(null);
 
   // Payment UI states
   const [verifyResponse, setVerifyResponse] = useState<PaymentVerifyResponse | null>(null);
@@ -40,6 +44,8 @@ function CheckoutContent() {
 
   // Address state for new order creation
   const [addressId, setAddressId] = useState("");
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
 
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -66,6 +72,49 @@ function CheckoutContent() {
       fetchOrderDetails(orderIdParam).finally(() => setIsLoadingOrder(false));
     }
   }, [orderIdParam, fetchOrderDetails]);
+
+  // Fetch saved customer addresses if authenticated
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingAddresses(true);
+    apiClient
+      .getAddresses()
+      .then((data) => {
+        if (isMounted && Array.isArray(data) && data.length > 0) {
+          setAddresses(data);
+          const defaultAddr = data.find((a) => a.is_default) || data[0];
+          if (defaultAddr) {
+            setAddressId(defaultAddr.id);
+          }
+        }
+      })
+      .catch(() => {
+        // Guests or unauthenticated sessions do not have saved addresses
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingAddresses(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // If quote_id not passed in query params, fetch reservation to derive quote_id
+  useEffect(() => {
+    if (reservationIdParam && !quoteIdParam) {
+      apiClient
+        .getReservation(reservationIdParam)
+        .then((res) => {
+          if (res?.quote_id) {
+            setDerivedQuoteId(res.quote_id);
+          }
+        })
+        .catch(() => {
+          // If unauthenticated or expired, backend order creation will handle authority
+        });
+    }
+  }, [reservationIdParam, quoteIdParam]);
 
   // Clean up polling timer on unmount
   useEffect(() => {
@@ -124,14 +173,36 @@ function CheckoutContent() {
     }
     setIsCreatingOrder(true);
     setError(null);
+    setFieldErrors({});
+
     try {
+      const trimmedAddressId = addressId.trim();
       const created = await createOrder({
         reservation_id: reservationIdParam,
-        delivery_address_id: addressId.trim() || undefined,
+        quote_id: quoteIdParam || derivedQuoteId || undefined,
+        delivery_address_id: trimmedAddressId || undefined,
       });
       setOrder(created);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create order from reservation.");
+      if (err instanceof ApiClientError) {
+        if (err.status === 422 && Array.isArray(err.details)) {
+          const fieldMap: Record<string, string> = {};
+          for (const detail of err.details as Array<{ loc?: (string | number)[]; msg?: string }>) {
+            if (detail.loc && detail.msg) {
+              const field = detail.loc.filter((x) => x !== "body").join(".");
+              if (field) {
+                fieldMap[field] = detail.msg;
+              }
+            }
+          }
+          if (Object.keys(fieldMap).length > 0) {
+            setFieldErrors(fieldMap);
+          }
+        }
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create order from reservation.");
+      }
     } finally {
       setIsCreatingOrder(false);
     }
@@ -261,21 +332,74 @@ function CheckoutContent() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-xs text-muted-foreground">
-              Your inventory is currently locked in PostgreSQL. Provide your delivery address ID (optional) to construct an immutable order snapshot.
+              Your inventory is currently locked in PostgreSQL. Choose a saved delivery address or proceed with standard guest delivery to construct an immutable order snapshot.
             </p>
-            <div className="space-y-2">
+
+            {/* Saved Addresses Dropdown (for authenticated users with saved addresses) */}
+            {addresses.length > 0 && (
+              <div className="space-y-1.5">
+                <label htmlFor="addressSelect" className="text-xs font-medium text-foreground">
+                  Saved Delivery Addresses
+                </label>
+                <select
+                  id="addressSelect"
+                  value={addressId}
+                  onChange={(e) => {
+                    setAddressId(e.target.value);
+                    setFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.delivery_address_id;
+                      return next;
+                    });
+                  }}
+                  className="w-full text-xs p-2.5 rounded-md border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  {addresses.map((addr) => (
+                    <option key={addr.id} value={addr.id}>
+                      {addr.recipient_name} — {addr.line1}, {addr.city}, {addr.state} {addr.postal_code}
+                      {addr.is_default ? " (Default)" : ""}
+                    </option>
+                  ))}
+                  <option value="">Guest / Default Delivery Address</option>
+                </select>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
               <label htmlFor="addressId" className="text-xs font-medium text-foreground">
-                Delivery Address ID (Optional for Guest/Sandbox)
+                Delivery Address ID {addresses.length > 0 ? "(Selected UUID)" : "(Optional for Guest/Sandbox)"}
               </label>
               <input
                 id="addressId"
                 type="text"
-                placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
+                placeholder={addresses.length > 0 ? "Address UUID" : "Leave empty for guest checkout or enter saved address UUID"}
                 value={addressId}
-                onChange={(e) => setAddressId(e.target.value)}
-                className="w-full text-xs p-2.5 rounded-md border bg-background font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                onChange={(e) => {
+                  setAddressId(e.target.value);
+                  setFieldErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.delivery_address_id;
+                    return next;
+                  });
+                }}
+                className={`w-full text-xs p-2.5 rounded-md border bg-background font-mono focus:outline-none focus:ring-1 ${
+                  fieldErrors.delivery_address_id
+                    ? "border-red-500 focus:ring-red-500"
+                    : "focus:ring-emerald-500"
+                }`}
               />
+              {fieldErrors.delivery_address_id && (
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1 font-medium">
+                  {fieldErrors.delivery_address_id}
+                </p>
+              )}
+              {addresses.length === 0 && !fieldErrors.delivery_address_id && (
+                <p className="text-[11px] text-muted-foreground">
+                  Guest checkout: Leave this field empty. Standard delivery details will be used automatically.
+                </p>
+              )}
             </div>
+
             <Button
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-10"
               onClick={handleCreateOrder}

@@ -129,7 +129,7 @@ class ApiClient {
         }
 
         const code = errorData?.error?.code || `HTTP_${response.status}`;
-        const message =
+        let message =
           errorData?.error?.message ||
           `API request failed with status ${response.status}`;
         const requestId =
@@ -137,6 +137,24 @@ class ApiClient {
           response.headers.get("x-request-id") ||
           undefined;
         const details = errorData?.error?.details || [];
+
+        // If backend returned generic validation message and details array contains field errors, enrich message
+        if (
+          code === "VALIDATION_ERROR" &&
+          Array.isArray(details) &&
+          details.length > 0 &&
+          message === "The request payload validation failed."
+        ) {
+          const detailMsgs = (details as Array<{ loc?: (string | number)[]; msg?: string }>)
+            .map((d) => {
+              const field = d.loc?.filter((x) => x !== "body").join(".") || "field";
+              return `${field}: ${d.msg || "invalid value"}`;
+            })
+            .filter(Boolean);
+          if (detailMsgs.length > 0) {
+            message = `The request payload validation failed: ${detailMsgs.join("; ")}`;
+          }
+        }
 
         throw new ApiClientError(
           message,

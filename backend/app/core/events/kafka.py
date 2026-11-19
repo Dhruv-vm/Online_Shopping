@@ -14,6 +14,59 @@ from app.core.events.envelope import EventEnvelope
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "AioKafkaEventProducer",
+    "EventProducer",
+    "KafkaConnectionError",
+    "KafkaEventError",
+    "KafkaPublishError",
+    "MockKafkaProducer",
+    "build_kafka_auth_kwargs",
+    "build_kafka_ssl_context",
+    "get_kafka_producer",
+]
+
+
+def build_kafka_ssl_context(config_settings: Settings) -> ssl.SSLContext | None:
+    """Build SSLContext for TLS/SASL_SSL Kafka connections."""
+    protocol = config_settings.KAFKA_SECURITY_PROTOCOL.upper()
+    if protocol not in ("SSL", "SASL_SSL"):
+        return None
+
+    cafile = config_settings.KAFKA_SSL_CA_LOCATION
+    context = ssl.create_default_context(cafile=cafile if cafile else None)
+    if (
+        config_settings.KAFKA_SSL_CERTIFICATE_LOCATION
+        and config_settings.KAFKA_SSL_KEY_LOCATION
+    ):
+        context.load_cert_chain(
+            certfile=config_settings.KAFKA_SSL_CERTIFICATE_LOCATION,
+            keyfile=config_settings.KAFKA_SSL_KEY_LOCATION,
+        )
+    return context
+
+
+def build_kafka_auth_kwargs(config_settings: Settings) -> dict[str, Any]:
+    """Build security and authentication kwargs for AIOKafkaProducer and AIOKafkaConsumer."""
+    protocol = config_settings.KAFKA_SECURITY_PROTOCOL.upper()
+    kwargs: dict[str, Any] = {
+        "security_protocol": protocol,
+    }
+
+    ssl_ctx = build_kafka_ssl_context(config_settings)
+    if ssl_ctx is not None:
+        kwargs["ssl_context"] = ssl_ctx
+
+    if protocol in ("SASL_SSL", "SASL_PLAINTEXT"):
+        kwargs["sasl_mechanism"] = config_settings.KAFKA_SASL_MECHANISM
+        kwargs["sasl_plain_username"] = config_settings.KAFKA_SASL_USERNAME
+        if config_settings.KAFKA_SASL_PASSWORD:
+            kwargs["sasl_plain_password"] = (
+                config_settings.KAFKA_SASL_PASSWORD.get_secret_value()
+            )
+
+    return kwargs
+
 
 class KafkaEventError(Exception):
     """Base exception for Kafka event operations."""
@@ -73,22 +126,7 @@ class AioKafkaEventProducer(EventProducer):
         self._started = False
 
     def _build_ssl_context(self) -> ssl.SSLContext | None:
-        protocol = self._settings.KAFKA_SECURITY_PROTOCOL.upper()
-        if protocol not in ("SSL", "SASL_SSL"):
-            return None
-
-        context = ssl.create_default_context(
-            cafile=self._settings.KAFKA_SSL_CA_LOCATION
-        )
-        if (
-            self._settings.KAFKA_SSL_CERTIFICATE_LOCATION
-            and self._settings.KAFKA_SSL_KEY_LOCATION
-        ):
-            context.load_cert_chain(
-                certfile=self._settings.KAFKA_SSL_CERTIFICATE_LOCATION,
-                keyfile=self._settings.KAFKA_SSL_KEY_LOCATION,
-            )
-        return context
+        return build_kafka_ssl_context(self._settings)
 
     async def start(self) -> None:
         if self._started and self._producer is not None:
@@ -97,12 +135,11 @@ class AioKafkaEventProducer(EventProducer):
         if not self._settings.KAFKA_BOOTSTRAP_SERVERS:
             raise KafkaConnectionError("KAFKA_BOOTSTRAP_SERVERS is not configured")
 
-        protocol = self._settings.KAFKA_SECURITY_PROTOCOL.upper()
-        ssl_ctx = self._build_ssl_context()
-
         acks: Any = self._settings.KAFKA_PRODUCER_ACKS
         if isinstance(acks, str) and (acks.isdigit() or acks == "-1"):
             acks = int(acks)
+
+        auth_kwargs = build_kafka_auth_kwargs(self._settings)
 
         kwargs: dict[str, Any] = {
             "bootstrap_servers": self._settings.KAFKA_BOOTSTRAP_SERVERS,
@@ -112,19 +149,8 @@ class AioKafkaEventProducer(EventProducer):
                 self._settings.KAFKA_PRODUCER_TIMEOUT_SECONDS * 1000
             ),
             "retry_backoff_ms": 100,
-            "security_protocol": protocol,
+            **auth_kwargs,
         }
-
-        if ssl_ctx is not None:
-            kwargs["ssl_context"] = ssl_ctx
-
-        if protocol in ("SASL_SSL", "SASL_PLAINTEXT"):
-            kwargs["sasl_mechanism"] = self._settings.KAFKA_SASL_MECHANISM
-            kwargs["sasl_plain_username"] = self._settings.KAFKA_SASL_USERNAME
-            if self._settings.KAFKA_SASL_PASSWORD:
-                kwargs["sasl_plain_password"] = (
-                    self._settings.KAFKA_SASL_PASSWORD.get_secret_value()
-                )
 
         try:
             self._producer = AIOKafkaProducer(**kwargs)

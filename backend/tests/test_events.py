@@ -578,6 +578,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
         )
         assert s.has_kafka is True
         assert s.KAFKA_BOOTSTRAP_SERVERS == "basket-kafka-prod.aivencloud.com:21345"
@@ -594,6 +595,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
             KAFKA_PRODUCER_ACKS="all",
         )
         assert s.KAFKA_PRODUCER_ACKS == "all"
@@ -608,6 +610,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
             KAFKA_PRODUCER_ACKS="-1",
         )
         assert s_neg1.KAFKA_PRODUCER_ACKS == "-1"
@@ -623,6 +626,7 @@ class TestKafkaConfigValidation:
                 RAZORPAY_KEY_SECRET="productionsecret16chars",
                 RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
                 KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+                KAFKA_SECURITY_PROTOCOL="SSL",
                 KAFKA_PRODUCER_ACKS="0",
             )
 
@@ -637,6 +641,7 @@ class TestKafkaConfigValidation:
                 RAZORPAY_KEY_SECRET="productionsecret16chars",
                 RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
                 KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+                KAFKA_SECURITY_PROTOCOL="SSL",
                 KAFKA_PRODUCER_ACKS="1",
             )
 
