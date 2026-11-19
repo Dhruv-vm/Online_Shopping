@@ -200,8 +200,129 @@ export interface RetailerOverview {
   verification_status: string;
   rating: number;
   total_listings: number;
+  active_listings: number;
   total_inventory_units: number;
+  low_stock_alerts: number;
+  out_of_stock_alerts: number;
   recent_orders_count: number;
+}
+
+export interface CatalogueLookupVariant {
+  id: string;
+  name: string;
+  sku: string;
+  attributes: Record<string, any>;
+  is_active: boolean;
+  is_already_listed: boolean;
+  existing_listing_id?: string | null;
+}
+
+export interface CatalogueLookupProduct {
+  id: string;
+  name: string;
+  brand: string;
+  category_id: string;
+  category_name: string;
+  description: string | null;
+  image_url: string | null;
+  variants: CatalogueLookupVariant[];
+}
+
+export interface RetailerListingInventory {
+  on_hand_quantity: number;
+  reserved_quantity: number;
+  available_quantity: number;
+  low_stock_threshold: number;
+  is_low_stock: boolean;
+  is_out_of_stock: boolean;
+}
+
+export interface RetailerListingItem {
+  id: string;
+  retailer_id: string;
+  variant_id: string;
+  product_id: string;
+  product_name: string;
+  brand: string;
+  category_name: string;
+  variant_name: string;
+  variant_sku: string;
+  variant_attributes: Record<string, any>;
+  seller_sku: string | null;
+  original_price_paise: number;
+  selling_price_paise: number;
+  currency: string;
+  hsn_code: string | null;
+  gst_rate_basis_points: number | null;
+  is_tax_verified: boolean;
+  is_active: boolean;
+  image_url: string | null;
+  inventory: RetailerListingInventory;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetailerListingCreatePayload {
+  variant_id: string;
+  seller_sku?: string;
+  original_price_paise: number;
+  selling_price_paise: number;
+  hsn_code?: string;
+  gst_rate_basis_points?: number;
+  is_active?: boolean;
+  initial_on_hand_quantity: number;
+  low_stock_threshold?: number;
+}
+
+export interface RetailerListingUpdatePayload {
+  seller_sku?: string | null;
+  original_price_paise?: number;
+  selling_price_paise?: number;
+  hsn_code?: string | null;
+  gst_rate_basis_points?: number | null;
+  is_active?: boolean;
+  low_stock_threshold?: number;
+}
+
+export interface RetailerInventoryItem {
+  listing_id: string;
+  product_name: string;
+  variant_name: string;
+  sku: string;
+  seller_sku: string | null;
+  selling_price_paise: number;
+  on_hand_quantity: number;
+  reserved_quantity: number;
+  available_quantity: number;
+  low_stock_threshold: number;
+  is_low_stock: boolean;
+  is_out_of_stock: boolean;
+  is_active: boolean;
+  updated_at: string;
+}
+
+export interface InventorySummaryStats {
+  total_items: number;
+  total_on_hand_units: number;
+  total_reserved_units: number;
+  total_available_units: number;
+  low_stock_count: number;
+  out_of_stock_count: number;
+}
+
+export interface RetailerInventoryDashboard {
+  summary: InventorySummaryStats;
+  items: RetailerInventoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface RetailerInventoryAdjustmentPayload {
+  adjustment_type: "SET" | "DELTA";
+  quantity: number;
+  low_stock_threshold?: number;
+  reason?: string;
 }
 
 export interface AdminOverview {

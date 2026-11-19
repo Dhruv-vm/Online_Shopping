@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.6.1] — 2026-11-19
+
+### Added
+- **Phase 5B Retailer Store Listings, Variant Pricing & Inventory Management:**
+  - **Alembic Migration 0013 (`0013_retailer_inventory`):** Added `low_stock_threshold` (`INTEGER`, default 10, non-negative check constraint) to `store_inventory`.
+  - **Catalogue Variant Lookup:** Mounted `GET /api/v1/retailer/catalogue/products` for authenticated retailers to browse canonical products and variants with automatic deduplication (`is_already_listed`, `existing_listing_id`).
+  - **Store Listings CRUD & Strict Anti-IDOR:** Mounted `GET /api/v1/retailer/listings`, `POST /api/v1/retailer/listings`, `GET /api/v1/retailer/listings/{id}`, `PUT /api/v1/retailer/listings/{id}`, and `DELETE /api/v1/retailer/listings/{id}`. Identity is cryptographically derived from the authenticated JWT session; cross-tenant access returns HTTP 404.
+  - **Variant Pricing Rules & MRP Invariants:** Independent retailer pricing per variant with strict validation enforcing `selling_price <= original_price` (`INVALID_PRICING`), without mutating canonical catalogue product data.
+  - **Warehouse Inventory Console & Concurrency Protection:** Mounted `GET /api/v1/retailer/inventory`, `POST /api/v1/retailer/listings/{id}/inventory`, and `POST /api/v1/retailer/inventory/bulk-adjust`. All adjustments use `SELECT ... FOR UPDATE` row locks, enforce non-negative stock invariants, and forbid reducing on-hand inventory below active customer holds (`CANNOT_REDUCE_BELOW_RESERVED`).
+  - **Low-Stock Alerting:** Configurable `low_stock_threshold` triggers dynamic `is_low_stock` flags, inventory dashboard filters, and warning alerts on the retailer overview console.
+  - **Frontend Pages & Consoles:** Implemented `/retailer/listings` (filter/search table and price edit modal), `/retailer/listings/new` (canonical product/variant picker), and `/retailer/inventory` (warehouse stock console with 6 KPI summary cards, filter tabs, and SET/DELTA stock adjustment modals).
+  - **Automated Verification:** Added 7 comprehensive tests in `test_retailer_listings_inventory.py` covering RBAC, catalogue lookup, listing creation, anti-IDOR isolation, pricing hierarchies, customer hold safety, and concurrent race condition protections. Added 4 unit test suites in `portals.test.ts`. Full backend (379 tests) and frontend (67 tests) suites green.
+
+---
+
 ## [0.6.0] — 2026-11-19
 
 ### Added

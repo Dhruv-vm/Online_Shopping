@@ -193,11 +193,45 @@ export default function RetailerLayout({
                 </div>
 
                 <Link
+                  href="/retailer/listings"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname.startsWith("/retailer/listings")
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Layers className="h-4 w-4" />
+                    Store Listings
+                  </div>
+                  {pathname.startsWith("/retailer/listings") && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <Link
+                  href="/retailer/inventory"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname === "/retailer/inventory"
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Package className="h-4 w-4" />
+                    Stock & Inventory
+                  </div>
+                  {pathname === "/retailer/inventory" && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                  Storefront & Orders
+                </div>
+
+                <Link
                   href="/products"
                   className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Layers className="h-4 w-4" />
-                  Product Catalogue
+                  Public Marketplace
                 </Link>
 
                 <Link
@@ -205,7 +239,7 @@ export default function RetailerLayout({
                   className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <Package className="h-4 w-4" />
-                  Orders & Returns
+                  Purchases & Orders
                 </Link>
               </nav>
             </div>

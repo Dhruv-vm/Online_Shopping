@@ -150,4 +150,179 @@ describe("Admin and Retailer Portal API Client integration", () => {
     assert.equal(verifyCalled, true);
     assert.equal(verified.verification_status, "VERIFIED");
   });
+
+  it("Retailer Listings and Inventory API Client methods invoke endpoints correctly", async () => {
+    let createCalled = false;
+    let adjustCalled = false;
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+
+      if (url.includes("/api/v1/retailer/catalogue/products")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "prod-1",
+              name: "Flagship Phone",
+              brand: "BASKET",
+              category_id: "cat-1",
+              category_name: "Smartphones",
+              description: "Latest model",
+              image_url: "https://example.com/img.jpg",
+              variants: [
+                {
+                  id: "var-1",
+                  name: "128GB Black",
+                  sku: "SKU-BLK-128",
+                  attributes: { color: "Black" },
+                  is_active: true,
+                  is_already_listed: false,
+                },
+              ],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/inventory") && init?.method === "POST") {
+        adjustCalled = true;
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.adjustment_type, "SET");
+        assert.equal(body.quantity, 50);
+        return new Response(
+          JSON.stringify({
+            listing_id: "list-1",
+            product_name: "Flagship Phone",
+            variant_name: "128GB Black",
+            sku: "SKU-BLK-128",
+            seller_sku: "STORE-SKU-01",
+            selling_price_paise: 499900,
+            on_hand_quantity: 50,
+            reserved_quantity: 2,
+            available_quantity: 48,
+            low_stock_threshold: 10,
+            is_low_stock: false,
+            is_out_of_stock: false,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/api/v1/retailer/listings") && init?.method === "POST") {
+        createCalled = true;
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.variant_id, "var-1");
+        assert.equal(body.selling_price_paise, 499900);
+        return new Response(
+          JSON.stringify({
+            id: "list-1",
+            retailer_id: "ret-1",
+            variant_id: "var-1",
+            product_id: "prod-1",
+            product_name: "Flagship Phone",
+            brand: "BASKET",
+            category_name: "Smartphones",
+            variant_name: "128GB Black",
+            variant_sku: "SKU-BLK-128",
+            variant_attributes: { color: "Black" },
+            seller_sku: "STORE-SKU-01",
+            original_price_paise: 549900,
+            selling_price_paise: 499900,
+            currency: "INR",
+            hsn_code: "8517",
+            gst_rate_basis_points: 1800,
+            is_tax_verified: true,
+            is_active: true,
+            image_url: null,
+            inventory: {
+              on_hand_quantity: 30,
+              reserved_quantity: 0,
+              available_quantity: 30,
+              low_stock_threshold: 5,
+              is_low_stock: false,
+              is_out_of_stock: false,
+            },
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/retailer/inventory") && (!init?.method || init?.method === "GET")) {
+        return new Response(
+          JSON.stringify({
+            summary: {
+              total_items: 1,
+              total_on_hand_units: 30,
+              total_reserved_units: 2,
+              total_available_units: 28,
+              low_stock_count: 0,
+              out_of_stock_count: 0,
+            },
+            items: [
+              {
+                listing_id: "list-1",
+                product_name: "Flagship Phone",
+                variant_name: "128GB Black",
+                sku: "SKU-BLK-128",
+                seller_sku: "STORE-SKU-01",
+                selling_price_paise: 499900,
+                on_hand_quantity: 30,
+                reserved_quantity: 2,
+                available_quantity: 28,
+                low_stock_threshold: 5,
+                is_low_stock: false,
+                is_out_of_stock: false,
+                is_active: true,
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+
+    // 1. Catalogue lookup
+    const prods = await apiClient.getRetailerCatalogueProducts({ search: "phone" });
+    assert.equal(prods.length, 1);
+    assert.equal(prods[0].name, "Flagship Phone");
+
+    // 2. Create listing
+    const listing = await apiClient.createRetailerListing({
+      variant_id: "var-1",
+      seller_sku: "STORE-SKU-01",
+      original_price_paise: 549900,
+      selling_price_paise: 499900,
+      initial_on_hand_quantity: 30,
+      low_stock_threshold: 5,
+    });
+    assert.equal(createCalled, true);
+    assert.equal(listing.id, "list-1");
+    assert.equal(listing.selling_price_paise, 499900);
+
+    // 3. Inventory dashboard
+    const invDash = await apiClient.getRetailerInventory();
+    assert.equal(invDash.summary.total_available_units, 28);
+    assert.equal(invDash.items.length, 1);
+
+    // 4. Adjust inventory
+    const adjusted = await apiClient.adjustRetailerInventory("list-1", {
+      adjustment_type: "SET",
+      quantity: 50,
+      low_stock_threshold: 10,
+    });
+    assert.equal(adjustCalled, true);
+    assert.equal(adjusted.on_hand_quantity, 50);
+    assert.equal(adjusted.available_quantity, 48);
+  });
 });

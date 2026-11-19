@@ -6,7 +6,7 @@ import {
   Store,
   Layers,
   Boxes,
-  ShoppingBag,
+  PlusCircle,
   Star,
   Power,
   RefreshCw,
@@ -16,6 +16,8 @@ import {
   MapPin,
   Phone,
   Mail,
+  AlertTriangle,
+  ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -142,6 +144,29 @@ export default function RetailerDashboardPage() {
         </div>
       )}
 
+      {/* Low Stock Warning Alert */}
+      {overview && (overview.low_stock_alerts > 0 || overview.out_of_stock_alerts > 0) && (
+        <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/30 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            <div className="text-sm">
+              <span className="font-semibold text-amber-900 dark:text-amber-200">
+                Inventory Alerts Detected:
+              </span>{" "}
+              <span className="text-amber-800 dark:text-amber-300">
+                You have {overview.low_stock_alerts} low-stock listing{overview.low_stock_alerts !== 1 ? "s" : ""}
+                {overview.out_of_stock_alerts > 0 ? ` and ${overview.out_of_stock_alerts} out-of-stock item(s)` : ""}.
+              </span>
+            </div>
+          </div>
+          <Link href="/retailer/inventory?filter=LOW_STOCK">
+            <Button size="sm" variant="outline" className="text-xs gap-1.5 border-amber-500/40 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40">
+              Review Stock <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="rounded-xl border bg-card p-4 shadow-xs">
@@ -171,9 +196,9 @@ export default function RetailerDashboardPage() {
             <Layers className="h-4 w-4 text-blue-600" />
           </div>
           <div className="text-xl font-bold text-foreground">
-            {overview ? overview.total_listings : "—"}
+            {overview ? `${overview.active_listings} / ${overview.total_listings}` : "—"}
           </div>
-          <span className="text-[11px] text-muted-foreground">Catalogue items</span>
+          <span className="text-[11px] text-muted-foreground">Published catalogue</span>
         </div>
 
         <div className="rounded-xl border bg-card p-4 shadow-xs">
@@ -184,7 +209,7 @@ export default function RetailerDashboardPage() {
           <div className="text-xl font-bold text-foreground">
             {overview ? overview.total_inventory_units.toLocaleString("en-IN") : "—"}
           </div>
-          <span className="text-[11px] text-muted-foreground">Units in inventory</span>
+          <span className="text-[11px] text-muted-foreground">Units across all SKUs</span>
         </div>
 
         <div className="rounded-xl border bg-card p-4 shadow-xs">
@@ -197,6 +222,57 @@ export default function RetailerDashboardPage() {
           </div>
           <span className="text-[11px] text-muted-foreground">Customer reviews</span>
         </div>
+      </div>
+
+      {/* Quick Action Navigation Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Link
+          href="/retailer/listings"
+          className="rounded-xl border bg-card p-5 shadow-xs hover:border-blue-500/50 hover:shadow-md transition-all group"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="h-10 w-10 rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 flex items-center justify-center">
+              <Layers className="h-5 w-5" />
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all" />
+          </div>
+          <h3 className="font-semibold text-foreground text-sm">Product Listings</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            View, price, and publish product variants in your store catalogue.
+          </p>
+        </Link>
+
+        <Link
+          href="/retailer/listings/new"
+          className="rounded-xl border bg-card p-5 shadow-xs hover:border-emerald-500/50 hover:shadow-md transition-all group"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center justify-center">
+              <PlusCircle className="h-5 w-5" />
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all" />
+          </div>
+          <h3 className="font-semibold text-foreground text-sm">Add Product to Store</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Browse platform catalogue products and list them with custom pricing.
+          </p>
+        </Link>
+
+        <Link
+          href="/retailer/inventory"
+          className="rounded-xl border bg-card p-5 shadow-xs hover:border-amber-500/50 hover:shadow-md transition-all group"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="h-10 w-10 rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 flex items-center justify-center">
+              <Boxes className="h-5 w-5" />
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-amber-600 group-hover:translate-x-0.5 transition-all" />
+          </div>
+          <h3 className="font-semibold text-foreground text-sm">Stock & Inventory</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Adjust on-hand inventory levels and configure low-stock alert thresholds.
+          </p>
+        </Link>
       </div>
 
       {/* Store Profile & Contact Summary Card */}

@@ -45,6 +45,13 @@ import type {
   RetailerOverview,
   RetailerProfile,
   RetailerRegisterPayload,
+  CatalogueLookupProduct,
+  RetailerListingItem,
+  RetailerListingCreatePayload,
+  RetailerListingUpdatePayload,
+  RetailerInventoryDashboard,
+  RetailerInventoryItem,
+  RetailerInventoryAdjustmentPayload,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -690,6 +697,95 @@ class ApiClient {
     return this.post<AdminRetailerListItem>(
       `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}/verify`,
       { status, rejection_reason: rejectionReason }
+    );
+  }
+
+  // ================= Retailer Listings & Inventory (Phase 5B) =================
+
+  public async getRetailerCatalogueProducts(params?: {
+    search?: string;
+    category_id?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<CatalogueLookupProduct[]> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.category_id) qs.set("category_id", params.category_id);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<CatalogueLookupProduct[]>(`/api/v1/retailer/catalogue/products${query}`);
+  }
+
+  public async listRetailerListings(params?: {
+    search?: string;
+    is_active?: boolean;
+    is_low_stock?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: RetailerListingItem[]; total: number; limit: number; offset: number }> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.is_active !== undefined) qs.set("is_active", String(params.is_active));
+    if (params?.is_low_stock !== undefined) qs.set("is_low_stock", String(params.is_low_stock));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<{ items: RetailerListingItem[]; total: number; limit: number; offset: number }>(
+      `/api/v1/retailer/listings${query}`
+    );
+  }
+
+  public async createRetailerListing(
+    payload: RetailerListingCreatePayload
+  ): Promise<RetailerListingItem> {
+    return this.post<RetailerListingItem>("/api/v1/retailer/listings", payload);
+  }
+
+  public async getRetailerListing(listingId: string): Promise<RetailerListingItem> {
+    return this.get<RetailerListingItem>(
+      `/api/v1/retailer/listings/${encodeURIComponent(listingId)}`
+    );
+  }
+
+  public async updateRetailerListing(
+    listingId: string,
+    payload: RetailerListingUpdatePayload
+  ): Promise<RetailerListingItem> {
+    return this.put<RetailerListingItem>(
+      `/api/v1/retailer/listings/${encodeURIComponent(listingId)}`,
+      payload
+    );
+  }
+
+  public async deleteRetailerListing(listingId: string): Promise<MessageResponse> {
+    return this.delete<MessageResponse>(
+      `/api/v1/retailer/listings/${encodeURIComponent(listingId)}`
+    );
+  }
+
+  public async getRetailerInventory(params?: {
+    search?: string;
+    status_filter?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<RetailerInventoryDashboard> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.status_filter) qs.set("status_filter", params.status_filter);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<RetailerInventoryDashboard>(`/api/v1/retailer/inventory${query}`);
+  }
+
+  public async adjustRetailerInventory(
+    listingId: string,
+    payload: RetailerInventoryAdjustmentPayload
+  ): Promise<RetailerInventoryItem> {
+    return this.post<RetailerInventoryItem>(
+      `/api/v1/retailer/listings/${encodeURIComponent(listingId)}/inventory`,
+      payload
     );
   }
 }
