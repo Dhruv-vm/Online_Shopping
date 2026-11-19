@@ -13,9 +13,12 @@
 | **Frontend Storefront** | Next.js 15.5 on Node 22 | Configured (`port: 3000`) | N/A (Client) | **ONLINE** (HTTP 200) | Development Plaintext / Proxy Ready | Compiled (11/11 pages static & dynamic) | Yes (Storefront UI) | **PASSED** (60/60 unit/integration tests) | **DEPLOYED & VERIFIED** |
 | **Backend API** | FastAPI / Uvicorn on Python 3.12 | Configured (`port: 8000`) | Internal Key Configured | **ONLINE** (HTTP 200) | Local / Reverse Proxy Ready | All 10 Alembic revisions applied | Yes (System Core) | **PASSED** (338/338 backend tests) | **DEPLOYED & VERIFIED** |
 | **System of Record** | PostgreSQL 16 (Local Sandbox / Aiven) | Configured (`localhost:5432/basket_db`) | Local credentials active; Aiven unconfigured | **CONNECTED** (Pool: 10/5) | Local: disable; Aiven: `require` | Single Head: `0010_consumer_inbox` (29 tables) | Yes (Source of Truth) | **PASSED** (Full CRUD, ACID transactions, Backup/Restore) | **LOCAL VERIFIED / AIVEN READY** |
-| **Event Streaming** | Apache Kafka (KRaft mode / Aiven) | Template ready in `.env.example` | Unset (`KAFKA_BOOTSTRAP_SERVERS` empty) | **DEGRADED RESILIENT** (Outbox durable) | SSL mTLS ready (`ca.pem`, `service.cert`, `service.key`) | Topics defined: `order.events`, `inventory.events`, `payment.events` | Yes (Transactional Outbox Publisher & Consumer Inbox) | **PASSED** (Outbox persistence, lease recovery, DLQ, inbox deduplication) | **FALLBACK VERIFIED / CLUSTER UNCONFIGURED** |
-| **Search Engine** | OpenSearch 2.13 (Aiven / Local) | Template ready in `.env.example` | Unset (`OPENSEARCH_URL` empty) | **DEGRADED RESILIENT** (Circuit OPEN -> SQL Fallback) | HTTPS / TLS validation ready | Blue/green index mappings defined (`basket_products_v1`) | Yes (Universal Search with SQL Fallback) | **PASSED** (PostgreSQL tsvector SQL fallback, circuit breaker transitions) | **FALLBACK VERIFIED / CLUSTER UNCONFIGURED** |
-| **Payment Gateway** | Razorpay Sandbox API | Template ready in `.env.example` | Mock keys present; authentic sandbox keys missing | **DEGRADED RESILIENT** (HMAC Webhooks & Signatures Active) | HTTPS to `api.razorpay.com` | Database tables: `payments`, `payment_captures`, `webhook_events`, `refunds` | Yes (Cryptographic Payment Engine) | **PASSED** (Signature validation, webhook deduplication, SLA cancellation, state machine) | **ENGINE VERIFIED / CREDENTIALS PENDING** |
+| **Event Streaming (Outbox)** | PostgreSQL Transactional Outbox | Active in Database | Local DB credentials | **OPERATIONAL** | N/A (Local Database) | Table `outbox_events` and `consumer_inbox` active | Yes (Transactional Outbox Publisher & Consumer Inbox) | **PASSED** (Outbox persistence, lease recovery, DLQ, inbox deduplication) | **LOCAL VERIFIED** |
+| **Event Streaming (Broker)** | Apache Kafka (KRaft mode / Aiven) | Template ready in `.env.example` | Unset (`KAFKA_BOOTSTRAP_SERVERS` empty) | **UNCONNECTED** | SSL mTLS ready (`ca.pem`, `service.cert`, `service.key`) | Topics defined: `order.events`, `inventory.events`, `payment.events` | Inactive (Pending external broker) | **BLOCKED — CREDENTIALS REQUIRED** | **CLUSTER UNCONFIGURED** |
+| **Search Engine (Fallback)** | PostgreSQL FTS Fallback | Active in Database | Local DB credentials | **OPERATIONAL** | N/A (Local Database) | `tsvector` indexes on products and variants | Yes (Universal Search with SQL Fallback) | **PASSED** (PostgreSQL tsvector SQL fallback, circuit breaker transitions) | **LOCAL VERIFIED** |
+| **Search Engine (Cluster)** | OpenSearch 2.13 (Aiven / Local) | Template ready in `.env.example` | Unset (`OPENSEARCH_URL` empty) | **UNCONNECTED** | HTTPS / TLS validation ready | Blue/green index mappings defined (`basket_products_v1`) | Inactive (Pending external cluster) | **BLOCKED — CREDENTIALS REQUIRED** | **CLUSTER UNCONFIGURED** |
+| **Payment Gateway (Engine)** | Local Cryptographic Payment Engine | Active in Application | Mock secret strings configured | **OPERATIONAL** | Internal HMAC SHA-256 | Database tables: `payments`, `payment_captures`, `webhook_events`, `refunds` | Yes (Cryptographic Payment Engine) | **PASSED** (Local HMAC verification, webhook deduplication, SLA cancellation, state machine) | **LOCAL VERIFIED** |
+| **Payment Gateway (Sandbox)** | Razorpay Sandbox API | Template ready in `.env.example` | Unset (Requires `rzp_test_...` merchant keys) | **UNCONNECTED** | HTTPS to `api.razorpay.com` | Database tables ready | Inactive (Pending authentic test keys) | **BLOCKED — CREDENTIALS REQUIRED** | **CREDENTIALS PENDING** |
 | **Container Sandbox** | Docker Compose / Multi-Stage Dockerfiles | Hardened in `deploy/docker-compose.sandbox.yml` | N/A | Host machine lacks Docker daemon | N/A (Internal Bridge Network) | Multi-stage Dockerfiles validated; non-root user (UID 1001) | Ready for containerized deployment | **PASSED** (Configuration, dependency graphs, healthcheck scripts verified) | **COMPOSE READY / HOST CLI MISSING** |
 
 ---
@@ -55,13 +58,17 @@
   2. Search queries automatically route to `_search_postgres_fallback()`, utilizing PostgreSQL `tsvector` full-text search across product name, brand, description, and category attributes.
   3. Facet computations are omitted during fallback to protect database CPU.
 
-### 2.6 Razorpay Sandbox
-- **Resilience Mechanism:**
-  1. In the absence of live merchant sandbox keys, external API calls fail closed (`GATEWAY_UNAVAILABLE` 502 or `PAYMENT_CREATION_AMBIGUOUS` 504), preventing unauthorized mock orders from masquerading as authentic payments.
-  2. Webhook ingestion requires HMAC-SHA256 signature verification (`X-Razorpay-Signature`).
-  3. Duplicate webhooks are idempotently ignored (`status="ignored", reason="ALREADY_INGESTED"`).
-  4. Capture facts are immutable in `payment_captures`.
+### 2.6 Razorpay Payment Gateway (Dual-Mode Architecture)
+- **Local Payment & Webhook Engine (VERIFIED):**
+  1. Webhook ingestion enforces strict cryptographic HMAC-SHA256 signature verification (`X-Razorpay-Signature`).
+  2. Duplicate webhooks are idempotently deduplicated (`status="ignored", reason="ALREADY_INGESTED"`).
+  3. Tampered or forged signatures return HTTP 400 (`INVALID_SIGNATURE`).
+  4. Capture facts are immutable in `payment_captures` (guaranteed by database triggers).
   5. SLA escalation job automatically cancels orders and releases reservations if unpaid after 75 minutes.
+  6. Domain events are persisted atomically to `outbox_events`.
+- **Genuine Razorpay Sandbox API (BLOCKED — CREDENTIALS REQUIRED):**
+  1. In the absence of live merchant test keys (`rzp_test_...`), external API calls fail closed (`GATEWAY_UNAVAILABLE` 502 or `PAYMENT_CREATION_AMBIGUOUS` 504), preventing unauthorized mock orders from masquerading as authentic payments.
+  2. The test suite strictly refuses to mutate database records, forge provider order IDs, or simulate fake captures to bypass external gateway verification. Real provider checkout requires authentic merchant credentials.
 
 ---
 

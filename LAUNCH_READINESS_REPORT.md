@@ -20,35 +20,37 @@
 
 ## 2. Infrastructure Connection Matrix
 
-Every infrastructure component was systematically audited and tested for connectivity, resilience, and failure mode handling.
+Every infrastructure component was systematically audited and tested for connectivity, resilience, and failure mode handling. Genuine external integrations are strictly separated from local fallback and simulation engines.
 
 | Component | Target Service | Status | Connection Evidence & Details |
 |:---|:---|:---:|:---|
-| **Primary Database** | PostgreSQL 16 (Aiven / Local) | **CONNECTED & VERIFIED** | Connected on `localhost:5432/basket_db`. Schema contains 29 tables; single Alembic head `0010_consumer_inbox`. Transaction isolation, foreign key constraints, connection pooling (`pool_size=10, max_overflow=5`), and backup/restore scripts verified with 5.5MB test dump. |
-| **Event Streaming** | Apache Kafka (KRaft) | **MOCKED / RESILIENT FALLBACK** | External broker not configured (`KAFKA_BOOTSTRAP_SERVERS` empty). In-memory mock producer and consumer framework verified; API startup does not fail; transactional outbox records persisted in PostgreSQL outbox table; DLQ and retry mechanisms verified. |
-| **Search Engine** | OpenSearch 2.13 | **MOCKED / RESILIENT FALLBACK** | External OpenSearch cluster not configured (`OPENSEARCH_URL` empty). Circuit breaker transitions (`CLOSED` → `OPEN` → `HALF_OPEN`) verified; runtime automatically falls back to PostgreSQL full-text SQL search. Search API and search suggestions operate seamlessly. |
-| **Payment Gateway** | Razorpay Sandbox API | **MOCKED / VERIFIED ENGINE** | Live Razorpay merchant keys not populated in `.env`. Complete cryptographic payment engine verified: HMAC-SHA256 signature verification, webhook deduplication, SLA 75-minute cancellation, refund state machine, and tamper rejection. |
+| **Primary Database** | PostgreSQL 16 (Local Sandbox / Aiven) | **CONNECTED & VERIFIED** | Connected on `localhost:5432/basket_db`. Schema contains 29 tables; single Alembic head `0010_consumer_inbox`. Transaction isolation, foreign key constraints, connection pooling (`pool_size=10, max_overflow=5`), and backup/restore scripts verified with 5.8MB test dump. |
+| **Event Streaming** | Apache Kafka (KRaft / Aiven) | **LOCAL OUTBOX VERIFIED / CLUSTER UNCONFIGURED** | External broker not configured (`KAFKA_BOOTSTRAP_SERVERS` empty). Transactional outbox records persisted in PostgreSQL `outbox_events` table; DLQ and consumer inbox deduplication verified. Live broker publish/subscribe is **BLOCKED — CREDENTIALS REQUIRED**. |
+| **Search Engine** | OpenSearch 2.13 (Aiven / Local) | **SQL FALLBACK VERIFIED / CLUSTER UNCONFIGURED** | External OpenSearch cluster not configured (`OPENSEARCH_URL` empty). Circuit breaker automatically routes search requests to PostgreSQL `tsvector` full-text search fallback. Live cluster indexing is **BLOCKED — CREDENTIALS REQUIRED**. |
+| **Payment Gateway (Local Engine)** | Local Cryptographic Engine | **VERIFIED (LOCAL)** | HMAC-SHA256 signature verification, webhook ingestion idempotency, duplicate rejection (`ALREADY_INGESTED`), tamper rejection (HTTP 400), and state transitions verified locally. |
+| **Payment Gateway (Genuine Sandbox)** | Razorpay Sandbox API | **BLOCKED — CREDENTIALS REQUIRED** | Live merchant test keys (`rzp_test_...`) not configured in `.env`. The genuine provider test is strictly gated and never modifies database records to simulate an authentic payment. |
 | **Cache / In-Memory Store** | Redis / Valkey | **NOT REQUIRED / PROHIBITED** | Explicitly forbidden by architecture specification (`ARCHITECTURE.md:59`). System operates purely on PostgreSQL 16 + OpenSearch + Kafka. |
 
 ---
 
-## 3. Razorpay Sandbox Payment Audit
+## 3. Razorpay Payment Verification Audit (Dual-Mode)
 
-All 14 payment capabilities required for sandbox readiness were audited via unit, integration, and database invariant tests (`backend/tests/test_payments.py`):
+Payment verification is strictly partitioned into two distinct operational modes:
 
-- **Test Results:** 37 passed, 0 failed in 36.59s.
-- **Audit Findings:**
-  1. **Order Payment Initiation:** Verified creation of payment attempt records with pending status and gateway reference.
-  2. **Signature Verification:** Verified cryptographic HMAC-SHA256 calculation (`razorpay_order_id|razorpay_payment_id` with `webhook_secret`).
-  3. **Tamper Rejection:** Invalid signatures, modified amounts, or altered keys are rejected with HTTP 400.
-  4. **Webhook Ingestion:** Handled valid webhook payloads and idempotently recorded them in `webhook_events`.
-  5. **Webhook Race Ingestion:** Fixed a potential race condition in `app/modules/payments/webhook.py` where concurrent identical webhooks caused an unhandled `IntegrityError`. Now caught cleanly and returns `WebhookIngestResponse(status="ignored", reason="ALREADY_INGESTED")`.
-  6. **Payment Capture Ledger:** Database trigger protects immutable capture facts; payment records cannot be overwritten.
-  7. **Partial Capture Auto-Refund:** Captures for amounts less than the authorized order amount trigger automated refund requests and order cancellation.
-  8. **Late Capture Auto-Refund:** Late captures received after reservation/order expiry or cancellation are automatically refunded without deducting inventory.
-  9. **SLA Escalation Job:** 75-minute periodic reconciliation job automatically cancels unpaid orders and releases inventory reservations.
-  10. **Refund Lifecycle:** Multi-stage refund states (`pending` → `processed`) with amount tracking prevent refunds exceeding captured amounts.
-  11. **Internal Security:** Internal webhook processing and escalation endpoints fail-closed without valid authentication headers.
+### 3.1 Local Simulated Payment & Webhook Integration (VERIFIED)
+All core payment engine capabilities were audited via unit, integration, and database invariant tests (`backend/tests/test_payments.py` and `scripts/e2e_sandbox_journey.py`):
+1. **Cryptographic Signature Verification:** Verified HMAC-SHA256 calculation (`razorpay_order_id|razorpay_payment_id` with secret).
+2. **Signature Tamper Rejection:** Invalid signatures, modified amounts, or altered keys are rejected with HTTP 400.
+3. **Webhook Ingestion & Idempotency:** Valid webhooks are recorded in `webhook_events`. Concurrent duplicate webhooks return `WebhookIngestResponse(status="ignored", reason="ALREADY_INGESTED")`.
+4. **Payment Capture Ledger:** Database triggers protect immutable capture facts; payment records cannot be overwritten.
+5. **Partial / Late Capture Auto-Refund:** Captures for lesser amounts or after cancellation trigger automated refunds.
+6. **SLA Escalation:** 75-minute periodic reconciliation job automatically cancels unpaid orders and releases inventory holds.
+7. **Transactional Outbox Persistence:** Payment capture and order confirmation atomically write domain events to `outbox_events`.
+
+### 3.2 Genuine Razorpay Sandbox Payment (BLOCKED — CREDENTIALS REQUIRED)
+- **Status:** **BLOCKED — CREDENTIALS REQUIRED**
+- **Reason:** Authentic Razorpay test merchant key pair (`RAZORPAY_KEY_ID` starting with `rzp_test_` and `RAZORPAY_KEY_SECRET`) is not yet provisioned in `.env`.
+- **Policy Enforcement:** The application and test suite **never** directly mutate PostgreSQL payment records, fabricate provider order IDs, or simulate fake captures to bypass external gateway verification. Real external checkout requires merchant credentials.
 
 ---
 
@@ -199,13 +201,24 @@ Next.js:      Production build generated 11/11 pages successfully
 
 ## 10. External Service Integration Evidence
 
-- **PostgreSQL 16:**
-  - Connected at `postgresql+asyncpg://postgres:postgres@localhost:5432/basket_db`.
+- **PostgreSQL 16 (Live System of Record):**
+  - **Status:** **CONNECTED & TESTED**
+  - Connected at `postgresql+asyncpg://dhruv@localhost:5432/basket_db`.
   - Schema revision: `0010_consumer_inbox` (single head).
   - Verified 29 core tables: `users`, `addresses`, `categories`, `products`, `product_variants`, `product_listings`, `store_inventory`, `carts`, `cart_items`, `quotes`, `quote_items`, `inventory_reservations`, `reservation_items`, `orders`, `order_items`, `order_status_history`, `payments`, `payment_attempts`, `refunds`, `webhook_events`, `outbox_events`, `consumer_inbox`, etc.
-- **Kafka / OpenSearch / Razorpay:**
-  - Local sandbox environment uses in-memory and SQL-backed resilient implementations that honor identical API contracts and domain invariants.
-  - No connection failures crashed the application during boot or runtime.
+  - Backup & disaster recovery restore tested on disposable database (`basket_restore_test_db`).
+- **Razorpay Sandbox API:**
+  - **Status:** **BLOCKED — CREDENTIALS REQUIRED** (Local Engine VERIFIED).
+  - Local HMAC calculation, webhook ingestion idempotency, duplicate suppression, and state machine fulfillment tested.
+  - Genuine provider API integration requires authentic merchant keys starting with `rzp_test_`. The test suite strictly refuses to mutate database records or fabricate payment IDs.
+- **Apache Kafka:**
+  - **Status:** **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED** (Local Outbox VERIFIED).
+  - Local transactional outbox guarantees at-least-once persistence in PostgreSQL.
+  - Live broker publish/subscribe requires external `KAFKA_BOOTSTRAP_SERVERS` and mTLS certificates.
+- **OpenSearch:**
+  - **Status:** **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED** (PostgreSQL SQL Fallback VERIFIED).
+  - Circuit breaker safely degrades to PostgreSQL `tsvector` full-text search without downtime.
+  - Live cluster indexing requires external `OPENSEARCH_URL` and credentials.
 
 ---
 
@@ -376,18 +389,24 @@ The BASKET universal storefront and API stack was deployed live in host-native s
 ### 16.2 Actual Service Connectivity Audit
 1. **Frontend:** **DEPLOYED & REACHABLE** at `http://localhost:3000`. Production build compiled 11 static and server-rendered routes in 1.45s.
 2. **Backend:** **DEPLOYED & REACHABLE** at `http://localhost:8000`. Liveness (`/health`) and Readiness (`/ready`) endpoints functional.
-3. **PostgreSQL:** **CONNECTED & VERIFIED**. Database schema contains 29 tables; single Alembic head `0010_consumer_inbox`. Transaction isolation, foreign key constraints, connection pooling (`pool_size=10, max_overflow=5`), and backup/restore scripts verified with 5.8MB test dump.
-4. **Kafka:** **DEGRADED RESILIENT MODE**. Cloud cluster unconfigured (`KAFKA_BOOTSTRAP_SERVERS` empty). Transactional outbox publisher preserves at-least-once delivery semantics in PostgreSQL `outbox_events`. Dead Letter Queue (DLQ) and consumer inbox deduplication mechanisms verified.
-5. **OpenSearch:** **DEGRADED RESILIENT MODE**. Cloud cluster unconfigured (`OPENSEARCH_URL` empty). Circuit breaker automatically routes search requests to PostgreSQL `tsvector` fallback search with full keyword matching, sorting, and pagination.
-6. **Razorpay Sandbox:** **CRYPTOGRAPHIC ENGINE VERIFIED**. Live merchant test API credentials unset. Cryptographic payment engine, HMAC-SHA256 signature verification, webhook deduplication, SLA 75-minute cancellation, refund state machine, and tamper rejection 100% verified.
+3. **PostgreSQL:** **CONNECTED & VERIFIED**. Database schema contains 29 tables; single Alembic head `0010_consumer_inbox`. Transaction isolation, foreign key constraints, connection pooling (`pool_size=10, max_overflow=5`), and backup/restore scripts verified with 5.8MB test dump on disposable database (`basket_restore_test_db`).
+4. **Kafka:**
+   - **Local Outbox Engine:** **OPERATIONAL & VERIFIED**. Transactional outbox publisher preserves at-least-once delivery semantics in PostgreSQL `outbox_events`. Dead Letter Queue (DLQ) and consumer inbox deduplication mechanisms verified.
+   - **Live Broker Connectivity:** **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED**. `KAFKA_BOOTSTRAP_SERVERS` empty.
+5. **OpenSearch:**
+   - **PostgreSQL Fallback Search:** **OPERATIONAL & VERIFIED**. Circuit breaker automatically routes search requests to PostgreSQL `tsvector` fallback search with full keyword matching, sorting, and pagination.
+   - **Live Cluster Connectivity:** **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED**. `OPENSEARCH_URL` empty.
+6. **Razorpay Sandbox:**
+   - **Local Payment & Webhook Engine:** **OPERATIONAL & VERIFIED**. HMAC-SHA256 signature verification, webhook ingestion idempotency, SLA 75-minute cancellation, refund state machine, and tamper rejection 100% verified.
+   - **Genuine Sandbox Provider API:** **BLOCKED — CREDENTIALS REQUIRED**. Authentic merchant keys (`rzp_test_...`) unconfigured. Test suite strictly refuses to mutate database records or fabricate payment IDs.
 7. **Docker Compose:** **CONFIGURED & HARDENED**. `deploy/docker-compose.sandbox.yml` hardened with bridge networking (`basket_sandbox_net`), healthchecks, resource limits, logging drivers (`json-file`, max 10MB), non-root users (`basket` UID 1001, `nextjs` UID 1001), and variable overrides for external cloud services. Host machine lacks local Docker daemon.
 
-### 16.3 Complete 28-Step Customer Journey and Failure Test Suite
-Executed autonomously via `scripts/e2e_sandbox_journey.py` against live servers:
-- **Part 1 — Customer Shopping Journey (Steps 1–20):**
+### 16.3 Complete 34-Step Sandbox Verification & Dual-Mode Audit
+Executed autonomously via `scripts/e2e_sandbox_journey.py` against live running servers:
+- **Part 1 — Core Customer Shopping Journey (Steps 1–15):** (16/16 PASSED)
   - Step 1: Open Storefront (`http://localhost:3000` -> HTTP 200) — **PASSED**
   - Step 2: Browse Categories (`GET /api/v1/categories` -> 7 categories) — **PASSED**
-  - Step 3: Search for Product (`GET /api/v1/search?q=Sony&force_fallback=true`) — **PASSED**
+  - Step 3: Product Search (`GET /api/v1/search?q=Sony&force_fallback=true`) — **PASSED**
   - Step 4: Open Product Detail (`GET /api/v1/products/{id}`) — **PASSED**
   - Step 5: Select Variant and Listing (`SNY-XM5-BLK`) — **PASSED**
   - Step 6: Add to Guest Cart (`POST /api/v1/cart/items` with `X-Guest-Cart-Token`) — **PASSED**
@@ -401,19 +420,28 @@ Executed autonomously via `scripts/e2e_sandbox_journey.py` against live servers:
   - Step 13: Verify Tax & Delivery Charges (CGST: 442220, SGST: 442221, IGST: 0) — **PASSED**
   - Step 14: Reserve Inventory (`POST /api/v1/reservations` -> status ACTIVE) — **PASSED**
   - Step 15: Create Order (`POST /api/v1/orders` -> status PENDING_PAYMENT) — **PASSED**
-  - Step 16: Initiate Sandbox Payment Attempt (`POST /api/v1/orders/{id}/payments`) — **PASSED**
-  - Step 17: Payment Signature Calculation & Verification (`POST /api/v1/orders/{id}/payments/verify`) — **PASSED**
-  - Step 18: Durable Webhook Ingestion (`POST /api/v1/payments/webhook` with HMAC) — **PASSED**
-  - Step 19: Confirm Order & Inventory Deduction (Order transitioned to CONFIRMED) — **PASSED**
-  - Step 20: View Order Details & History (`GET /api/v1/orders/{id}` confirmed) — **PASSED**
-- **Part 2 — Failure Modes & Recovery Journey (Failures 1–7):**
+- **Part 2 — Local Simulated Payment & Webhook Integration (Steps L1–L6):** (6/6 PASSED)
+  - Step L1: Local HMAC-SHA256 Signature Calculation — **PASSED**
+  - Step L2: Webhook Ingestion & Signature Verification — **PASSED**
+  - Step L3: Duplicate Webhook Deduplication (`ALREADY_INGESTED`) — **PASSED**
+  - Step L4: Tampered Webhook Signature Rejection (HTTP 400) — **PASSED**
+  - Step L5: Local Webhook Service Processing Pipeline (`WebhookService`) — **PASSED**
+  - Step L6: Transactional Outbox Event Table Persistence — **PASSED**
+- **Part 3 — Genuine Razorpay Sandbox Payment Integration (Steps G1–G3):** (3 BLOCKED)
+  - Step G1: Initiate Sandbox Payment via `api.razorpay.com` — **BLOCKED — CREDENTIALS REQUIRED**
+  - Step G2: Test Checkout & Signature Verification — **BLOCKED — CREDENTIALS REQUIRED**
+  - Step G3: Authentic Provider Webhook Delivery & Capture Confirmation — **BLOCKED — CREDENTIALS REQUIRED**
+- **Part 4 — External Infrastructure Live Connectivity Audit:**
+  - PostgreSQL Live System of Record — **PASSED** (29 tables, single Alembic head)
+  - OpenSearch Live Cluster Connectivity — **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED**
+  - Kafka Live Broker Connectivity — **BLOCKED — CREDENTIALS REQUIRED / UNCONFIGURED**
+- **Part 5 — Failure Modes, Security & Resilience (Steps F1–F6):** (6/6 PASSED)
   - Fail 1: Invalid Login Rejection (Wrong password -> HTTP 401) — **PASSED**
   - Fail 2: Expired / Invalid Access Token (Bad JWT -> HTTP 401) — **PASSED**
-  - Fail 3: Cart / Order Ownership Violation (User 2 blocked from User 1 order -> HTTP 404) — **PASSED**
+  - Fail 3: Cart / Order Ownership IDOR Violation (User 2 blocked -> HTTP 404) — **PASSED**
   - Fail 4: Idempotent Duplicate Order (Same Idempotency-Key -> returned identical order) — **PASSED**
-  - Fail 5: Duplicate Payment Webhook (Same Event ID -> returned `ALREADY_INGESTED`) — **PASSED**
-  - Fail 6: OpenSearch Fallback Search (`force_fallback=true` -> engine `postgres_fallback`) — **PASSED**
-  - Fail 7: Telemetry & Metrics Verification (`GET /metrics` -> 341 metric lines scraped) — **PASSED**
+  - Fail 5: PostgreSQL Fallback Search Resiliency (`engine: postgres_fallback`) — **PASSED**
+  - Fail 6: Prometheus Metrics Telemetry (`GET /metrics` -> 356 metric lines) — **PASSED**
 
 ### 16.4 Backup & Disaster Recovery Verification
 - **Backup Command:** `./scripts/backup-database.sh` executed against `basket_db`. Produced custom-format dump: `./backups/basket_db_20261119_091945.dump` (5.8MB). Excluded from Git tracking.
@@ -427,8 +455,8 @@ Executed autonomously via `scripts/e2e_sandbox_journey.py` against live servers:
 ### 16.6 Launch-Readiness Tier Classification
 - **CODE COMPLETE:** **VERIFIED** (100% test pass rate across 338 backend tests and 60 frontend tests in GitHub Actions CI).
 - **LOCAL SANDBOX VERIFIED:** **VERIFIED** (Host-native deployment operational on ports 3000, 8000, and 5432).
-- **END-TO-END SANDBOX VERIFIED:** **VERIFIED** (28/28 customer journey and failure recovery tests passed cleanly against live sandbox).
-- **EXTERNAL SERVICES VERIFIED:** **PENDING CREDENTIALS** (Aiven PostgreSQL, Aiven Kafka, Aiven OpenSearch, and authentic Razorpay sandbox test keys awaiting owner provisioning in `.env`).
+- **LOCAL PAYMENT ENGINE VERIFIED:** **VERIFIED** (HMAC verification, webhook deduplication, and outbox state machine verified).
+- **EXTERNAL SERVICES VERIFIED:** **BLOCKED — PENDING CREDENTIALS** (Aiven PostgreSQL, Aiven Kafka, Aiven OpenSearch, and authentic Razorpay sandbox test keys awaiting owner provisioning in `.env`).
 - **PRODUCTION READY:** **NO-GO** (Pending external credentials, domain SSL termination, and cloud staging smoke tests).
 
 ### 16.7 Outstanding Manual Actions Required from Owner

@@ -190,3 +190,37 @@ When rotating secrets:
   curl -X POST "http://localhost:8000/api/v1/internal/payments/sla-escalation" \
     -H "X-Internal-Service-Key: <your_internal_service_key>"
   ```
+
+---
+
+## 8. End-to-End Sandbox Verification & Payment Testing Modes
+
+The platform includes an automated end-to-end verification script: `scripts/e2e_sandbox_journey.py`.
+
+### 8.1 Dual Payment Verification Modes
+
+1. **Local Simulated Payment & Webhook Integration (Default / No Credentials Required):**
+   - Tests local HMAC-SHA256 signature calculation and validation.
+   - Tests webhook ingestion (`POST /api/v1/payments/webhook`) with local test secrets.
+   - Tests duplicate event deduplication (`ALREADY_INGESTED`).
+   - Tests tampered signature rejection (HTTP 400 `INVALID_SIGNATURE`).
+   - Tests local background webhook processor (`WebhookService`).
+   - Tests transactional outbox table persistence.
+   - **Result:** Fully runnable and verified in local sandbox without any external accounts.
+
+2. **Genuine Razorpay Sandbox Payment (Requires Authentic Test Merchant Credentials):**
+   - Requires setting `RAZORPAY_KEY_ID` (starting with `rzp_test_`), `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` in `backend/.env`.
+   - Calls the live Razorpay API endpoint `https://api.razorpay.com/v1/orders`.
+   - Verifies authentic provider signatures and capture webhooks.
+   - **Crucial Policy:** If credentials are not provisioned, the test suite strictly marks the test **`BLOCKED — CREDENTIALS REQUIRED`**. It **never** fabricates fake provider order IDs or modifies database records to fake a successful provider transaction.
+
+### 8.2 Running the E2E Verification Script
+
+```bash
+# Standard local sandbox run (allows BLOCKED external services):
+cd Online_Shopping
+backend/.venv/bin/python scripts/e2e_sandbox_journey.py
+
+# Strict mode for staging/production (fails if any external service is BLOCKED):
+backend/.venv/bin/python scripts/e2e_sandbox_journey.py --require-external
+```
