@@ -77,15 +77,23 @@ export function ProductCard({ product }: ProductCardProps) {
           <div className="pt-3 border-t border-border/50 mt-3 space-y-2">
             {/* Price Display */}
             <div className="flex items-baseline gap-2">
-              <span className="text-lg font-bold text-foreground">
-                {formatPrice(product.min_price_paise, product.currency)}
-              </span>
-              {product.original_price_paise &&
-                product.original_price_paise > product.min_price_paise && (
-                  <span className="text-xs text-muted-foreground line-through">
-                    {formatPrice(product.original_price_paise, product.currency)}
+              {product.min_price_paise > 0 ? (
+                <>
+                  <span className="text-lg font-bold text-foreground">
+                    {formatPrice(product.min_price_paise, product.currency)}
                   </span>
-                )}
+                  {product.original_price_paise &&
+                    product.original_price_paise > product.min_price_paise && (
+                      <span className="text-xs text-muted-foreground line-through">
+                        {formatPrice(product.original_price_paise, product.currency)}
+                      </span>
+                    )}
+                </>
+              ) : (
+                <span className="text-sm font-medium text-muted-foreground">
+                  Currently Unavailable
+                </span>
+              )}
             </div>
 
             {/* Seller and Variant Metadata */}

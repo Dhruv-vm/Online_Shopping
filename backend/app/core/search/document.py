@@ -65,6 +65,15 @@ def build_product_document(
             if not getattr(lst, "is_active", True):
                 continue
 
+            ret = getattr(lst, "retailer", None)
+            if ret is not None:
+                ret_is_active = getattr(ret, "is_active", True)
+                if ret_is_active is False:
+                    continue
+                ret_status = getattr(ret, "verification_status", "VERIFIED")
+                if ret_status is not None and ret_status != "VERIFIED":
+                    continue
+
             l_id = str(lst.id)
             listing_ids.append(l_id)
             ret_id = str(lst.retailer_id)

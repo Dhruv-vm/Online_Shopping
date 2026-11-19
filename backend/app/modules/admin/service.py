@@ -1,11 +1,14 @@
 import datetime
 import re
 import uuid
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import app.modules.inventory.models  # noqa: F401
+import app.modules.payments.models  # noqa: F401
 from app.core.exceptions import AppException
 from app.modules.admin.schemas import (
     AdminCatalogueProductCreateRequest,
@@ -24,6 +27,8 @@ from app.modules.admin.schemas import (
     AdminOverviewResponse,
     AdminRetailerDetailResponse,
     AdminRetailerListItem,
+    AdminRetailerSalesAnalyticsResponse,
+    AdminRetailerSalesProductItem,
     DocumentVerifyRequest,
     RetailerDocumentItem,
     RetailerVerificationHistoryItem,
@@ -40,7 +45,13 @@ from app.modules.catalogue.models import (
     RetailerVerificationHistory,
 )
 from app.modules.identity.models import User
-from app.modules.orders.models import Order
+from app.modules.orders.models import (
+    Order,
+    OrderItem,
+    OrderReturn,
+    OrderStatus,
+    ReturnItem,
+)
 from app.modules.pricing.models import Discount
 
 
@@ -92,7 +103,11 @@ class AdminService:
     # ================= Retailer Verification & Approval =================
 
     async def list_retailers(
-        self, status: str | None = None
+        self,
+        status: str | None = None,
+        search: str | None = None,
+        state: str | None = None,
+        is_active: bool | None = None,
     ) -> list[AdminRetailerListItem]:
         stmt = (
             select(
@@ -111,6 +126,21 @@ class AdminService:
         )
         if status and status.upper() != "ALL":
             stmt = stmt.where(Retailer.verification_status == status.upper())
+        if state and state.strip():
+            stmt = stmt.where(func.upper(Retailer.state) == state.strip().upper())
+        if is_active is not None:
+            stmt = stmt.where(Retailer.is_active == is_active)
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(Retailer.name).ilike(term),
+                    func.lower(Retailer.slug).ilike(term),
+                    func.lower(Retailer.contact_email).ilike(term),
+                    func.lower(User.full_name).ilike(term),
+                    func.lower(User.email).ilike(term),
+                )
+            )
 
         rows = (await self.session.execute(stmt)).all()
         result = []
@@ -206,6 +236,126 @@ class AdminService:
             created_at=retailer.created_at,
             documents=docs,
             verification_history=history,
+        )
+
+    async def get_retailer_sales_analytics(
+        self, retailer_id: uuid.UUID
+    ) -> AdminRetailerSalesAnalyticsResponse:
+        retailer = (
+            await self.session.execute(
+                select(Retailer).where(Retailer.id == retailer_id)
+            )
+        ).scalar_one_or_none()
+        if not retailer:
+            raise AppException(
+                code="RETAILER_NOT_FOUND",
+                message="Retailer was not found.",
+                status_code=404,
+            )
+
+        valid_statuses = [
+            OrderStatus.CONFIRMED.value,
+            OrderStatus.PROCESSING.value,
+            OrderStatus.PACKED.value,
+            OrderStatus.SHIPPED.value,
+            OrderStatus.OUT_FOR_DELIVERY.value,
+            OrderStatus.DELIVERED.value,
+            OrderStatus.RETURNED.value,
+        ]
+
+        items_stmt = (
+            select(
+                OrderItem,
+                ProductVariant.product_id,
+            )
+            .join(Order, Order.id == OrderItem.order_id)
+            .join(ProductVariant, ProductVariant.id == OrderItem.variant_id)
+            .where(
+                OrderItem.retailer_id == retailer_id,
+                Order.status.in_(valid_statuses),
+            )
+        )
+        item_rows = (await self.session.execute(items_stmt)).all()
+
+        distinct_orders: set[uuid.UUID] = set()
+        total_units = 0
+        gmv_paise = 0
+
+        products_map: dict[uuid.UUID, dict[str, Any]] = {}
+
+        for order_item, product_id in item_rows:
+            distinct_orders.add(order_item.order_id)
+            qty = order_item.quantity
+            item_gross = qty * order_item.unit_selling_price_paise
+            total_units += qty
+            gmv_paise += item_gross
+
+            vid = order_item.variant_id
+            if vid not in products_map:
+                products_map[vid] = {
+                    "product_id": product_id,
+                    "product_name": order_item.product_title,
+                    "variant_id": vid,
+                    "variant_name": order_item.variant_title,
+                    "sku": order_item.sku,
+                    "quantity_sold": 0,
+                    "selling_price_paise": order_item.unit_selling_price_paise,
+                    "gross_revenue_paise": 0,
+                    "refund_quantity": 0,
+                    "refund_amount_paise": 0,
+                    "net_sales_paise": 0,
+                }
+            entry = products_map[vid]
+            entry["quantity_sold"] += qty
+            entry["gross_revenue_paise"] += item_gross
+
+        # Refunds / returns for this retailer
+        returns_stmt = (
+            select(
+                OrderItem.variant_id,
+                func.sum(ReturnItem.quantity).label("refund_qty"),
+                func.sum(ReturnItem.refund_subtotal_paise).label("refund_paise"),
+            )
+            .join(OrderReturn, OrderReturn.id == ReturnItem.return_id)
+            .join(OrderItem, OrderItem.id == ReturnItem.order_item_id)
+            .where(
+                OrderItem.retailer_id == retailer_id,
+                OrderReturn.status.in_(["REFUNDED", "REFUND_PENDING", "APPROVED"]),
+            )
+            .group_by(OrderItem.variant_id)
+        )
+        return_rows = (await self.session.execute(returns_stmt)).all()
+        total_refund_paise = 0
+        for vid, ref_qty, ref_paise in return_rows:
+            paise = int(ref_paise or 0)
+            total_refund_paise += paise
+            if vid in products_map:
+                products_map[vid]["refund_quantity"] += int(ref_qty or 0)
+                products_map[vid]["refund_amount_paise"] += paise
+
+        product_sales: list[AdminRetailerSalesProductItem] = []
+        for entry in products_map.values():
+            entry["net_sales_paise"] = max(
+                0, entry["gross_revenue_paise"] - entry["refund_amount_paise"]
+            )
+            product_sales.append(AdminRetailerSalesProductItem(**entry))
+
+        product_sales.sort(key=lambda x: x.gross_revenue_paise, reverse=True)
+        net_sales = max(0, gmv_paise - total_refund_paise)
+
+        return AdminRetailerSalesAnalyticsResponse(
+            retailer_id=retailer.id,
+            retailer_name=retailer.name,
+            state=retailer.state,
+            verification_status=retailer.verification_status,
+            is_active=retailer.is_active,
+            total_orders=len(distinct_orders),
+            total_units_sold=total_units,
+            gross_merchandise_value_paise=gmv_paise,
+            refunded_amount_paise=total_refund_paise,
+            net_sales_paise=net_sales,
+            currency="INR",
+            product_sales=product_sales,
         )
 
     async def verify_retailer(

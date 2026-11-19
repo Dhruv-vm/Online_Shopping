@@ -210,6 +210,33 @@ Establish strict role-based access control (RBAC), multi-role authentication, re
     - Backend: 5 test suites in `tests/test_admin_marketplace_moderation.py` covering Admin RBAC, canonical catalogue isolation, retailer approval enforcement, platform deals scheduling, and scoped deals usage limits. Total 384 passed backend tests.
     - Frontend: Unit tests in `portals.test.ts` verifying all admin API methods. Total 68 passed frontend tests.
 
+#### Vertical Slice 5C.1: Marketplace Authenticity, Customer Product Visibility, Inventory Synchronization & Retailer Sales Analytics [COMPLETED]
+- **Status:** **Implemented & Verified** (Branch `feature/phase5c1-authentic-marketplace`)
+- **Features Covered:** 1.3, 1.9, 2.2, 2.3, 2.6, 3.1.
+- **Deliverables:**
+  - **Marketplace Authenticity & Seeding:**
+    - Seeded 15 authentic, geographically diverse Indian verified retailers across major economic hubs (Bengaluru KA, Mumbai MH, Delhi DL, Hyderabad TS, Chennai TN, Pune MH, Ahmedabad GJ, Kolkata WB, Jaipur RJ, Kochi KL, Chandigarh CH, Noida UP, Gurugram HR, Indore MP, Lucknow UP) with realistic GSTINs, physical addresses, and verified credentials.
+    - Soft-deactivated legacy artificial test store records while preserving foreign-key referential integrity.
+    - Canonicalized 10 core commercial categories and 77 canonical products with realistic INR pricing (eliminating artificial test prices). Re-indexed full catalogue into OpenSearch with atomic write/search alias synchronization.
+  - **Customer Storefront Multi-Seller Offers & Visibility:**
+    - Excluded unverified, inactive, or suspended retailers from customer-facing catalogue listings, faceted search, and PDP variant listings.
+    - In `ProductListingDetailSchema`, exposed `retailer_state` to power local merchant signals.
+    - On Product Detail Page (`/products/[id]`), implemented interactive Multi-Seller Offer selection cards. Customers can view side-by-side merchant offers (store name, customer rating, merchant state, stock availability, original MRP, selling price, savings percentage) and seamlessly select which retailer's offer to add to cart.
+    - Implemented "Currently Unavailable" storefront state when all sellers for a product variant are unverified or inactive.
+  - **Atomic Inventory Deduction & Idempotency:**
+    - Guaranteed 10-minute hold on `reserved_quantity` upon reservation creation.
+    - Enforced atomic permanent deduction (`on_hand_quantity -= qty`, `reserved_quantity -= qty`) upon payment confirmation (`confirm_reservation`).
+    - Implemented idempotent confirmation safety: replaying confirmation on an already confirmed reservation never causes double-deductions.
+    - Guaranteed that releasing expired or cancelled reservations restores `reserved_quantity` to 0 without mutating `on_hand_quantity`.
+  - **Admin Retailer Management & Store-Wise Sales Analytics:**
+    - In `GET /api/v1/admin/retailers`, added multi-field `search` (name, address) and `state` filtering (e.g. `state=KA`).
+    - Mounted `GET /api/v1/admin/retailers/{retailer_id}/analytics` guarded by `require_admin` calculating total completed orders, units sold, gross merchandise value (GMV), customer refunds, net sales, and per-variant sales breakdowns.
+    - Built Admin Retailer Sales Analytics dashboard (`/admin/retailers/[id]`) with 4 KPI cards (Total Orders, Units Sold, GMV, Net Sales in INR), store metadata, and product-level sales breakdown table. Added direct "Analytics" action button in `/admin/retailers`.
+  - **Verification:**
+    - 6 end-to-end integration tests in `test_marketplace_authenticity_and_inventory.py` covering storefront unverified retailer exclusion, multi-seller offer selection, atomic inventory deduction & idempotency, admin directory search/state filtering, admin sales analytics computation & RBAC, and reservation release safety.
+    - Full backend test suite passing: 390 passed (100%).
+    - Full frontend test suite passing: 68 passed (100%).
+
 #### Vertical Slice 5D: Retailer & Admin Order Fulfillment Hub & Dispute Resolution
 - **Features Covered:** 1.8, 2.7.
 - **Deliverables:** Retailer incoming order queue, order acceptance/rejection, shipment creation with carrier tracking, return inspection, and Admin dispute oversight.
