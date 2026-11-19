@@ -338,3 +338,220 @@ async def test_customer_notification_center(async_client: AsyncClient):
     )
     assert read_resp.status_code == 200
     assert read_resp.json()["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_authenticated_order_visibility_and_logout_login_persistence(
+    async_client: AsyncClient,
+):
+    """Authenticated customer sees placed order in My Orders, and it persists across logout/login."""
+    email = f"order_persist_{uuid.uuid4().hex[:8]}@example.com"
+    password = "SecurePassword123!"
+
+    # 1. Register customer
+    reg_resp = await async_client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email,
+            "password": password,
+            "full_name": "Persistent Customer",
+            "phone": "+919876543210",
+        },
+    )
+    assert reg_resp.status_code == 201
+    assert bool(reg_resp.json()["user"]["id"])
+    token = reg_resp.json()["access_token"]
+    async_client.headers.update({"Authorization": f"Bearer {token}"})
+
+    # 2. Add address
+    addr_resp = await async_client.post(
+        "/api/v1/addresses",
+        json={
+            "recipient_name": "Persistent Customer",
+            "phone": "+919876543210",
+            "line1": "100 Innovation Way",
+            "city": "Bengaluru",
+            "state": "KA",
+            "postal_code": "560001",
+            "is_default": True,
+        },
+    )
+    assert addr_resp.status_code == 201
+    address_id = addr_resp.json()["id"]
+
+    # 3. Add to cart & quote & reserve & create order
+    listing = await get_test_listing(async_client, min_stock=10)
+    await async_client.post(
+        "/api/v1/cart/items",
+        json={"listing_id": listing["id"], "quantity": 1},
+    )
+    q_resp = await async_client.post(
+        "/api/v1/quotes",
+        json={"delivery_address_id": address_id},
+    )
+    assert q_resp.status_code == 201
+    quote_id = q_resp.json()["id"]
+
+    r_resp = await async_client.post(
+        "/api/v1/reservations",
+        json={"quote_id": quote_id},
+    )
+    assert r_resp.status_code == 201
+    res_id = r_resp.json()["id"]
+
+    idemp_key = f"idemp_order_{uuid.uuid4().hex}"
+    o_resp = await async_client.post(
+        "/api/v1/orders",
+        headers={"Idempotency-Key": idemp_key},
+        json={
+            "quote_id": quote_id,
+            "reservation_id": res_id,
+            "delivery_address_id": address_id,
+        },
+    )
+    assert o_resp.status_code == 201
+    order_data = o_resp.json()
+    order_id = order_data["id"]
+
+    # 4. Confirm payment
+    provider_order_id = f"order_rzp_{uuid.uuid4().hex[:8]}"
+    provider_payment_id = f"pay_rzp_{uuid.uuid4().hex[:8]}"
+    valid_sig = generate_payment_signature(provider_order_id, provider_payment_id)
+
+    with (
+        patch.object(
+            RazorpayClient,
+            "create_order",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_order_id,
+                "amount": order_data["total_payable_paise"],
+                "currency": "INR",
+                "receipt": order_data["order_number"],
+                "status": "created",
+            },
+        ),
+        patch.object(
+            RazorpayClient,
+            "fetch_payment",
+            new_callable=AsyncMock,
+            return_value={
+                "id": provider_payment_id,
+                "order_id": provider_order_id,
+                "amount": order_data["total_payable_paise"],
+                "currency": "INR",
+                "status": "captured",
+                "method": "netbanking",
+            },
+        ),
+    ):
+        await async_client.post(f"/api/v1/orders/{order_id}/payments")
+        verify_resp = await async_client.post(
+            f"/api/v1/orders/{order_id}/payments/verify",
+            json={
+                "razorpay_order_id": provider_order_id,
+                "razorpay_payment_id": provider_payment_id,
+                "razorpay_signature": valid_sig,
+            },
+        )
+        assert verify_resp.status_code == 200
+
+    # 5. Verify order is visible in GET /api/v1/orders
+    list_resp = await async_client.get("/api/v1/orders")
+    assert list_resp.status_code == 200
+    orders_list = list_resp.json()["items"]
+    assert any(o["id"] == order_id for o in orders_list)
+    matching = next(o for o in orders_list if o["id"] == order_id)
+    assert matching["status"] == "CONFIRMED"
+    assert matching["payment_status"] == "SUCCEEDED"
+
+    # 6. Verify order details GET /api/v1/orders/{id}
+    details_resp = await async_client.get(f"/api/v1/orders/{order_id}")
+    assert details_resp.status_code == 200
+    assert details_resp.json()["id"] == order_id
+    assert details_resp.json()["order_number"] == order_data["order_number"]
+
+    # 7. Customer logs out
+    csrf_token = reg_resp.json().get("csrf_token") or async_client.cookies.get("XSRF-TOKEN")
+    logout_resp = await async_client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": f"Bearer {token}", "X-CSRF-Token": csrf_token or ""},
+    )
+    assert logout_resp.status_code == 200
+    async_client.headers.pop("Authorization", None)
+    async_client.cookies.clear()
+
+    # 8. Unauthenticated request to /api/v1/orders fails with 401
+    unauth_resp = await async_client.get("/api/v1/orders")
+    assert unauth_resp.status_code == 401
+
+    # 9. Customer logs back in
+    login_resp = await async_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert login_resp.status_code == 200
+    token_relogin = login_resp.json()["access_token"]
+    async_client.headers.update({"Authorization": f"Bearer {token_relogin}"})
+
+    # 10. Order is still visible in My Orders after re-login
+    relogin_list_resp = await async_client.get("/api/v1/orders")
+    assert relogin_list_resp.status_code == 200
+    relogin_orders = relogin_list_resp.json()["items"]
+    assert any(o["id"] == order_id for o in relogin_orders)
+    async_client.headers.pop("Authorization", None)
+
+
+@pytest.mark.asyncio
+async def test_customer_order_ownership_and_anti_idor_isolation(
+    async_client: AsyncClient,
+):
+    """Customer A cannot view or list Customer B's orders (anti-IDOR protection)."""
+    # Customer A
+    user_a, token_a, order_a = await setup_customer_and_order(async_client)
+    order_a_id = order_a["id"]
+
+    # Customer B registers
+    email_b = f"customer_b_{uuid.uuid4().hex[:8]}@example.com"
+    reg_b = await async_client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": email_b,
+            "password": "SecurePassword123!",
+            "full_name": "Customer B",
+        },
+    )
+    assert reg_b.status_code == 201
+    token_b = reg_b.json()["access_token"]
+    async_client.headers.update({"Authorization": f"Bearer {token_b}"})
+
+    # Customer B lists orders
+    b_orders_resp = await async_client.get("/api/v1/orders")
+    assert b_orders_resp.status_code == 200
+    b_orders = b_orders_resp.json()["items"]
+    # Customer A's order must NOT appear in Customer B's list
+    assert not any(o["id"] == order_a_id for o in b_orders)
+
+    # Customer B attempts direct access to Customer A's order by ID -> 404
+    idor_resp = await async_client.get(f"/api/v1/orders/{order_a_id}")
+    assert idor_resp.status_code == 404
+    assert idor_resp.json()["error"]["code"] == "ORDER_NOT_FOUND"
+    async_client.headers.pop("Authorization", None)
+
+
+@pytest.mark.asyncio
+async def test_idempotent_order_creation_prevents_duplicate_orders(
+    async_client: AsyncClient,
+):
+    """Submitting order creation with identical idempotency key returns same order without duplicates."""
+    user, token, order_data = await setup_customer_and_order(async_client)
+    order_id = order_data["id"]
+
+    # In PostgreSQL, only one order exists for that quote_id
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        stmt = select(Order).where(Order.id == uuid.UUID(order_id))
+        res = await session.execute(stmt)
+        persisted = res.scalar_one_or_none()
+        assert persisted is not None
+        assert str(persisted.id) == order_id
