@@ -3,7 +3,7 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.core.database import get_session_factory
 from app.modules.catalogue.models import (
@@ -13,6 +13,7 @@ from app.modules.catalogue.models import (
     ProductVariant,
     Retailer,
     RetailerVerificationDocument,
+    StoreInventory,
 )
 from app.modules.identity.models import User
 from app.modules.pricing.discount_service import DiscountService
@@ -246,6 +247,18 @@ async def test_admin_catalogue_management_and_pricing_isolation(
     assert get_deactivated.status_code == 200
     assert get_deactivated.json()["is_active"] is False
 
+    # Cleanup test listing
+    async with session_factory() as session:
+        await session.execute(
+            delete(StoreInventory).where(
+                StoreInventory.listing_id == uuid.UUID(listing_id)
+            )
+        )
+        await session.execute(
+            delete(ProductListing).where(ProductListing.id == uuid.UUID(listing_id))
+        )
+        await session.commit()
+
 
 @pytest.mark.asyncio
 async def test_retailer_verification_workflow_and_enforcement(
@@ -403,6 +416,18 @@ async def test_retailer_verification_workflow_and_enforcement(
         json={"adjustment_type": "DELTA", "quantity": 5},
     )
     assert susp_inv.status_code == 403
+
+    # Cleanup test listing
+    async with session_factory() as session:
+        await session.execute(
+            delete(StoreInventory).where(
+                StoreInventory.listing_id == uuid.UUID(listing_id)
+            )
+        )
+        await session.execute(
+            delete(ProductListing).where(ProductListing.id == uuid.UUID(listing_id))
+        )
+        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -576,6 +601,7 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
             name=f"Product A {unique}",
             slug=f"prod-a-{unique}",
             brand="Brand A",
+            is_active=False,
         )
         prod_b = Product(
             id=uuid.uuid4(),
@@ -583,6 +609,7 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
             name=f"Product B {unique}",
             slug=f"prod-b-{unique}",
             brand="Brand B",
+            is_active=False,
         )
         session.add_all([prod_a, prod_b])
         await session.flush()
@@ -592,12 +619,14 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
             product_id=prod_a.id,
             name="Variant A",
             sku=f"SKU-A-{unique}",
+            is_active=False,
         )
         var_b = ProductVariant(
             id=uuid.uuid4(),
             product_id=prod_b.id,
             name="Variant B",
             sku=f"SKU-B-{unique}",
+            is_active=False,
         )
         session.add_all([var_a, var_b])
         await session.flush()
@@ -611,6 +640,7 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
             original_price_paise=50000,
             selling_price_paise=45000,
             currency="INR",
+            is_active=False,
         )
         listing_b = ProductListing(
             id=uuid.uuid4(),
@@ -619,12 +649,17 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
             original_price_paise=50000,
             selling_price_paise=45000,
             currency="INR",
+            is_active=False,
         )
         session.add_all([listing_a, listing_b])
         await session.commit()
 
         cat_a_id = cat_a.id
+        cat_b_id = cat_b.id
+        prod_a_id = prod_a.id
         prod_b_id = prod_b.id
+        var_a_id = var_a.id
+        var_b_id = var_b.id
         listing_a_id = listing_a.id
         listing_b_id = listing_b.id
 
@@ -705,3 +740,21 @@ async def test_scoped_deals_category_and_product_applicability_isolation(
     await async_client.delete(
         f"/api/v1/admin/deals/{prod_deal_id}", headers=admin_headers
     )
+
+    # 7. Clean up scoped test products, variants, listings, and categories
+    async with session_factory() as session:
+        await session.execute(
+            delete(ProductListing).where(
+                ProductListing.id.in_([listing_a_id, listing_b_id])
+            )
+        )
+        await session.execute(
+            delete(ProductVariant).where(ProductVariant.id.in_([var_a_id, var_b_id]))
+        )
+        await session.execute(
+            delete(Product).where(Product.id.in_([prod_a_id, prod_b_id]))
+        )
+        await session.execute(
+            delete(Category).where(Category.id.in_([cat_a_id, cat_b_id]))
+        )
+        await session.commit()
