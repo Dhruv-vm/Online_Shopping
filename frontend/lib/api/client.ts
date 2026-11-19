@@ -40,6 +40,11 @@ import type {
   SearchFilterParams,
   SearchResponse,
   SuggestionsResponse,
+  AdminOverview,
+  AdminRetailerListItem,
+  RetailerOverview,
+  RetailerProfile,
+  RetailerRegisterPayload,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -220,6 +225,18 @@ class ApiClient {
     });
   }
 
+  public async put<T>(
+    endpoint: string,
+    body?: unknown,
+    options?: RequestInit
+  ): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: "PUT",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
   public async patch<T>(
     endpoint: string,
     body?: unknown,
@@ -301,6 +318,12 @@ class ApiClient {
     phone?: string | null;
   }): Promise<AuthResponse> {
     return this.post<AuthResponse>("/api/v1/auth/register", payload);
+  }
+
+  public async registerRetailer(
+    payload: RetailerRegisterPayload
+  ): Promise<AuthResponse> {
+    return this.post<AuthResponse>("/api/v1/auth/retailer/register", payload);
   }
 
   public async login(payload: {
@@ -628,6 +651,46 @@ class ApiClient {
   ): Promise<SuggestionsResponse> {
     const qs = new URLSearchParams({ q: query, limit: String(limit) }).toString();
     return this.get<SuggestionsResponse>(`/api/v1/search/suggestions?${qs}`);
+  }
+
+  // ================= Retailer Portal Methods (Phase 5A) =================
+  public async getRetailerProfile(): Promise<RetailerProfile> {
+    return this.get<RetailerProfile>("/api/v1/retailer/profile");
+  }
+
+  public async updateRetailerProfile(
+    payload: Partial<RetailerProfile>
+  ): Promise<RetailerProfile> {
+    return this.put<RetailerProfile>("/api/v1/retailer/profile", payload);
+  }
+
+  public async getRetailerOverview(): Promise<RetailerOverview> {
+    return this.get<RetailerOverview>("/api/v1/retailer/overview");
+  }
+
+  // ================= Admin Portal Methods (Phase 5A) =================
+  public async getAdminOverview(): Promise<AdminOverview> {
+    return this.get<AdminOverview>("/api/v1/admin/overview");
+  }
+
+  public async listAdminRetailers(
+    status?: string
+  ): Promise<AdminRetailerListItem[]> {
+    const endpoint = status
+      ? `/api/v1/admin/retailers?status=${encodeURIComponent(status)}`
+      : "/api/v1/admin/retailers";
+    return this.get<AdminRetailerListItem[]>(endpoint);
+  }
+
+  public async verifyRetailer(
+    retailerId: string,
+    status: string,
+    rejectionReason?: string
+  ): Promise<AdminRetailerListItem> {
+    return this.post<AdminRetailerListItem>(
+      `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}/verify`,
+      { status, rejection_reason: rejectionReason }
+    );
   }
 }
 

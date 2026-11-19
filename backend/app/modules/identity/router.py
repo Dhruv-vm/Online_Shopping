@@ -19,6 +19,7 @@ from app.modules.identity.schemas import (
     AuthResponse,
     MessageResponse,
     RefreshTokenRequest,
+    RetailerRegisterRequest,
     TokenResponse,
     UserLoginRequest,
     UserRegisterRequest,
@@ -58,6 +59,58 @@ async def register(
 
     return AuthResponse(
         user=UserResponse.model_validate(user),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        csrf_token=csrf_token,
+    )
+
+
+@auth_router.post(
+    "/retailer/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new retailer account and store profile",
+)
+async def register_retailer(
+    request: Request,
+    response: Response,
+    body: RetailerRegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AuthResponse:
+    service = IdentityService(db)
+    client_ip = get_client_ip(request)
+    user_agent = request.headers.get("User-Agent")
+
+    (
+        user,
+        retailer,
+        access_token,
+        refresh_token,
+        csrf_token,
+    ) = await service.register_retailer(
+        request=body,
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
+    await db.commit()
+
+    set_auth_cookies(response, access_token, refresh_token, csrf_token)
+
+    user_resp = UserResponse(
+        id=user.id,
+        email=user.email,
+        phone=user.phone,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=user.is_active,
+        retailer_id=retailer.id,
+        store_name=retailer.name,
+        verification_status=retailer.verification_status,
+        created_at=user.created_at,
+    )
+
+    return AuthResponse(
+        user=user_resp,
         access_token=access_token,
         refresh_token=refresh_token,
         csrf_token=csrf_token,
@@ -180,12 +233,14 @@ async def logout_all(
 @user_router.get(
     "/me",
     response_model=UserResponse,
-    summary="Get current customer profile",
+    summary="Get current user profile with role context",
 )
 async def get_my_profile(
     current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
-    return UserResponse.model_validate(current_user)
+    service = IdentityService(db)
+    return await service.build_user_response(current_user)
 
 
 address_router = APIRouter(prefix="/addresses", tags=["Addresses"])

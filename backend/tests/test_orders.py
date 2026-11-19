@@ -2323,3 +2323,230 @@ async def test_validation_error_handler_field_level_details(async_client: AsyncC
     assert "reservation_id" in err["message"]
     assert len(err["details"]) > 0
     assert err["details"][0]["loc"][-1] == "reservation_id"
+
+
+@pytest.mark.asyncio
+async def test_checkout_derivation_arbitrary_reservation_rejected(
+    async_client: AsyncClient,
+):
+    """Deriving quote_id fails with 404 when reservation_id is arbitrary / not found."""
+    _user_data, _email, addr_id = await setup_customer_with_address(async_client)
+    arbitrary_id = str(uuid.uuid4())
+    resp = await async_client.post(
+        "/api/v1/orders",
+        json={"reservation_id": arbitrary_id, "delivery_address_id": addr_id},
+    )
+    assert resp.status_code == 404
+    err = resp.json()["error"]
+    assert err["code"] == "RESERVATION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_checkout_derivation_foreign_owned_reservation_rejected(
+    async_client: AsyncClient,
+):
+    """Customer A cannot derive quote_id or order from Customer B's reservation."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    try:
+        # 1. Customer B creates reservation
+        _cust_b, _email_b, addr_b = await setup_customer_with_address(async_client)
+        await async_client.post(
+            "/api/v1/cart/items",
+            json={"listing_id": str(listing_id), "quantity": 1},
+        )
+        q_b = await async_client.post(
+            "/api/v1/quotes", json={"delivery_address_id": addr_b}
+        )
+        res_b = await async_client.post(
+            "/api/v1/reservations", json={"quote_id": q_b.json()["id"]}
+        )
+        res_b_id = res_b.json()["id"]
+
+        # 2. Customer A logs in
+        _cust_a, _email_a, addr_a = await setup_customer_with_address(async_client)
+
+        # 3. Customer A attempts to checkout using Customer B's reservation without quote_id
+        resp = await async_client.post(
+            "/api/v1/orders",
+            json={
+                "reservation_id": res_b_id,
+                "delivery_address_id": addr_a,
+            },
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "RESERVATION_NOT_FOUND"
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_checkout_derivation_expired_reservation_rejected(
+    async_client: AsyncClient,
+):
+    """Deriving quote_id from an expired reservation fails with 409 RESERVATION_EXPIRED."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    _user_data, _email, addr_id = await setup_customer_with_address(async_client)
+
+    try:
+        await async_client.post(
+            "/api/v1/cart/items",
+            json={"listing_id": str(listing_id), "quantity": 1},
+        )
+        q_resp = await async_client.post(
+            "/api/v1/quotes", json={"delivery_address_id": addr_id}
+        )
+        quote_id = q_resp.json()["id"]
+
+        r_resp = await async_client.post(
+            "/api/v1/reservations", json={"quote_id": quote_id}
+        )
+        res_id = r_resp.json()["id"]
+
+        # Mark reservation as expired in database
+        async with session_factory() as session:
+            await session.execute(
+                update(InventoryReservation)
+                .where(InventoryReservation.id == uuid.UUID(res_id))
+                .values(
+                    status=ReservationStatus.EXPIRED.value,
+                    expires_at=datetime.now(UTC) - timedelta(minutes=5),
+                )
+            )
+            await session.commit()
+
+        # Attempt checkout omitting quote_id
+        resp = await async_client.post(
+            "/api/v1/orders",
+            json={"reservation_id": res_id, "delivery_address_id": addr_id},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "RESERVATION_EXPIRED"
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_checkout_derivation_released_reservation_rejected(
+    async_client: AsyncClient,
+):
+    """Deriving quote_id from a released reservation fails with 409 RESERVATION_RELEASED."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    _user_data, _email, addr_id = await setup_customer_with_address(async_client)
+
+    try:
+        await async_client.post(
+            "/api/v1/cart/items",
+            json={"listing_id": str(listing_id), "quantity": 1},
+        )
+        q_resp = await async_client.post(
+            "/api/v1/quotes", json={"delivery_address_id": addr_id}
+        )
+        quote_id = q_resp.json()["id"]
+
+        r_resp = await async_client.post(
+            "/api/v1/reservations", json={"quote_id": quote_id}
+        )
+        res_id = r_resp.json()["id"]
+
+        # Mark reservation as released
+        async with session_factory() as session:
+            await session.execute(
+                update(InventoryReservation)
+                .where(InventoryReservation.id == uuid.UUID(res_id))
+                .values(status=ReservationStatus.RELEASED.value)
+            )
+            await session.commit()
+
+        # Attempt checkout omitting quote_id
+        resp = await async_client.post(
+            "/api/v1/orders",
+            json={"reservation_id": res_id, "delivery_address_id": addr_id},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "RESERVATION_RELEASED"
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_checkout_derivation_no_quote_associated_rejected(
+    async_client: AsyncClient,
+):
+    """Deriving quote_id from a reservation with quote_id=None fails with 400."""
+    from unittest.mock import AsyncMock, patch
+
+    _user_data, _email, addr_id = await setup_customer_with_address(async_client)
+    res_id = uuid.uuid4()
+
+    mock_res = InventoryReservation(
+        id=res_id,
+        customer_id=uuid.UUID(_user_data["id"]),
+        quote_id=None,
+        status=ReservationStatus.ACTIVE.value,
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+
+    with patch(
+        "app.modules.orders.repository.OrderRepository.get_reservation_by_id",
+        new=AsyncMock(return_value=mock_res),
+    ):
+        resp = await async_client.post(
+            "/api/v1/orders",
+            json={"reservation_id": str(res_id), "delivery_address_id": addr_id},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "RESERVATION_NO_QUOTE_ASSOCIATED"

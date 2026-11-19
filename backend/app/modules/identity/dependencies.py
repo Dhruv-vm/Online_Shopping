@@ -129,6 +129,31 @@ def require_role(required_role: str):
     return role_checker
 
 
+require_admin = require_role("admin")
+require_retailer = require_role("retailer")
+
+
+async def get_current_retailer(
+    current_user: Annotated[User, Depends(require_role("retailer"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Resolve the retailer store entity associated with the authenticated retailer account."""
+    from sqlalchemy import select
+
+    from app.modules.catalogue.models import Retailer
+
+    stmt = select(Retailer).where(Retailer.user_id == current_user.id)
+    result = await db.execute(stmt)
+    retailer = result.scalar_one_or_none()
+    if not retailer:
+        raise AppException(
+            code="RETAILER_NOT_FOUND",
+            message="No retailer profile associated with this account.",
+            status_code=404,
+        )
+    return retailer
+
+
 async def verify_csrf_token(
     request: Request,
     x_csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,

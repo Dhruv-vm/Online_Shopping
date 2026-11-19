@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { apiClient, ApiClientError } from "@/lib/api/client";
-import type { User } from "@/types";
+import type { RetailerRegisterPayload, User } from "@/types";
 
 interface AuthContextType {
   user: User | null;
@@ -15,6 +15,7 @@ interface AuthContextType {
     full_name: string;
     phone?: string | null;
   }) => Promise<User>;
+  registerRetailer: (payload: RetailerRegisterPayload) => Promise<User>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<User | null>;
 }
@@ -69,6 +70,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const registerRetailer = async (
+    payload: RetailerRegisterPayload
+  ): Promise<User> => {
+    setIsLoading(true);
+    try {
+      const response = await apiClient.registerRetailer(payload);
+      setUser(response.user);
+      return response.user;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await apiClient.logout();
@@ -88,6 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: !!user,
     login,
     register,
+    registerRetailer,
     logout,
     refreshProfile,
   };

@@ -18,6 +18,7 @@ import {
   Bell,
   Check,
   CheckCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -299,6 +300,23 @@ export function Header() {
             <div className="flex items-center gap-2.5 pl-2 border-l border-muted">
               {isAuthenticated ? (
                 <div className="flex items-center gap-2">
+                  {user?.role === "admin" && (
+                    <Link href="/admin">
+                      <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-medium cursor-pointer flex items-center gap-1 text-[11px] py-1 px-2">
+                        <ShieldAlert className="h-3 w-3" />
+                        Admin
+                      </Badge>
+                    </Link>
+                  )}
+                  {user?.role === "retailer" && (
+                    <Link href="/retailer">
+                      <Badge className="bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer flex items-center gap-1 text-[11px] py-1 px-2">
+                        <Store className="h-3 w-3" />
+                        Retailer
+                      </Badge>
+                    </Link>
+                  )}
+
                   <Link href="/account">
                     <Button
                       variant="outline"
@@ -323,6 +341,12 @@ export function Header() {
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
+                  <Link
+                    href="/register/retailer"
+                    className="text-xs text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-medium px-2 py-1 hidden xl:block"
+                  >
+                    Sell on BASKET
+                  </Link>
                   <Link href="/login">
                     <Button variant="ghost" size="sm" className="h-9 text-xs font-medium">
                       Sign In
@@ -442,6 +466,26 @@ export function Header() {
             <div className="pt-2 border-t border-muted/60 my-2">
               {isAuthenticated ? (
                 <>
+                  {user?.role === "admin" && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="px-3 py-2 rounded-md bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-semibold flex items-center gap-2 mb-1"
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      Admin Portal
+                    </Link>
+                  )}
+                  {user?.role === "retailer" && (
+                    <Link
+                      href="/retailer"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold flex items-center gap-2 mb-1"
+                    >
+                      <Store className="h-4 w-4" />
+                      Retailer Portal
+                    </Link>
+                  )}
                   <Link
                     href="/account"
                     onClick={() => setMobileMenuOpen(false)}
@@ -485,6 +529,15 @@ export function Header() {
                   >
                     <Button className="w-full justify-center bg-emerald-600 hover:bg-emerald-700 text-white">
                       Create Customer Account
+                    </Button>
+                  </Link>
+                  <Link
+                    href="/register/retailer"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="w-full"
+                  >
+                    <Button variant="ghost" className="w-full justify-center text-xs text-muted-foreground hover:text-emerald-600">
+                      Become a Partner Retailer (Sell on BASKET)
                     </Button>
                   </Link>
                 </div>
