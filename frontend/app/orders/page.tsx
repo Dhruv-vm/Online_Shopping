@@ -103,9 +103,14 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (!authLoading) {
-      fetchOrders();
+      if (isAuthenticated) {
+        fetchOrders();
+      } else {
+        setLoading(false);
+        setOrders([]);
+      }
     }
-  }, [authLoading, fetchOrders]);
+  }, [authLoading, isAuthenticated, fetchOrders]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -314,18 +319,37 @@ export default function OrdersPage() {
         <Card className="text-center py-12 px-4">
           <CardContent className="space-y-3">
             <Package className="h-12 w-12 text-muted-foreground mx-auto stroke-1" />
-            <h3 className="text-base font-semibold text-foreground">No orders found</h3>
+            <h3 className="text-base font-semibold text-foreground">
+              {!isAuthenticated ? "Sign in to view your orders" : "No orders found"}
+            </h3>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-              {statusFilter || searchQuery || fromDate || toDate
+              {!isAuthenticated
+                ? "Sign in to access your complete purchase history, or enter your Order Number and Access Token above to look up an order placed as a guest."
+                : statusFilter || searchQuery || fromDate || toDate
                 ? "No orders match your filter criteria. Try clearing filters to see all purchases."
                 : "You haven't placed any orders yet. Discover quality products across electronics, fashion, and groceries."}
             </p>
-            <div className="pt-2">
-              <Link href="/products">
-                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
-                  Start Shopping
-                </Button>
-              </Link>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              {!isAuthenticated ? (
+                <>
+                  <Link href="/login?redirect=/orders">
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
+                      Sign In to Account
+                    </Button>
+                  </Link>
+                  <Link href="/products">
+                    <Button size="sm" variant="outline" className="text-xs">
+                      Start Shopping
+                    </Button>
+                  </Link>
+                </>
+              ) : (
+                <Link href="/products">
+                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
+                    Start Shopping
+                  </Button>
+                </Link>
+              )}
             </div>
           </CardContent>
         </Card>

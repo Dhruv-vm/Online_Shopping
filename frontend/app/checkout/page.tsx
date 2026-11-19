@@ -323,6 +323,11 @@ function CheckoutContent() {
               </div>
             )}
             <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
+              <Link href="/orders">
+                <Button variant="ghost" size="sm" className="text-xs">
+                  My Orders
+                </Button>
+              </Link>
               <Link
                 href={
                   order?.id
