@@ -43,6 +43,7 @@ import type {
   AdminOverview,
   AdminRetailerListItem,
   AdminRetailerDetailResponse,
+  AdminRetailerSalesAnalyticsResponse,
   RetailerDocumentItem,
   AdminCatalogueProductListItem,
   AdminCatalogueProductDetailResponse,
@@ -695,13 +696,31 @@ class ApiClient {
     return this.get<AdminOverview>("/api/v1/admin/overview");
   }
 
-  public async listAdminRetailers(
-    status?: string
-  ): Promise<AdminRetailerListItem[]> {
-    const endpoint = status
-      ? `/api/v1/admin/retailers?status=${encodeURIComponent(status)}`
+  public async listAdminRetailers(params?: {
+    status?: string;
+    search?: string;
+    state?: string;
+    is_active?: boolean;
+  }): Promise<AdminRetailerListItem[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.search) query.set("search", params.search);
+    if (params?.state) query.set("state", params.state);
+    if (params?.is_active !== undefined)
+      query.set("is_active", String(params.is_active));
+    const qs = query.toString();
+    const endpoint = qs
+      ? `/api/v1/admin/retailers?${qs}`
       : "/api/v1/admin/retailers";
     return this.get<AdminRetailerListItem[]>(endpoint);
+  }
+
+  public async getAdminRetailerAnalytics(
+    retailerId: string
+  ): Promise<AdminRetailerSalesAnalyticsResponse> {
+    return this.get<AdminRetailerSalesAnalyticsResponse>(
+      `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}/analytics`
+    );
   }
 
   public async verifyRetailer(

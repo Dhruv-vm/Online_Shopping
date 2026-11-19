@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Store,
   ShieldCheck,
@@ -16,6 +17,7 @@ import {
   Check,
   Ban,
   ExternalLink,
+  BarChart3,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,7 @@ import type {
 export default function AdminRetailersPage() {
   const [retailers, setRetailers] = useState<AdminRetailerListItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
+  const [filterState, setFilterState] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -137,16 +140,22 @@ export default function AdminRetailersPage() {
     }
   };
 
+  const uniqueStates = Array.from(
+    new Set(retailers.map((r) => r.state).filter((s): s is string => Boolean(s)))
+  ).sort();
+
   const filteredRetailers = retailers.filter((r) => {
     const matchesStatus =
       filterStatus === "ALL" || r.verification_status === filterStatus;
+    const matchesState =
+      filterState === "ALL" || (r.state && r.state.toUpperCase() === filterState);
     const matchesSearch =
       !searchQuery ||
       r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (r.owner_email && r.owner_email.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (r.owner_name && r.owner_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (r.state && r.state.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesState && matchesSearch;
   });
 
   const getStatusBadge = (status: string) => {
@@ -225,14 +234,31 @@ export default function AdminRetailersPage() {
             </button>
           ))}
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search name, email, state..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 h-9 text-xs"
-          />
+        <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+          {uniqueStates.length > 0 && (
+            <select
+              value={filterState}
+              onChange={(e) => setFilterState(e.target.value)}
+              className="h-9 text-xs px-2.5 rounded-md border border-input bg-background text-foreground shadow-xs w-full sm:w-36"
+              aria-label="Filter by registered state"
+            >
+              <option value="ALL">All States ({uniqueStates.length})</option>
+              {uniqueStates.map((st) => (
+                <option key={st} value={st.toUpperCase()}>
+                  {st}
+                </option>
+              ))}
+            </select>
+          )}
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search name, email, state..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9 text-xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -290,6 +316,16 @@ export default function AdminRetailersPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Link href={`/admin/retailers/${r.id}`}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs px-2.5 gap-1 text-purple-700 hover:text-purple-800 border-purple-200 dark:border-purple-800/40 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                          >
+                            <BarChart3 className="h-3.5 w-3.5" />
+                            Analytics
+                          </Button>
+                        </Link>
                         <Button
                           variant="outline"
                           size="sm"

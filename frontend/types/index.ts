@@ -74,6 +74,7 @@ export interface ProductListingDetail {
   retailer_id: string;
   retailer_name: string;
   retailer_rating: number;
+  retailer_state?: string | null;
   seller_sku?: string | null;
   original_price_paise: number;
   selling_price_paise: number;
@@ -380,6 +381,35 @@ export interface AdminRetailerDetailResponse extends AdminRetailerListItem {
   rejection_reason?: string | null;
   documents: RetailerDocumentItem[];
   verification_history: RetailerVerificationHistoryItem[];
+}
+
+export interface AdminRetailerSalesProductItem {
+  product_id: string;
+  product_name: string;
+  variant_id: string;
+  variant_name: string;
+  sku: string | null;
+  quantity_sold: number;
+  selling_price_paise: number;
+  gross_revenue_paise: number;
+  refund_quantity: number;
+  refund_amount_paise: number;
+  net_sales_paise: number;
+}
+
+export interface AdminRetailerSalesAnalyticsResponse {
+  retailer_id: string;
+  retailer_name: string;
+  state: string | null;
+  verification_status: string;
+  is_active: boolean;
+  total_orders: number;
+  total_units_sold: number;
+  gross_merchandise_value_paise: number;
+  refunded_amount_paise: number;
+  net_sales_paise: number;
+  currency: string;
+  product_sales: AdminRetailerSalesProductItem[];
 }
 
 export interface AdminCatalogueVariantItem {

@@ -2,10 +2,10 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-19T18:55:00+05:30  
-> **Base Branch:** `integration` (commit `df30ee0`)  
-> **Head Status:** Single Alembic head `0013_retailer_inventory`  
-> **Test Status:** 379 Backend Tests Passed (100%), 67 Frontend Tests Passed (100%), CI Green  
+> **Last Audited:** 2026-11-19T21:00:00+05:30  
+> **Base Branch:** `integration` (commit `cd7e38b`)  
+> **Head Status:** Single Alembic head `0014_admin_moderation_deals`  
+> **Test Status:** 390 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -186,6 +186,28 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - `/admin/retailers/page.tsx`: Status-filtered retailer directory, real-time search, inspection drawer with submitted documents, verification controls, and decision modal with required audit reason notes.
   - `/admin/catalogue/page.tsx`: Platform catalogue manager with search, category filtering, product creation/edit modals, and variant SKU manager.
   - `/admin/deals/page.tsx`: Promotional deals dashboard with status filtering (Active, Scheduled, Paused, Expired), deal cards, active toggle, and deal creation/edit modal.
+
+### 4.6 Phase 5C.1 Marketplace Authenticity, Customer Product Visibility, Inventory Synchronization & Retailer Sales Analytics
+- **Authentic Retailers & Seeding:** Seeded 15 authentic, geographically diverse Indian verified retailers (Bengaluru KA, Mumbai MH, Delhi DL, Hyderabad TS, Chennai TN, Pune MH, Ahmedabad GJ, Kolkata WB, Jaipur RJ, Kochi KL, Chandigarh CH, Noida UP, Gurugram HR, Indore MP, Lucknow UP) with realistic GSTINs and physical addresses. Soft-deactivated legacy artificial dummy retailers while safeguarding foreign-key integrity. Seeded 10 core commercial categories and 77 canonical products with realistic INR market pricing. OpenSearch indexes and write/read aliases synchronized.
+- **Customer Storefront Multi-Seller Offers & Visibility:**
+  - Enforced server-side filtering across catalogue repository, search documents, and product detail queries to strictly exclude unverified, inactive, or suspended retailers from customer view.
+  - Added `retailer_state` to `ProductListingDetailSchema` to power regional seller badges.
+  - On the Product Detail Page (`/products/[id]`), implemented interactive Multi-Seller Offer comparison cards with store name, customer rating, merchant state, stock status, MRP, selling price, and discount percentage, allowing shoppers to choose which retailer's offer to add to cart.
+  - Displays a clean "Currently Unavailable" state when no active, verified retailers offer the item.
+- **Atomic Inventory Deduction & Idempotency:**
+  - 10-minute hold on `reserved_quantity` upon checkout reservation creation.
+  - Atomic permanent deduction (`on_hand_quantity -= qty`, `reserved_quantity -= qty`) upon payment confirmation (`confirm_reservation`).
+  - Idempotent confirmation prevents double-deductions upon duplicate webhook or callback replays.
+  - Releasing expired or cancelled reservations restores `reserved_quantity` to 0 without mutating `on_hand_quantity`.
+- **Admin Retailer Management & Store-Wise Sales Analytics:**
+  - Extended `GET /api/v1/admin/retailers` with multi-field search and registered state filtering (`state=KA`).
+  - Mounted `GET /api/v1/admin/retailers/{retailer_id}/analytics` guarded by `require_admin` calculating total orders, units sold, gross merchandise value (GMV), customer refunds, net sales, and per-variant sales breakdowns.
+  - Implemented `/admin/retailers/[id]` sales analytics dashboard with 4 KPI cards, store metadata, and product-level sales breakdown table.
+- **Verification Evidence:**
+  - Added 6 automated integration tests in `backend/tests/test_marketplace_authenticity_and_inventory.py`.
+  - Full backend test suite: 390 passed (100%).
+  - Full frontend test suite: 68 passed (100%).
+  - Full TypeScript type-check and Next.js production build: 0 errors (22/22 pages compiled).
 
 ---
 

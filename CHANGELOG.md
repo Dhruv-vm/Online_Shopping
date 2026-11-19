@@ -5,6 +5,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.7.1] — 2026-11-19
+
+### Added
+- **Phase 5C.1 Marketplace Authenticity, Customer Product Visibility, Inventory Synchronization & Retailer Sales Analytics:**
+  - **Marketplace Seeding & Data Authenticity:**
+    - Seeded 15 authentic, verified Indian retail stores located in major cities (Bengaluru KA, Mumbai MH, Delhi DL, Hyderabad TS, Chennai TN, Pune MH, Ahmedabad GJ, Kolkata WB, Jaipur RJ, Kochi KL, Chandigarh CH, Noida UP, Gurugram HR, Indore MP, Lucknow UP) with realistic GSTINs and physical store addresses.
+    - Soft-deactivated legacy artificial test retailers while safeguarding foreign-key integrity.
+    - Seeded 10 core commercial categories and 77 canonical products with realistic INR pricing (e.g., MacBook Air 15" M3 ~₹1,24,900 to ₹1,27,490). Re-indexed full catalogue into OpenSearch with blue/green alias synchronization.
+  - **Customer Storefront Multi-Seller Offers & Visibility:**
+    - Excluded unverified, inactive, or suspended retailers from customer-facing storefront listings, faceted search results, and PDP variant listings.
+    - In `ProductListingDetailSchema`, exposed `retailer_state` to power regional seller signals.
+    - On Product Detail Page (`/products/[id]`), implemented interactive Multi-Seller Offer comparison cards with store name, customer rating, merchant state, stock status, MRP, selling price, and discount percentage, allowing shoppers to choose which retailer's offer to add to cart.
+    - Added "Currently Unavailable" storefront state when all sellers for a product variant are unverified or inactive.
+  - **Atomic Inventory Deduction & Idempotency:**
+    - Guaranteed 10-minute hold on `reserved_quantity` upon reservation creation.
+    - Enforced atomic permanent deduction (`on_hand_quantity -= qty`, `reserved_quantity -= qty`) upon payment confirmation (`confirm_reservation`).
+    - Implemented idempotent confirmation safety: replaying confirmation on an already confirmed reservation never causes double-deductions.
+    - Guaranteed that releasing expired or cancelled reservations restores `reserved_quantity` to 0 without mutating `on_hand_quantity`.
+  - **Admin Retailer Directory State Filter & Store-Wise Sales Analytics:**
+    - In `GET /api/v1/admin/retailers`, added multi-field `search` (name, address) and `state` filtering (e.g. `state=KA`).
+    - Mounted `GET /api/v1/admin/retailers/{retailer_id}/analytics` guarded by `require_admin` calculating total completed orders, units sold, gross merchandise value (GMV), customer refunds, net sales, and per-variant sales breakdowns.
+    - Built Admin Retailer Sales Analytics dashboard (`/admin/retailers/[id]`) with 4 KPI cards (Total Orders, Units Sold, GMV, Net Sales in INR), store metadata, and product-level sales breakdown table. Added direct "Analytics" action button in `/admin/retailers`.
+  - **Automated Verification:**
+    - Added 6 automated integration tests in `backend/tests/test_marketplace_authenticity_and_inventory.py`.
+    - 390 backend tests passing (100%).
+    - 68 frontend tests passing (100%).
+    - Ruff backend lint: All checks passed.
+    - TypeScript type check: 0 errors.
+    - Next.js production build: 22/22 static pages compiled.
+
+---
+
 ## [0.7.0] — 2026-11-19
 
 ### Added

@@ -22,6 +22,7 @@ from app.modules.admin.schemas import (
     AdminOverviewResponse,
     AdminRetailerDetailResponse,
     AdminRetailerListItem,
+    AdminRetailerSalesAnalyticsResponse,
     DocumentVerifyRequest,
     RetailerDocumentItem,
     RetailerVerifyRequest,
@@ -68,9 +69,26 @@ async def list_admin_retailers(
             description="Filter by status: ALL, PENDING, VERIFIED, REJECTED, SUSPENDED"
         ),
     ] = None,
+    search: Annotated[
+        str | None,
+        Query(description="Search by store name, slug, email, or owner name"),
+    ] = None,
+    state: Annotated[
+        str | None,
+        Query(description="Filter by state code (e.g. KA, MH, DL)"),
+    ] = None,
+    is_active: Annotated[
+        bool | None,
+        Query(description="Filter by active status"),
+    ] = None,
 ) -> list[AdminRetailerListItem]:
     service = AdminService(db)
-    return await service.list_retailers(status=status)
+    return await service.list_retailers(
+        status=status,
+        search=search,
+        state=state,
+        is_active=is_active,
+    )
 
 
 @router.get(
@@ -84,6 +102,19 @@ async def get_admin_retailer(
 ) -> AdminRetailerDetailResponse:
     service = AdminService(db)
     return await service.get_retailer(retailer_id)
+
+
+@router.get(
+    "/retailers/{retailer_id}/analytics",
+    response_model=AdminRetailerSalesAnalyticsResponse,
+    summary="Get comprehensive store-level sales analytics and product-level sales breakdown",
+)
+async def get_admin_retailer_analytics(
+    retailer_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminRetailerSalesAnalyticsResponse:
+    service = AdminService(db)
+    return await service.get_retailer_sales_analytics(retailer_id)
 
 
 @router.post(

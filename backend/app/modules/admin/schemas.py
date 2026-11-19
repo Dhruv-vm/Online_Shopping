@@ -295,3 +295,39 @@ class AdminDealUpdateRequest(BaseModel):
     valid_to: datetime.datetime | None = None
     description: str | None = None
     is_active: bool | None = None
+
+
+# ================= Retailer Sales Analytics =================
+
+
+class AdminRetailerSalesProductItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    product_id: uuid.UUID
+    product_name: str
+    variant_id: uuid.UUID
+    variant_name: str
+    sku: str | None = None
+    quantity_sold: int
+    selling_price_paise: int
+    gross_revenue_paise: int
+    refund_quantity: int = 0
+    refund_amount_paise: int = 0
+    net_sales_paise: int
+
+
+class AdminRetailerSalesAnalyticsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    retailer_id: uuid.UUID
+    retailer_name: str
+    state: str | None = None
+    verification_status: str
+    is_active: bool
+    total_orders: int
+    total_units_sold: int
+    gross_merchandise_value_paise: int
+    refunded_amount_paise: int
+    net_sales_paise: int
+    currency: str = "INR"
+    product_sales: list[AdminRetailerSalesProductItem] = Field(default_factory=list)

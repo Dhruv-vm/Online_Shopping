@@ -47,6 +47,7 @@ class ProductListingDetailSchema(BaseModel):
     retailer_id: uuid.UUID
     retailer_name: str
     retailer_rating: float
+    retailer_state: str | None = None
     seller_sku: str | None = None
     original_price_paise: int
     selling_price_paise: int
