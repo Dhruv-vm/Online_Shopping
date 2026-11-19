@@ -536,4 +536,4 @@ PostgreSQL read-model projection table maintained by `OrderProjectionConsumer` d
 - `retailers`: Array of Objects (`id`, `name`, `slug`, `selling_price_paise`, `original_price_paise`, `rating`, `is_available`)
 - `is_active`: Boolean
 - `created_at`, `updated_at`: Date
-- `version`: Long (External versioning using monotonic epoch millisecond timestamp for `external_gte` concurrency protection)
+- `aggregate_version`: Long (External versioning using monotonic integer `aggregate_version` for `external_gte` concurrency protection, never timestamps)

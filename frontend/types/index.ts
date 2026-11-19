@@ -649,3 +649,93 @@ export interface RazorpayCheckoutOptions {
     backdropclose?: boolean;
   };
 }
+
+// Universal Search Types (Phase 3E)
+export interface SearchFacetBucket {
+  key: string;
+  doc_count: number;
+}
+
+export interface SearchFacets {
+  categories: SearchFacetBucket[];
+  brands: SearchFacetBucket[];
+  retailers: SearchFacetBucket[];
+  price_stats?: {
+    count?: number;
+    min?: number;
+    max?: number;
+    avg?: number;
+    sum?: number;
+  };
+}
+
+export interface ProductSearchItem {
+  product_id: string;
+  name: string;
+  slug: string;
+  brand: string;
+  description: string;
+  category_id: string;
+  category_name: string;
+  category_slug: string;
+  primary_image_url?: string | null;
+  min_price_paise: number;
+  max_price_paise: number;
+  currency: string;
+  is_in_stock: boolean;
+  total_available_quantity: number;
+  rating: number;
+  retailers: Array<{
+    retailer_id: string;
+    retailer_name: string;
+    listing_id: string;
+    selling_price_paise: number;
+    original_price_paise: number;
+    is_in_stock: boolean;
+    available_quantity: number;
+  }>;
+  variants: Array<{
+    variant_id: string;
+    name: string;
+    sku: string;
+    attributes: Record<string, unknown>;
+    is_in_stock: boolean;
+  }>;
+  attributes: Record<string, string[]>;
+}
+
+export interface SearchResponse {
+  items: ProductSearchItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  engine: "opensearch" | "postgres_fallback";
+  facets?: SearchFacets | null;
+  took_ms?: number;
+}
+
+export interface SuggestionItem {
+  text: string;
+  type: "product" | "brand" | "category";
+  slug?: string | null;
+}
+
+export interface SuggestionsResponse {
+  query: string;
+  suggestions: SuggestionItem[];
+}
+
+export interface SearchFilterParams {
+  q?: string;
+  category?: string;
+  brand?: string;
+  retailer_id?: string;
+  min_price?: number;
+  max_price?: number;
+  in_stock?: boolean;
+  sort?: "relevance" | "price_asc" | "price_desc" | "rating_desc" | "newest";
+  page?: number;
+  page_size?: number;
+  force_fallback?: boolean;
+}

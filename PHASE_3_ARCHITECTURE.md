@@ -1,14 +1,30 @@
 # BASKET — Phase 3 Master Architecture Specification
 ## Asynchronous Event Streaming (Aiven Kafka), Transactional Outbox, Derived Search Read Model (Aiven OpenSearch), and Universal Multi-Category Search
 
-**Version:** 2.1.0 (Final Architecture Sign-Off & Reliability Closure)
-**Status:** ARCHITECTURE SIGNED OFF (Approved for Slice 3A Implementation)
-**Baseline Commit:** `6fd7f34` (`integration`)
-**Target Delivery:** Phase 3 (Slices 3A through 3F)
+**Version:** 2.2.0 (Phase 3 Complete: Slices 3A through 3F Implemented & Verified)
+**Status:** PHASE 3 FULLY IMPLEMENTED (Ready for Final PR Review)
+**Target Delivery:** Phase 3 (Slices 3A through 3F Completed)
 
 ---
 
 ## Architecture Correction Log
+
+### Version 2.2.0 (Phase 3D, 3E, 3F Completion & Production Hardening)
+1. **OpenSearch Indexing Pipeline (Slice 3D):**
+   - Implemented production `OpenSearchClient` with `httpx.AsyncClient` connection pooling, strict production TLS verification, zero-credential logging, and exponential backoff.
+   - Built deterministic `MockOpenSearchClient` with true `external_gte` versioning, atomic alias management, and downtime simulation.
+   - Designed `IndexManager` with blue/green index creation (`basket_products_v1`), read/write alias separation, atomic alias swapping, rollback, and DB reconciliation.
+   - Implemented `OpenSearchConsumer` (Strategy B) subscribing to catalogue/inventory events, querying authoritative PostgreSQL state, and executing external_gte upserts with safe 409 conflict discarding.
+2. **Universal Multi-Category Search & SQL Fallback (Slice 3E):**
+   - Built `SearchService` with multi-match relevance scoring (`name^3.0`, `brand^2.0`, `category_name^1.5`, `description^1.0`), faceted aggregations, and price statistics.
+   - Integrated 3-state `SearchCircuitBreaker` (`CLOSED`, `OPEN`, `HALF_OPEN`) with 5 consecutive failure trip threshold and 30s recovery window.
+   - Added resilient PostgreSQL SQL fallback that guarantees zero search outages during OpenSearch downtime while protecting database CPU.
+   - Delivered full-featured Next.js Frontend Search UI (`/search`) with dynamic filters, sort selector, responsive product grid, and search engine mode indicator.
+3. **Observability, Monitoring & Health Checks (Slice 3F):**
+   - Implemented thread-safe in-memory `MetricsRegistry` exposing standard Prometheus text format 0.0.4 at `GET /metrics`.
+   - Instrumented latency histograms, event counters, queue gauges, and circuit breaker status with strictly bounded cardinality and zero PII.
+   - Enhanced `GET /ready` health endpoint with multi-dependency checks (PostgreSQL critical, Kafka degraded, OpenSearch degraded).
+   - Authored Prometheus alerting rules (`deploy/observability/alerts.yml`) and Grafana production dashboard (`deploy/observability/dashboards/basket-platform.json`).
 
 ### Version 2.1.0 (Mandatory Sign-Off Clarifications)
 1. **PostgreSQL Consumer Commit vs. Offset Commit:**
@@ -486,13 +502,11 @@ graph TD
     E --> F[Slice 3F: Observability & Operational Runbooks]
 ```
 
-### Slice 3A — Infrastructure, Settings & Event Contracts (Current Active Slice)
-- **Scope:** Dependency `aiokafka>=0.11.0`, Aiven settings validation, `EventEnvelope` model with strict Level 1/Level 2 PII validation, `MockKafkaProducer` for local testing.
-- **Acceptance Criteria:** Envelope tests pass; mock producer buffers events without live credentials; PII fields fail closed; migration head unchanged.
+### Implementation Status Across Slices
 
-### Slices 3B Through 3F (Future Slices — Out of Current Implementation Scope)
-- Slice 3B: Transactional outbox publisher with lease management and migration `0009`.
-- Slice 3C: Reusable Kafka consumer engine with `consumer_inbox` deduplication.
-- Slice 3D: OpenSearch index mapping and incremental indexing consumer.
-- Slice 3E: Universal search API with circuit breaker and SQL fallback.
-- Slice 3F: Prometheus observability and operational CLI runbooks.
+- **Slice 3A (Infrastructure, Settings & Event Contracts):** COMPLETE.
+- **Slice 3B (Transactional Outbox Publisher & Recovery):** COMPLETE.
+- **Slice 3C (Kafka Consumers & Inbox Deduplication):** COMPLETE.
+- **Slice 3D (OpenSearch Schema & Indexing Pipeline):** COMPLETE.
+- **Slice 3E (Universal Multi-Category Search API & Frontend UI):** COMPLETE.
+- **Slice 3F (Observability, Monitoring, Metrics & Dashboards):** COMPLETE.
