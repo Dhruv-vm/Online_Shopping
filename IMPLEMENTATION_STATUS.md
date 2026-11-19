@@ -162,6 +162,31 @@ During Phase 4 testing, a critical issue was observed where customers completed 
 - **Low-Stock Alerting:** Configurable `low_stock_threshold` triggers real-time `is_low_stock` state flags in database queries, powering the warning banner in `/retailer` and dedicated `LOW_STOCK` filter tabs in the inventory console.
 - **Frontend Consoles:** Implemented `/retailer/listings` (listings table with search and pricing edit modal), `/retailer/listings/new` (catalogue explorer with live variant preview), and `/retailer/inventory` (warehouse console with 6 KPI cards, status filters, and stock adjustment modal).
 
+### 4.5 Phase 5C Admin Marketplace Moderation, Retailer Approval & Platform Deals
+- **Alembic Migration 0014 (`0014_admin_moderation_deals`):**
+  - Added review audit columns to `retailers`: `reviewed_by_user_id` (FK `users.id`), `verified_at` (`DateTime(timezone=True)`), `rejection_reason` (`Text`).
+  - Created `retailer_verification_history` audit trail table: `id` (UUID), `retailer_id` (FK `retailers.id`), `admin_id` (FK `users.id`), `action` (VARCHAR 64), `from_status` (VARCHAR 32), `to_status` (VARCHAR 32), `reason` (Text), `created_at`.
+  - Added deal scope, targeting, and usage columns to `discounts`: `scope` (VARCHAR 32, default `'PLATFORM_WIDE'`), `category_id` (FK `categories.id`), `product_id` (FK `products.id`), `usage_limit` (Integer), `times_used` (Integer, default 0), `description` (Text). Reversible upgrade and downgrade cleanly verified.
+- **Canonical Catalogue Management:**
+  - Mounted `GET /api/v1/admin/catalogue/products`, `POST /api/v1/admin/catalogue/products`, `GET /api/v1/admin/catalogue/products/{id}`, `PUT /api/v1/admin/catalogue/products/{id}`, and `DELETE /api/v1/admin/catalogue/products/{id}`.
+  - Mounted variant endpoints: `POST /api/v1/admin/catalogue/products/{id}/variants`, `PUT /api/v1/admin/catalogue/variants/{id}`, and `DELETE /api/v1/admin/catalogue/variants/{id}`.
+  - Mounted category endpoints: `GET /api/v1/admin/catalogue/categories` and `POST /api/v1/admin/catalogue/categories`.
+  - **Canonical Specifications Invariant:** Admin editing canonical master products, attributes, or variants updates the catalogue blueprint and duplicate SKU/slugs are rejected; canonical edits strictly never alter existing retailer listings, independent selling prices, or retailer stock levels.
+- **Retailer Verification & Compliance Desk:**
+  - Mounted `GET /api/v1/admin/retailers/{id}` returning store details, submitted compliance documents, and full verification history audit trail.
+  - Mounted `POST /api/v1/admin/retailers/{id}/verify` and `POST /api/v1/admin/retailers/{id}/documents/{doc_id}/verify`, persisting reviewer `admin_id`, timestamp, decision, and audit reason.
+  - **Verification Status Enforcement:** `RetailerService` strictly enforces verification status on all operational endpoints. Unverified (`PENDING`), `REJECTED`, or `SUSPENDED` retailers are blocked with HTTP 403 (`RETAILER_NOT_VERIFIED` or `RETAILER_SUSPENDED`) from creating listings, updating listings, deleting listings, or adjusting warehouse inventory.
+- **Platform Deals & Dynamic Promotion Engine:**
+  - Mounted `GET /api/v1/admin/deals`, `POST /api/v1/admin/deals`, `GET /api/v1/admin/deals/{id}`, `PUT /api/v1/admin/deals/{id}`, and `DELETE /api/v1/admin/deals/{id}` guarded by `require_admin`.
+  - Supports scopes (`PLATFORM_WIDE`, `CATEGORY`, `PRODUCT`, `LISTING`), discount types (`PERCENTAGE` up to 90%, `FIXED_AMOUNT`), min order thresholds, max discount caps, usage limits, and scheduling (`valid_from`, `valid_to`).
+  - **Pricing Integrity Invariant:** Platform promotions dynamically calculate in `DiscountService` during cart and checkout quote generation without overwriting retailer-specific base prices or retailer inventory.
+- **Frontend Admin Consoles:**
+  - `/admin/layout.tsx`: Refined operations desk navigation highlighting active route tabs and public/retailer cross-links.
+  - `/admin/page.tsx`: Added quick-access module cards directly launching Retailers & Verification, Platform Catalogue, and Deals & Promotions.
+  - `/admin/retailers/page.tsx`: Status-filtered retailer directory, real-time search, inspection drawer with submitted documents, verification controls, and decision modal with required audit reason notes.
+  - `/admin/catalogue/page.tsx`: Platform catalogue manager with search, category filtering, product creation/edit modals, and variant SKU manager.
+  - `/admin/deals/page.tsx`: Promotional deals dashboard with status filtering (Active, Scheduled, Paused, Expired), deal cards, active toggle, and deal creation/edit modal.
+
 ---
 
 ## 5. Feature Specification vs. Implementation Matrix
@@ -185,7 +210,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Order Cancellations & Returns** | Customer | Core | **Fully Implemented** | Pre-dispatch cancellation, post-delivery returns & inspections. |
 | **Customer Notifications** | Customer | Core | **Fully Implemented** | In-app notification center, unread counters, mark as read. |
 | **Customer Account Management** | Customer | Core | **Fully Implemented** | Profile, saved addresses, recent purchases, session revoke. |
-| **Admin Panel Dashboard** | Admin | Core | **Partially Implemented (Phase 5A)** | Overview KPIs, retailer moderation queue, verify/suspend APIs, `/admin` UI. |
+| **Admin Panel Dashboard** | Admin | Core | **Fully Implemented (Phase 5C)** | Overview KPIs, retailer compliance verification, canonical catalogue manager, promotional deals engine, `/admin/*`. |
 | **Retailer Panel Dashboard** | Retailer | Core | **Expanded (Phase 5A + 5B)** | Store profile, open/pause toggle, `/retailer/listings`, `/retailer/inventory`, overview metrics. |
 | **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
 | **Basket Mission & Intent Memory** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.2, §3.3. |

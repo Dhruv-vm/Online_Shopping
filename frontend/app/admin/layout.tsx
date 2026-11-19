@@ -2,17 +2,16 @@
 
 import React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   ShieldAlert,
   BarChart3,
-  Users,
   Store,
   LayoutGrid,
-  ShoppingBag,
-  Sliders,
+  Tag,
   ChevronRight,
   ArrowLeft,
+  ExternalLink,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +23,7 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
@@ -73,6 +73,13 @@ export default function AdminLayout({
     );
   }
 
+  const navLinks = [
+    { href: "/admin", label: "Overview & KPIs", icon: BarChart3, exact: true },
+    { href: "/admin/retailers", label: "Retailers & Compliance", icon: Store },
+    { href: "/admin/catalogue", label: "Platform Catalogue", icon: LayoutGrid },
+    { href: "/admin/deals", label: "Deals & Promotions", icon: Tag },
+  ];
+
   return (
     <div className="min-h-screen bg-muted/20">
       {/* Top Banner */}
@@ -87,8 +94,8 @@ export default function AdminLayout({
           </div>
           <div className="flex items-center gap-4 text-purple-300">
             <span>Operator: <strong>{user?.full_name}</strong></span>
-            <Link href="/" className="hover:text-white underline">
-              View Public Storefront
+            <Link href="/" className="hover:text-white underline flex items-center gap-1">
+              Public Storefront <ExternalLink className="h-3 w-3" />
             </Link>
           </div>
         </div>
@@ -103,41 +110,50 @@ export default function AdminLayout({
                 Operations Desk
               </div>
               <nav className="space-y-1 text-sm font-medium">
-                <Link
-                  href="/admin"
-                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <BarChart3 className="h-4 w-4" />
-                    Overview & KPIs
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-purple-400" />
-                </Link>
-                <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
-                  Marketplace Governance
-                </div>
-                <Link
-                  href="/admin"
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Store className="h-4 w-4" />
-                  Retailers & Onboarding
-                </Link>
+                {navLinks.map((item) => {
+                  const isActive = item.exact
+                    ? pathname === item.href
+                    : pathname.startsWith(item.href);
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                        isActive
+                          ? "bg-purple-50 text-purple-700 font-semibold dark:bg-purple-950/50 dark:text-purple-300"
+                          : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Icon className={`h-4 w-4 ${isActive ? "text-purple-600 dark:text-purple-400" : ""}`} />
+                        {item.label}
+                      </div>
+                      {isActive && <ChevronRight className="h-4 w-4 text-purple-400" />}
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              <div className="pt-4 mt-4 border-t text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                Quick Navigation
+              </div>
+              <div className="space-y-1 mt-2 text-sm font-medium">
                 <Link
                   href="/products"
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
-                  <LayoutGrid className="h-4 w-4" />
-                  Catalogue Explorer
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Storefront Catalogue
                 </Link>
                 <Link
-                  href="/orders"
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  href="/retailer"
+                  className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
-                  <ShoppingBag className="h-4 w-4" />
-                  Orders & Shipments
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Retailer Portal View
                 </Link>
-              </nav>
+              </div>
             </div>
           </aside>
 

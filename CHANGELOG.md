@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.7.0] — 2026-11-19
+
+### Added
+- **Phase 5C Admin Marketplace Moderation, Retailer Approval & Platform Deals:**
+  - **Alembic Migration 0014 (`0014_admin_moderation_deals`):**
+    - Extended `retailers` with review audit fields: `reviewed_by_user_id` (FK `users.id`), `verified_at` (`DateTime(timezone=True)`), and `rejection_reason` (`Text`).
+    - Created `retailer_verification_history` audit trail table: `id` (UUID), `retailer_id` (FK `retailers.id`), `admin_id` (FK `users.id`), `action` (VARCHAR 64), `from_status` (VARCHAR 32), `to_status` (VARCHAR 32), `reason` (Text), `created_at`.
+    - Extended `discounts` with campaign targeting and limits: `scope` (VARCHAR 32, default `'PLATFORM_WIDE'`), `category_id` (FK `categories.id`), `product_id` (FK `products.id`), `usage_limit` (Integer), `times_used` (Integer, default 0), and `description` (Text). Verified clean upgrade and downgrade round-trip.
+  - **Admin Canonical Catalogue Management:**
+    - Mounted `GET /api/v1/admin/catalogue/products`, `POST /api/v1/admin/catalogue/products`, `GET /api/v1/admin/catalogue/products/{id}`, `PUT /api/v1/admin/catalogue/products/{id}`, and `DELETE /api/v1/admin/catalogue/products/{id}`.
+    - Mounted variant management: `POST /api/v1/admin/catalogue/products/{id}/variants`, `PUT /api/v1/admin/catalogue/variants/{id}`, and `DELETE /api/v1/admin/catalogue/variants/{id}`.
+    - Mounted category endpoints: `GET /api/v1/admin/catalogue/categories` and `POST /api/v1/admin/catalogue/categories`.
+    - **Canonical Blueprint Invariant:** Guaranteed that editing canonical master products, attributes, or variants never alters individual retailer listing prices or merchant inventory.
+  - **Retailer Verification & Compliance Desk:**
+    - Mounted `GET /api/v1/admin/retailers/{id}` returning store details, submitted compliance documents, and verification audit history.
+    - Mounted `POST /api/v1/admin/retailers/{id}/verify` and `POST /api/v1/admin/retailers/{id}/documents/{doc_id}/verify` persisting reviewer identity, decision, timestamp, and audit notes.
+    - **Verification Enforcement:** `RetailerService` strictly prevents unverified (`PENDING`), `REJECTED`, or `SUSPENDED` retailers from publishing listings, updating prices, or adjusting warehouse inventory.
+  - **Platform Deals & Promotion Scheduler:**
+    - Mounted `GET /api/v1/admin/deals`, `POST /api/v1/admin/deals`, `GET /api/v1/admin/deals/{id}`, `PUT /api/v1/admin/deals/{id}`, and `DELETE /api/v1/admin/deals/{id}`.
+    - Supported scopes (`PLATFORM_WIDE`, `CATEGORY`, `PRODUCT`, `LISTING`), discount types (`PERCENTAGE` up to 90%, `FIXED_AMOUNT`), min order thresholds, max discount caps, usage limits, and scheduling (`valid_from`, `valid_to`).
+    - **Pricing Integrity Invariant:** Deals apply dynamically in checkout quotes without modifying underlying retailer listing selling prices.
+  - **Frontend Admin Consoles:**
+    - `/admin/layout.tsx`: Refined operations desk sidebar with active tab tracking and direct navigation.
+    - `/admin/page.tsx`: Quick module launch cards for Retailers & Verification, Platform Catalogue, and Deals & Promotions.
+    - `/admin/retailers/page.tsx`: Full retailer verification console with status filter tabs, search, document preview & verification, and decision modal with audit logging.
+    - `/admin/catalogue/page.tsx`: Canonical catalogue manager with search, category filtering, product create/edit modals, and variant hierarchy manager.
+    - `/admin/deals/page.tsx`: Platform deals dashboard with status filtering, deal cards, active toggles, and deal create/edit modals.
+  - **Automated Verification:**
+    - Added 5 test suites in `tests/test_admin_marketplace_moderation.py` covering Admin RBAC, canonical catalogue isolation, retailer approval enforcement, platform deals scheduling, and scoped deals usage limits. All 384 backend tests passed.
+    - Added 5 API client integration test suites in `portals.test.ts`. All 68 frontend tests passed. Zero TypeScript errors and production Next.js build verified.
+
+---
+
 ## [0.6.1] — 2026-11-19
 
 ### Added

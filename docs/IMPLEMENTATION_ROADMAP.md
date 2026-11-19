@@ -187,9 +187,28 @@ Establish strict role-based access control (RBAC), multi-role authentication, re
     - `/retailer/inventory`: Real-time stock dashboard with 6 KPI summary cards (Total Items, On-Hand Units, Reserved Holds, Available Stock, Low Stock Alerts, Out of Stock Alerts), alert filter tabs, and SET/DELTA inventory adjustment modals.
   - **Verification:** 7 comprehensive integration tests in `test_retailer_listings_inventory.py` covering RBAC, catalogue lookup, listing CRUD, anti-IDOR tenant isolation, pricing hierarchies, reservation safety, and concurrent race condition protections. 4 client test suites in `portals.test.ts`. Full test suites green (379 backend, 67 frontend).
 
-#### Vertical Slice 5C: Admin Marketplace Moderation, Retailer Approval & Platform Deals
+#### Vertical Slice 5C: Admin Marketplace Moderation, Retailer Approval & Platform Deals [COMPLETED]
+- **Status:** **Implemented & Verified** (Branch `feature/phase5c-admin-marketplace-moderation`, Migration `0014_admin_moderation_deals`)
 - **Features Covered:** 1.1, 1.2, 1.3, 1.7.
-- **Deliverables:** Admin catalogue product CRUD, retailer onboarding approval/rejection, document verification, and platform-wide deal scheduler.
+- **Deliverables:**
+  - **Schema:** Alembic migration `0014_admin_moderation_deals`:
+    - Added review audit columns to `retailers`: `reviewed_by_user_id` (FK `users.id`), `verified_at` (`DateTime(timezone=True)`), `rejection_reason` (`Text`).
+    - Created `retailer_verification_history` audit trail table: `id` (UUID), `retailer_id` (FK `retailers.id`), `admin_id` (FK `users.id`), `action` (VARCHAR 64), `from_status` (VARCHAR 32), `to_status` (VARCHAR 32), `reason` (Text), `created_at`.
+    - Added targeting and promotion columns to `discounts`: `scope` (VARCHAR 32, default `'PLATFORM_WIDE'`), `category_id` (FK `categories.id`), `product_id` (FK `products.id`), `usage_limit` (Integer), `times_used` (Integer, default 0), `description` (Text).
+  - **Backend Services & APIs:**
+    - Canonical catalogue management: `GET/POST/PUT/DELETE /api/v1/admin/catalogue/products`, `POST/PUT/DELETE /api/v1/admin/catalogue/products/{id}/variants`, `GET/POST /api/v1/admin/catalogue/categories`. Prevents duplicate canonical slugs/SKUs while strictly preserving retailer listing price isolation.
+    - Retailer verification console: `GET /api/v1/admin/retailers/{id}`, `POST /api/v1/admin/retailers/{id}/verify`, `POST /api/v1/admin/retailers/{id}/documents/{doc_id}/verify` with reason audit history logging.
+    - Verification status enforcement: `RetailerService` blocks unverified (`PENDING`), `REJECTED`, or `SUSPENDED` retailers from creating/updating/deleting listings and adjusting inventory.
+    - Platform deals engine: `GET/POST/PUT/DELETE /api/v1/admin/deals`. Supports scopes (`PLATFORM_WIDE`, `CATEGORY`, `PRODUCT`, `LISTING`), discount types (`PERCENTAGE`, `FIXED_AMOUNT`), max caps, min orders, usage limits, and scheduling (`valid_from`, `valid_to`). Dynamically applied in quotes without modifying base retailer prices.
+  - **Frontend Consoles:**
+    - `/admin/layout.tsx`: Updated operations desk sidebar with active tab tracking and direct navigation.
+    - `/admin/page.tsx`: Quick module launch cards for Retailers & Verification, Platform Catalogue, and Deals & Promotions.
+    - `/admin/retailers/page.tsx`: Full retailer verification console with status filter tabs, search, document preview & verification, and decision modal with audit logging.
+    - `/admin/catalogue/page.tsx`: Canonical catalogue manager with search, category filtering, product create/edit modals, and variant hierarchy manager.
+    - `/admin/deals/page.tsx`: Platform deals dashboard with status filtering, deal cards, active toggles, and deal create/edit modals.
+  - **Automated Tests:**
+    - Backend: 5 test suites in `tests/test_admin_marketplace_moderation.py` covering Admin RBAC, canonical catalogue isolation, retailer approval enforcement, platform deals scheduling, and scoped deals usage limits. Total 384 passed backend tests.
+    - Frontend: Unit tests in `portals.test.ts` verifying all admin API methods. Total 68 passed frontend tests.
 
 #### Vertical Slice 5D: Retailer & Admin Order Fulfillment Hub & Dispute Resolution
 - **Features Covered:** 1.8, 2.7.
