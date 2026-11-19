@@ -513,6 +513,7 @@ class OrderService:
                     total_tax_paise=item.total_tax_paise,
                     retailer_name=item.retailer_name,
                     retailer_state=item.retailer_state,
+                    fulfillment_status=OrderStatus.PENDING_PAYMENT.value,
                 )
                 for item in quote.items
             ],

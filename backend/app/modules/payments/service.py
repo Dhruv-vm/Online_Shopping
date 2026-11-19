@@ -526,6 +526,9 @@ async def process_payment_capture_and_fulfillment(
         order.version += 1
         order.status = OrderStatus.CONFIRMED.value
         order.payment_status = PaymentStatus.SUCCEEDED.value
+        for item in order.items:
+            if item.fulfillment_status == OrderStatus.PENDING_PAYMENT.value:
+                item.fulfillment_status = OrderStatus.CONFIRMED.value
 
         history = OrderStatusHistory(
             order_id=order.id,

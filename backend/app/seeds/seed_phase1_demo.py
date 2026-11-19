@@ -227,7 +227,7 @@ DEMO_PRODUCTS = [
         "slug": "anker-powercore-20000mah-ultra-compact-power-bank",
         "brand": "Anker",
         "description": "High-capacity portable battery pack with 20W PowerIQ fast charging. Dual USB-C and USB-A outputs capable of charging smartphones up to 4 times.",
-        "image_url": "https://images.unsplash.com/photo-1609592424364-77497d5444ca?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1609091839311-d5365f9ff1c5?auto=format&fit=crop&w=800&q=80",
         "sku": "BM-ELEC-ANK-20K",
         "seller_sku": "BM-ANKER-20K",
         "mrp_paise": 399900,
@@ -366,7 +366,7 @@ DEMO_PRODUCTS = [
         "slug": "cetaphil-gentle-skin-hydrating-cleanser-250ml",
         "brand": "Cetaphil",
         "description": "Soap-free, fragrance-free gentle face wash recommended by dermatologists for dry to sensitive skin. Enriched with Niacinamide and Vitamin B5.",
-        "image_url": "https://images.unsplash.com/photo-1556228722-d0b5de70b77b?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=800&q=80",
         "sku": "BM-BEAU-CET-CLN",
         "seller_sku": "BM-CET-CLN250",
         "mrp_paise": 62500,
@@ -471,7 +471,7 @@ DEMO_PRODUCTS = [
         "slug": "green-soul-tokyo-ergonomic-high-back-mesh-office-chair",
         "brand": "Green Soul",
         "description": "Breathable high-density mesh with 2D adjustable lumbar support, 3D armrests, heavy-duty metallic wheelbase, and synchro-tilt mechanism.",
-        "image_url": "https://images.unsplash.com/photo-1580481077195-c3a82145beee?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1506439773649-6e0eb8cfb237?auto=format&fit=crop&w=800&q=80",
         "sku": "BM-FURN-GS-CHAIR",
         "seller_sku": "BM-GSOUL-TOKYO",
         "mrp_paise": 1199000,
@@ -733,7 +733,7 @@ DEMO_PRODUCTS = [
         "slug": "pigeon-by-stovekraft-non-stick-3-piece-cookware-set",
         "brand": "Pigeon",
         "description": "5-layer Greblon non-stick German coating. Set includes 240mm Kadai with glass lid, 240mm Fry Pan, and 250mm Flat Dosa Tawa.",
-        "image_url": "https://images.unsplash.com/photo-1584990347449-3079b7b25206?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1544982503-9f984c14501a?auto=format&fit=crop&w=800&q=80",
         "sku": "BL-HOME-PIG-COOK",
         "seller_sku": "BL-PIG-COOK3PC",
         "mrp_paise": 289500,
@@ -785,7 +785,7 @@ DEMO_PRODUCTS = [
         "slug": "forest-essentials-pure-rosewater-facial-mist-toner-130ml",
         "brand": "Forest Essentials",
         "description": "Steam distilled from fresh Rosa Damascena rose petals harvested in Kannauj. Naturally hydrates, tones, and minimizes enlarged pores.",
-        "image_url": "https://images.unsplash.com/photo-1608248597359-00f724d27163?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=800&q=80",
         "sku": "BL-BEAU-FE-MIST",
         "seller_sku": "BL-FE-ROSEMIST",
         "mrp_paise": 147500,
@@ -872,7 +872,7 @@ DEMO_PRODUCTS = [
         "slug": "pilot-v7-hi-tecpoint-0-7mm-liquid-ink-roller-pen-pack-of-4",
         "brand": "Pilot",
         "description": "Unique multi-dimple tip system delivers precise skip-free writing. Pure liquid ink controller guarantees consistent ink flow until the last drop.",
-        "image_url": "https://images.unsplash.com/photo-1585336261026-6b22340798be?auto=format&fit=crop&w=800&q=80",
+        "image_url": "https://images.unsplash.com/photo-1583485088034-697b5bc54ccd?auto=format&fit=crop&w=800&q=80",
         "sku": "BL-BOOK-PIL-V7",
         "seller_sku": "BL-PIL-V7-P4",
         "mrp_paise": 36000,
@@ -1579,6 +1579,7 @@ async def seed_phase1_demo() -> None:
                 total_tax_paise=int(mart_listing.selling_price_paise * 0.18),
                 retailer_name=bm_ret.name,
                 retailer_state="KA",
+                fulfillment_status=OrderStatus.CONFIRMED.value,
             )
             session.add(item1)
 
@@ -1607,6 +1608,7 @@ async def seed_phase1_demo() -> None:
                 total_tax_paise=int(life_listing.selling_price_paise * 0.18),
                 retailer_name=bl_ret.name,
                 retailer_state="KA",
+                fulfillment_status=OrderStatus.CONFIRMED.value,
             )
             session.add(item2)
 

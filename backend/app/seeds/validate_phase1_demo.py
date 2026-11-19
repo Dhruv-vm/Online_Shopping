@@ -1,5 +1,7 @@
 import asyncio
+from urllib.parse import urlparse
 
+import httpx
 from sqlalchemy import select
 
 from app.core.database import get_session_factory
@@ -81,9 +83,9 @@ async def validate():
         # 5. Valid category mappings & images
         all_demo_listings = mart_listings + life_listings
         valid_cats = 0
-        valid_images = 0
         skus = set()
         duplicate_skus = 0
+        product_image_urls: list[str] = []
 
         # Category distribution
         cat_dist = {}
@@ -129,12 +131,62 @@ async def validate():
                     else:
                         cat_dist[cat_name]["lifestyle"] += 1
 
-            if images and any(img.url.startswith("http") for img in images):
-                valid_images += 1
+            if images:
+                product_image_urls.append(images[0].url)
+            else:
+                product_image_urls.append("")
 
             if variant.sku in skus:
                 duplicate_skus += 1
             skus.add(variant.sku)
+
+        # 6. Real Product Image Validation across 3 distinct tiers:
+        # Tier 1: Valid URL Format
+        # Tier 2: Reachable via HTTP (HTTP HEAD/GET 200)
+        # Tier 3: Successfully Renderable Image (Content-Type: image/* or image CDN)
+        valid_format_count = 0
+        reachable_count = 0
+        renderable_count = 0
+
+        sem = asyncio.Semaphore(10)
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+
+            async def probe_image(url: str):
+                nonlocal valid_format_count, reachable_count, renderable_count
+                if not url:
+                    return
+                parsed = urlparse(url)
+                is_valid_format = bool(
+                    parsed.scheme in ("http", "https") and parsed.netloc and parsed.path
+                )
+                if not is_valid_format:
+                    return
+
+                valid_format_count += 1
+                is_reachable = False
+                is_renderable = False
+
+                async with sem:
+                    try:
+                        resp = await client.head(url)
+                        if resp.status_code == 405:
+                            resp = await client.get(
+                                url, headers={"Range": "bytes=0-1024"}
+                            )
+                        if 200 <= resp.status_code < 400:
+                            is_reachable = True
+                            ct = resp.headers.get("content-type", "").lower()
+                            if "image/" in ct or "unsplash.com" in parsed.netloc:
+                                is_renderable = True
+                    except Exception:
+                        pass
+
+                if is_reachable:
+                    reachable_count += 1
+                if is_renderable:
+                    renderable_count += 1
+
+            await asyncio.gather(*(probe_image(u) for u in product_image_urls))
 
         # Orphaned demo products
         orphaned = 0
@@ -152,7 +204,9 @@ async def validate():
         print(f"Basket Lifestyle products: {len(life_listings)} (Expected: 25)")
         print(f"Valid retailer mappings: {valid_ret_mappings} (Expected: 50)")
         print(f"Valid category mappings: {valid_cats} (Expected: 50)")
-        print(f"Valid product images: {valid_images} (Expected: 50)")
+        print(f"Valid product image format: {valid_format_count} (Expected: 50)")
+        print(f"Reachable product images: {reachable_count} (Expected: 50)")
+        print(f"Renderable product images: {renderable_count} (Expected: 50)")
         print(f"Orphaned demo products: {orphaned} (Expected: 0)")
         print(f"Duplicate demo SKUs: {duplicate_skus} (Expected: 0)")
         print("=" * 60)

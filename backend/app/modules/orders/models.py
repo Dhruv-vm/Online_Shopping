@@ -294,6 +294,13 @@ class OrderItem(Base):
     total_tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     retailer_name: Mapped[str] = mapped_column(String(255), nullable=False)
     retailer_state: Mapped[str] = mapped_column(String(100), nullable=False)
+    fulfillment_status: Mapped[str] = mapped_column(
+        String(32),
+        default=OrderStatus.CONFIRMED.value,
+        server_default="CONFIRMED",
+        nullable=False,
+        index=True,
+    )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -315,6 +322,10 @@ class OrderItem(Base):
         CheckConstraint(
             "total_selling_price_paise >= 0",
             name="chk_order_item_total_selling_price_paise",
+        ),
+        CheckConstraint(
+            "fulfillment_status IN ('PENDING_PAYMENT', 'CONFIRMED', 'PROCESSING', 'PACKED', 'SHIPPED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED', 'RETURNED')",
+            name="chk_order_item_fulfillment_status",
         ),
     )
 

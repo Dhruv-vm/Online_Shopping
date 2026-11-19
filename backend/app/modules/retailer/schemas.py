@@ -274,6 +274,7 @@ class RetailerOrderItemResponse(BaseModel):
     unit_selling_price_paise: int
     total_selling_price_paise: int
     total_tax_paise: int
+    fulfillment_status: str = Field(default="CONFIRMED")
     created_at: datetime.datetime
 
 

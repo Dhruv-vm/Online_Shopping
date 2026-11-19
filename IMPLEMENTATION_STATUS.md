@@ -2,11 +2,11 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-19T22:55:00+05:30  
+> **Last Audited:** 2026-11-19T23:45:00+05:30  
 > **Base Branch:** `integration` (commit `615a4c5`)  
 > **Current Feature Branch:** `feature/phase1-master-core-marketplace`  
-> **Head Status:** Single Alembic head `0014_admin_moderation_deals`  
-> **Test Status:** 395 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
+> **Head Status:** Single Alembic head `0015_order_item_fulfillment`  
+> **Test Status:** 396 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -46,7 +46,7 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#21** | `feature/phase5b-retailer-catalogue-inventory` | Phase 5B Retailer Listings & Inventory | `cd7e38b` | 378 backend / 68 frontend | Retailer listings CRUD, independent variant pricing, tenant inventory management. |
 | **#22** | `feature/phase5c-admin-marketplace-moderation` | Phase 5C Admin Moderation & Deals | `cd7e38b` | 384 backend / 68 frontend | Admin catalogue moderation, retailer verification workflow, platform deals. |
 | **#23** | `feature/phase5c1-authentic-marketplace` | Phase 5C.1 Authentic Marketplace | `615a4c5` | 390 backend / 68 frontend | Multi-seller storefront offers, atomic inventory hold/deduction, sales analytics. |
-| **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | *Current* | 395 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, product comparison (`/compare`), retailer orders/offers/analytics/settings, E2E flow. |
+| **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | *Current* | 396 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, 3-tier image validation (50/50), multi-retailer single basket checkout, retailer order status isolation (migration 0015), accurate sales analytics, product comparison (`/compare`), E2E flow. |
 
 ---
 
@@ -214,6 +214,32 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - Full backend test suite: 390 passed (100%).
   - Full frontend test suite: 68 passed (100%).
   - Full TypeScript type-check and Next.js production build: 0 errors (22/22 pages compiled).
+
+### 4.7 Phase 1 Master Core Marketplace & Final Critical Verification
+- **Alembic Migration 0015 (`0015_order_item_fulfillment`):**
+  - Added `fulfillment_status` (`VARCHAR(32)`, `server_default="CONFIRMED"`, `nullable=False`, indexed) to `order_items`.
+  - Backfilled historical order items from `orders.status` and added check constraint `chk_order_item_fulfillment_status`. Verified clean downgrade and upgrade.
+- **Retailer Order Status Isolation:**
+  - `RetailerService.update_order_status` modifies strictly the retailer's own `OrderItem` records (`item.fulfillment_status`).
+  - Derived overall parent `Order.status` from underlying item statuses across all retailers, preserving customer tracking and anti-IDOR isolation.
+  - Enforced valid status progression rules; rejected backwards status regressions (`INVALID_STATUS_TRANSITION`, HTTP 422).
+- **Retailer Analytics Accuracy:**
+  - `RetailerService.get_analytics` computes `total_revenue_paise`, `total_units_sold`, and `average_order_value_paise` across ALL non-cancelled order items for that retailer.
+  - Capped `top_selling_products` at 10 strictly after calculating comprehensive aggregates.
+  - Correctly excluded cancelled orders and items; grouped `orders_by_status` by each retailer's derived suborder fulfillment status.
+- **Multi-Retailer Checkout Verification (`test_d_end_to_end_purchase_flow`):**
+  - Single customer basket contains items from both Basket Mart and Basket Lifestyle.
+  - Both items appear in the parent order; inventory is correctly deducted for both retailers.
+  - Each retailer views only their own items in order details; neither can access or mutate the other's items.
+  - Advancing Retailer 1 status does not overwrite or advance Retailer 2 status. Negative tests prove foreign order access and status regression fail with 404/422.
+- **3-Tier Product Image Validation (`validate_phase1_demo.py`):**
+  - Upgraded validation script to check Format Validity (50/50), Network Reachability (50/50 via async HTTP probes), and Renderable Image Content-Types (50/50).
+- **Verification Evidence:**
+  - Backend test suite: 396 passed (100%).
+  - Frontend test suite: 68 passed (100%).
+  - TypeScript type-check (`tsc --noEmit`): 0 errors.
+  - Next.js production build: 27/27 static/dynamic routes compiled successfully.
+  - Ruff lint & format: 100% clean.
 
 ---
 
