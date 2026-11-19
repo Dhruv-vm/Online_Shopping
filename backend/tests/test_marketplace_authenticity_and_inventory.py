@@ -480,6 +480,34 @@ async def test_admin_retailer_directory_search_and_filters(async_client: AsyncCl
     admin_headers, _ = await create_user_with_role(
         async_client, role="admin", suffix="_dir"
     )
+    session_factory = get_session_factory()
+    unique = uuid.uuid4().hex[:6]
+
+    # Seed isolated test retailers to ensure test is fully hermetic even on a fresh DB
+    r_ka_id = uuid.uuid4()
+    r_mh_id = uuid.uuid4()
+    ka_keyword = f"KrnStore{unique}"
+    async with session_factory() as session:
+        r_ka = Retailer(
+            id=r_ka_id,
+            name=f"Bengaluru {ka_keyword}",
+            slug=f"bengaluru-{ka_keyword.lower()}",
+            state="KA",
+            business_address=f"100 MG Road, Bengaluru {unique}",
+            is_active=True,
+            verification_status="VERIFIED",
+        )
+        r_mh = Retailer(
+            id=r_mh_id,
+            name=f"Mumbai Mega Store {unique}",
+            slug=f"mumbai-mega-store-{unique}",
+            state="MH",
+            business_address=f"200 Bandra, Mumbai {unique}",
+            is_active=True,
+            verification_status="VERIFIED",
+        )
+        session.add_all([r_ka, r_mh])
+        await session.commit()
 
     # Filter by state KA
     resp_ka = await async_client.get(
@@ -490,22 +518,29 @@ async def test_admin_retailer_directory_search_and_filters(async_client: AsyncCl
     data_ka = resp_ka.json()
     assert isinstance(data_ka, list)
     assert len(data_ka) > 0
+    returned_ids_ka = [r["id"] for r in data_ka]
+    assert str(r_ka_id) in returned_ids_ka
+    assert str(r_mh_id) not in returned_ids_ka
     for r in data_ka:
         assert r["state"] == "KA"
 
     # Search by store name
     resp_search = await async_client.get(
-        "/api/v1/admin/retailers?search=Bengaluru&limit=20",
+        f"/api/v1/admin/retailers?search={ka_keyword}&limit=20",
         headers=admin_headers,
     )
     assert resp_search.status_code == 200
     data_search = resp_search.json()
     assert isinstance(data_search, list)
     assert len(data_search) > 0
+    returned_ids_search = [r["id"] for r in data_search]
+    assert str(r_ka_id) in returned_ids_search
+    assert str(r_mh_id) not in returned_ids_search
     for r in data_search:
         assert (
             "bengaluru" in r["name"].lower()
             or "bengaluru" in (r.get("business_address") or "").lower()
+            or ka_keyword.lower() in r["name"].lower()
         )
 
 
