@@ -432,13 +432,36 @@ export interface ReservationReleaseResponse {
   release_reason?: string | null;
 }
 
-// Phase 2E: Orders, Checkout Orchestration & Transactional Outbox
+// Phase 2E & Phase 4: Orders, Post-Purchase, Tracking & Returns
 export type OrderStatus =
   | "PENDING_PAYMENT"
   | "CONFIRMED"
   | "PROCESSING"
+  | "PACKED"
   | "SHIPPED"
+  | "OUT_FOR_DELIVERY"
   | "DELIVERED"
+  | "CANCELLED"
+  | "RETURNED";
+
+export type ShipmentStatus =
+  | "LABEL_CREATED"
+  | "PICKED_UP"
+  | "IN_TRANSIT"
+  | "OUT_FOR_DELIVERY"
+  | "DELIVERED"
+  | "EXCEPTION"
+  | "CANCELLED";
+
+export type ReturnStatus =
+  | "REQUESTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "PICKUP_PENDING"
+  | "RECEIVED"
+  | "INSPECTED"
+  | "REFUND_PENDING"
+  | "REFUNDED"
   | "CANCELLED";
 
 export type PaymentStatus =
@@ -495,11 +518,117 @@ export interface OrderStatusHistoryEntry {
   created_at: string;
 }
 
+export interface ShipmentItem {
+  id: string;
+  order_item_id: string;
+  quantity: number;
+  created_at: string;
+}
+
+export interface Shipment {
+  id: string;
+  order_id: string;
+  shipment_number: string;
+  carrier_name: string;
+  carrier_code: string;
+  tracking_number: string;
+  tracking_url?: string | null;
+  status: ShipmentStatus;
+  shipped_at?: string | null;
+  estimated_delivery_at?: string | null;
+  delivered_at?: string | null;
+  notes?: string | null;
+  carrier_event_history: Array<{
+    status: string;
+    description: string;
+    location?: string | null;
+    timestamp: string;
+  }>;
+  created_at: string;
+  items: ShipmentItem[];
+}
+
+export interface ReturnItem {
+  id: string;
+  order_item_id: string;
+  quantity: number;
+  refund_subtotal_paise: number;
+  condition_grade?: string | null;
+  restock_approved: boolean;
+  created_at: string;
+}
+
+export interface ReturnStatusHistoryEntry {
+  id: string;
+  from_status?: string | null;
+  to_status: string;
+  reason?: string | null;
+  actor: string;
+  created_at: string;
+}
+
+export interface OrderReturn {
+  id: string;
+  order_id: string;
+  return_number: string;
+  status: ReturnStatus;
+  reason: string;
+  customer_notes?: string | null;
+  admin_notes?: string | null;
+  refund_amount_paise: number;
+  payment_refund_id?: string | null;
+  requested_at: string;
+  inspected_at?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  items: ReturnItem[];
+  status_history?: ReturnStatusHistoryEntry[];
+}
+
+export interface CustomerNotification {
+  id: string;
+  order_id?: string | null;
+  title: string;
+  message: string;
+  event_type: string;
+  is_read: boolean;
+  read_at?: string | null;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  items: CustomerNotification[];
+  unread_count: number;
+}
+
+export interface OrderTrackingTimelineEvent {
+  status: string;
+  title: string;
+  description: string;
+  timestamp?: string | null;
+  completed: boolean;
+  current: boolean;
+}
+
+export interface OrderTrackingResponse {
+  order_id: string;
+  order_number: string;
+  order_status: OrderStatus;
+  carrier_name?: string | null;
+  carrier_code?: string | null;
+  tracking_number?: string | null;
+  tracking_url?: string | null;
+  estimated_delivery_at?: string | null;
+  delivered_at?: string | null;
+  shipments: Shipment[];
+  timeline: OrderTrackingTimelineEvent[];
+}
+
 export interface Order {
   id: string;
   order_number: string;
   customer_id?: string | null;
-  is_guest: boolean;
+  is_guest?: boolean;
   quote_id: string;
   reservation_id: string;
   delivery_address: DeliveryAddressSnapshot;
@@ -514,12 +643,55 @@ export interface Order {
   currency: string;
   status: OrderStatus;
   payment_status: PaymentStatus;
+  guest_access_token?: string | null;
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
+  delivered_at?: string | null;
   fulfilling_capture_id?: string | null;
   payment_window_expires_at?: string | null;
   items: OrderItem[];
   status_history?: OrderStatusHistoryEntry[];
+  shipments?: Shipment[];
+  returns?: OrderReturn[];
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
+}
+
+export interface OrderListItem {
+  id: string;
+  order_number: string;
+  status: OrderStatus;
+  payment_status: PaymentStatus;
+  total_payable_paise: number;
+  currency: string;
+  item_count?: number;
+  cancellation_reason?: string | null;
+  cancelled_at?: string | null;
+  delivered_at?: string | null;
+  created_at: string;
+}
+
+export interface OrderCancellationRequest {
+  reason: string;
+  idempotency_key?: string | null;
+}
+
+export interface OrderCancellationResponse {
+  order_id: string;
+  order_number: string;
+  status: string;
+  cancelled_at: string;
+  refund_status?: string | null;
+  refund_amount_paise?: number | null;
+  inventory_restocked: boolean;
+  message: string;
+}
+
+export interface ReturnCreateRequest {
+  reason: string;
+  customer_notes?: string | null;
+  items: Array<{ order_item_id: string; quantity: number }>;
+  idempotency_key?: string | null;
 }
 
 export interface CreateOrderRequest {
@@ -539,8 +711,9 @@ export interface CreateOrderRequest {
 }
 
 export interface OrderListResponse {
-  orders: Order[];
+  items?: OrderListItem[];
   total: number;
+  orders: OrderListItem[];
 }
 
 // Phase 2F: Razorpay Payments, Capture & Refunds

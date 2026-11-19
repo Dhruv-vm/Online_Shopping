@@ -27,6 +27,11 @@ import type {
   Order,
   CreateOrderRequest,
   OrderListResponse,
+  OrderCancellationResponse,
+  OrderTrackingResponse,
+  ReturnCreateRequest,
+  OrderReturn,
+  NotificationListResponse,
   PaymentInitiateResponse,
   PaymentVerifyRequest,
   PaymentVerifyResponse,
@@ -442,13 +447,114 @@ class ApiClient {
     return this.post<Order>("/api/v1/orders", payload, { headers });
   }
 
-  public async getOrder(orderId: string): Promise<Order> {
-    return this.get<Order>(`/api/v1/orders/${encodeURIComponent(orderId)}`);
+  public async getOrder(orderId: string, accessToken?: string): Promise<Order> {
+    const query = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
+    return this.get<Order>(`/api/v1/orders/${encodeURIComponent(orderId)}${query}`);
   }
 
-  public async listOrders(limit = 20, offset = 0): Promise<OrderListResponse> {
-    return this.get<OrderListResponse>(
-      `/api/v1/orders?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`,
+  public async guestLookupOrder(orderNumber: string, accessToken: string): Promise<Order> {
+    return this.post<Order>("/api/v1/orders/guest-lookup", {
+      order_number: orderNumber,
+      access_token: accessToken,
+    });
+  }
+
+  public async listOrders(
+    limit = 20,
+    offset = 0,
+    status?: string,
+    search?: string,
+    fromDate?: string,
+    toDate?: string,
+  ): Promise<OrderListResponse> {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+    });
+    if (status) params.set("status", status);
+    if (search) params.set("search", search);
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    const res = await this.get<OrderListResponse>(`/api/v1/orders?${params.toString()}`);
+    const items = res.items || res.orders || [];
+    return {
+      total: res.total ?? items.length,
+      items,
+      orders: res.orders || items,
+    };
+  }
+
+  public async cancelOrder(
+    orderId: string,
+    reason: string,
+    idempotencyKey?: string,
+    accessToken?: string,
+  ): Promise<OrderCancellationResponse> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+    if (accessToken) headers["X-Guest-Access-Token"] = accessToken;
+    return this.post<OrderCancellationResponse>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/cancel`,
+      { reason },
+      { headers },
+    );
+  }
+
+  public async getOrderTracking(
+    orderId: string,
+    accessToken?: string,
+  ): Promise<OrderTrackingResponse> {
+    const query = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
+    return this.get<OrderTrackingResponse>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/tracking${query}`,
+    );
+  }
+
+  public async requestReturn(
+    orderId: string,
+    payload: ReturnCreateRequest,
+    idempotencyKey?: string,
+    accessToken?: string,
+  ): Promise<OrderReturn> {
+    const headers: Record<string, string> = {};
+    if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+    if (accessToken) headers["X-Guest-Access-Token"] = accessToken;
+    return this.post<OrderReturn>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/returns`,
+      payload,
+      { headers },
+    );
+  }
+
+  public async listOrderReturns(
+    orderId: string,
+    accessToken?: string,
+  ): Promise<OrderReturn[]> {
+    const query = accessToken ? `?access_token=${encodeURIComponent(accessToken)}` : "";
+    return this.get<OrderReturn[]>(
+      `/api/v1/orders/${encodeURIComponent(orderId)}/returns${query}`,
+    );
+  }
+
+  public async listNotifications(
+    limit = 50,
+    offset = 0,
+  ): Promise<NotificationListResponse> {
+    return this.get<NotificationListResponse>(
+      `/api/v1/notifications?limit=${encodeURIComponent(limit)}&skip=${encodeURIComponent(offset)}`,
+    );
+  }
+
+  public async getUnreadNotificationCount(): Promise<{ unread_count: number }> {
+    return this.get<{ unread_count: number }>("/api/v1/notifications/unread-count");
+  }
+
+  public async markNotificationAsRead(
+    notificationId: string,
+  ): Promise<{ success: boolean }> {
+    return this.post<{ success: boolean }>(
+      `/api/v1/notifications/${encodeURIComponent(notificationId)}/read`,
+      {},
     );
   }
 
