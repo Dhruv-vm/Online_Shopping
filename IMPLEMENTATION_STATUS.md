@@ -2,10 +2,11 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-19T21:00:00+05:30  
-> **Base Branch:** `integration` (commit `cd7e38b`)  
+> **Last Audited:** 2026-11-19T22:55:00+05:30  
+> **Base Branch:** `integration` (commit `615a4c5`)  
+> **Current Feature Branch:** `feature/phase1-master-core-marketplace`  
 > **Head Status:** Single Alembic head `0014_admin_moderation_deals`  
-> **Test Status:** 390 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
+> **Test Status:** 395 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -41,6 +42,11 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#16** | `feature/external-integration-config-repair` | External Config Repair & Portability | `099b115` | 348 backend / 60 frontend | Kafka SASL_SSL setup, temporary CA PEM fixtures for CI portability. |
 | **#17** | `feature/phase4-orders-postpurchase` | Phase 4 Orders, Tracking, Returns | `1193aa9` | 352 backend / 63 frontend | Order tracking (7 stages), cancellations, returns, notifications. |
 | **#18** | `fix/order-visibility-after-checkout` | Post-Checkout Visibility & Navigation Fix | `16a3003` | 361 backend / 63 frontend | Resolved post-checkout order visibility, `/account` recent purchases, `/orders` unauthenticated handling, and `quote_id` schema flexibility. |
+| **#20** | `feature/phase5-multi-role-rbac-foundation` | Phase 5A RBAC Foundation | `8392fb9` | 368 backend / 63 frontend | Customer, Retailer, Admin RBAC; portal route security; checkout quote_id resolution. |
+| **#21** | `feature/phase5b-retailer-catalogue-inventory` | Phase 5B Retailer Listings & Inventory | `cd7e38b` | 378 backend / 68 frontend | Retailer listings CRUD, independent variant pricing, tenant inventory management. |
+| **#22** | `feature/phase5c-admin-marketplace-moderation` | Phase 5C Admin Moderation & Deals | `cd7e38b` | 384 backend / 68 frontend | Admin catalogue moderation, retailer verification workflow, platform deals. |
+| **#23** | `feature/phase5c1-authentic-marketplace` | Phase 5C.1 Authentic Marketplace | `615a4c5` | 390 backend / 68 frontend | Multi-seller storefront offers, atomic inventory hold/deduction, sales analytics. |
+| **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | *Current* | 395 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, product comparison (`/compare`), retailer orders/offers/analytics/settings, E2E flow. |
 
 ---
 

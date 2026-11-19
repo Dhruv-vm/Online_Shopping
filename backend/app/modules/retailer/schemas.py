@@ -228,3 +228,162 @@ class RetailerBulkInventoryAdjustmentRequest(BaseModel):
     items: list[RetailerBulkInventoryAdjustmentItem] = Field(
         ..., min_length=1, max_length=100
     )
+
+
+# ================= Custom Product Creation by Retailer =================
+
+
+class RetailerProductCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=255)
+    brand: str = Field(..., min_length=1, max_length=100)
+    category_id: uuid.UUID
+    description: str | None = Field(None, max_length=2000)
+    image_url: str | None = Field(None, max_length=1000)
+    variant_name: str = Field("Standard", min_length=1, max_length=100)
+    sku: str = Field(..., min_length=3, max_length=100)
+    seller_sku: str | None = Field(None, max_length=100)
+    original_price_paise: int = Field(..., gt=0)
+    selling_price_paise: int = Field(..., gt=0)
+    hsn_code: str = Field("84713010", max_length=16)
+    gst_rate_basis_points: int = Field(1800, ge=0, le=2800)
+    initial_on_hand_quantity: int = Field(10, ge=0)
+    low_stock_threshold: int = Field(5, ge=0)
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_pricing(self) -> "RetailerProductCreateRequest":
+        if self.selling_price_paise > self.original_price_paise:
+            raise ValueError("Selling price cannot exceed original price (MRP).")
+        return self
+
+
+# ================= Retailer Orders =================
+
+
+class RetailerOrderItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_id: uuid.UUID
+    listing_id: uuid.UUID
+    variant_id: uuid.UUID
+    product_title: str
+    variant_title: str
+    sku: str | None
+    quantity: int
+    unit_selling_price_paise: int
+    total_selling_price_paise: int
+    total_tax_paise: int
+    created_at: datetime.datetime
+
+
+class RetailerOrderListItem(BaseModel):
+    id: uuid.UUID
+    order_number: str
+    status: str
+    payment_status: str
+    customer_name: str
+    delivery_city: str | None
+    delivery_state: str | None
+    total_items: int
+    retailer_subtotal_paise: int
+    retailer_tax_paise: int
+    retailer_total_paise: int
+    created_at: datetime.datetime
+    items: list[RetailerOrderItemResponse]
+
+
+class RetailerOrderListResponse(BaseModel):
+    items: list[RetailerOrderListItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class RetailerOrderDetailResponse(BaseModel):
+    id: uuid.UUID
+    order_number: str
+    status: str
+    payment_status: str
+    customer_name: str
+    delivery_address: dict[str, Any]
+    items: list[RetailerOrderItemResponse]
+    retailer_subtotal_paise: int
+    retailer_tax_paise: int
+    retailer_total_paise: int
+    created_at: datetime.datetime
+    status_history: list[dict[str, Any]]
+
+
+class RetailerOrderStatusUpdateRequest(BaseModel):
+    status: str = Field(
+        ...,
+        description="Target status, e.g. PROCESSING, PACKED, SHIPPED, DELIVERED, CANCELLED",
+    )
+    reason: str | None = Field(None, max_length=255)
+
+
+# ================= Retailer Offers & Discounts =================
+
+
+class RetailerOfferItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    code: str | None
+    name: str
+    description: str | None
+    discount_type: str
+    discount_value: int
+    listing_id: uuid.UUID | None
+    min_order_paise: int
+    max_discount_paise: int | None
+    is_active: bool
+    valid_from: datetime.datetime
+    valid_to: datetime.datetime | None
+
+
+class RetailerOfferCreateRequest(BaseModel):
+    code: str | None = Field(None, max_length=50)
+    name: str = Field(..., min_length=2, max_length=255)
+    description: str | None = Field(None, max_length=1000)
+    discount_type: Literal["PERCENTAGE", "FIXED_AMOUNT"] = "PERCENTAGE"
+    discount_value: int = Field(..., gt=0)
+    listing_id: uuid.UUID | None = None
+    min_order_paise: int = Field(0, ge=0)
+    max_discount_paise: int | None = Field(None, ge=0)
+    is_active: bool = True
+    valid_to: datetime.datetime | None = None
+
+
+class RetailerOfferUpdateRequest(BaseModel):
+    name: str | None = Field(None, min_length=2, max_length=255)
+    description: str | None = Field(None, max_length=1000)
+    discount_value: int | None = Field(None, gt=0)
+    min_order_paise: int | None = Field(None, ge=0)
+    max_discount_paise: int | None = Field(None, ge=0)
+    is_active: bool | None = None
+    valid_to: datetime.datetime | None = None
+
+
+# ================= Retailer Analytics =================
+
+
+class RetailerAnalyticsProductItem(BaseModel):
+    listing_id: uuid.UUID
+    product_name: str
+    variant_sku: str
+    units_sold: int
+    revenue_paise: int
+
+
+class RetailerAnalyticsResponse(BaseModel):
+    total_revenue_paise: int
+    total_orders: int
+    total_units_sold: int
+    average_order_value_paise: int
+    orders_by_status: dict[str, int]
+    top_selling_products: list[RetailerAnalyticsProductItem]
+    in_stock_count: int
+    low_stock_count: int
+    out_of_stock_count: int

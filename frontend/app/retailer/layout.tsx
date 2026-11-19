@@ -13,6 +13,10 @@ import {
   ArrowLeft,
   ChevronRight,
   ExternalLink,
+  PlusCircle,
+  ShoppingCart,
+  Tag,
+  BarChart3,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -168,43 +172,43 @@ export default function RetailerLayout({
                 >
                   <div className="flex items-center gap-2.5">
                     <LayoutDashboard className="h-4 w-4" />
-                    Dashboard
+                    Overview
                   </div>
                   {pathname === "/retailer" && <ChevronRight className="h-4 w-4 text-blue-400" />}
                 </Link>
 
-                <Link
-                  href="/retailer/profile"
-                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                    pathname === "/retailer/profile"
-                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Settings className="h-4 w-4" />
-                    Store Settings
-                  </div>
-                  {pathname === "/retailer/profile" && <ChevronRight className="h-4 w-4 text-blue-400" />}
-                </Link>
-
                 <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
-                  Catalogue & Inventory
+                  Catalogue & Stock
                 </div>
 
                 <Link
                   href="/retailer/listings"
                   className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                    pathname.startsWith("/retailer/listings")
+                    pathname === "/retailer/listings"
                       ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
                     <Layers className="h-4 w-4" />
-                    Store Listings
+                    Products
                   </div>
-                  {pathname.startsWith("/retailer/listings") && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                  {pathname === "/retailer/listings" && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <Link
+                  href="/retailer/listings/new"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname === "/retailer/listings/new"
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <PlusCircle className="h-4 w-4" />
+                    Add Product
+                  </div>
+                  {pathname === "/retailer/listings/new" && <ChevronRight className="h-4 w-4 text-blue-400" />}
                 </Link>
 
                 <Link
@@ -217,29 +221,92 @@ export default function RetailerLayout({
                 >
                   <div className="flex items-center gap-2.5">
                     <Package className="h-4 w-4" />
-                    Stock & Inventory
+                    Inventory
                   </div>
                   {pathname === "/retailer/inventory" && <ChevronRight className="h-4 w-4 text-blue-400" />}
                 </Link>
 
                 <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
-                  Storefront & Orders
+                  Sales & Marketing
                 </div>
 
                 <Link
-                  href="/products"
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  href="/retailer/orders"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname.startsWith("/retailer/orders")
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
                 >
-                  <Layers className="h-4 w-4" />
-                  Public Marketplace
+                  <div className="flex items-center gap-2.5">
+                    <ShoppingCart className="h-4 w-4" />
+                    Orders
+                  </div>
+                  {pathname.startsWith("/retailer/orders") && <ChevronRight className="h-4 w-4 text-blue-400" />}
                 </Link>
 
                 <Link
-                  href="/orders"
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  href="/retailer/offers"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname.startsWith("/retailer/offers")
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
                 >
-                  <Package className="h-4 w-4" />
-                  Purchases & Orders
+                  <div className="flex items-center gap-2.5">
+                    <Tag className="h-4 w-4" />
+                    Offers & Discounts
+                  </div>
+                  {pathname.startsWith("/retailer/offers") && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <Link
+                  href="/retailer/analytics"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname === "/retailer/analytics"
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <BarChart3 className="h-4 w-4" />
+                    Analytics
+                  </div>
+                  {pathname === "/retailer/analytics" && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                  Store Management
+                </div>
+
+                <Link
+                  href="/retailer/profile"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname === "/retailer/profile"
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Store className="h-4 w-4" />
+                    Store Profile
+                  </div>
+                  {pathname === "/retailer/profile" && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                </Link>
+
+                <Link
+                  href="/retailer/settings"
+                  className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                    pathname === "/retailer/settings"
+                      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </div>
+                  {pathname === "/retailer/settings" && <ChevronRight className="h-4 w-4 text-blue-400" />}
                 </Link>
               </nav>
             </div>

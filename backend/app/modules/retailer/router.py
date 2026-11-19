@@ -13,6 +13,7 @@ from app.modules.identity.dependencies import (
 from app.modules.identity.schemas import MessageResponse
 from app.modules.retailer.schemas import (
     CatalogueProductLookupItem,
+    RetailerAnalyticsResponse,
     RetailerBulkInventoryAdjustmentRequest,
     RetailerInventoryAdjustmentRequest,
     RetailerInventoryDashboardResponse,
@@ -21,7 +22,14 @@ from app.modules.retailer.schemas import (
     RetailerListingListResponse,
     RetailerListingResponse,
     RetailerListingUpdateRequest,
+    RetailerOfferCreateRequest,
+    RetailerOfferItem,
+    RetailerOfferUpdateRequest,
+    RetailerOrderDetailResponse,
+    RetailerOrderListResponse,
+    RetailerOrderStatusUpdateRequest,
     RetailerOverviewResponse,
+    RetailerProductCreateRequest,
     RetailerProfileResponse,
     RetailerProfileUpdateRequest,
 )
@@ -267,3 +275,162 @@ async def bulk_adjust_inventory(
     results = await service.bulk_adjust_inventory(retailer, body)
     await db.commit()
     return results
+
+
+# ================= Custom Product Creation =================
+
+
+@router.post(
+    "/products",
+    response_model=RetailerListingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a custom product, variant, listing and initial inventory in one step",
+)
+async def create_custom_retailer_product(
+    body: RetailerProductCreateRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerListingResponse:
+    service = RetailerService(db)
+    listing = await service.create_custom_product_and_listing(retailer, body)
+    await db.commit()
+    return listing
+
+
+# ================= Retailer Orders Management =================
+
+
+@router.get(
+    "/orders",
+    response_model=RetailerOrderListResponse,
+    summary="List orders containing store items with tenant isolation",
+)
+async def list_retailer_orders(
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    status: Annotated[str | None, Query(description="Filter by order status")] = None,
+    search: Annotated[str | None, Query(description="Search order number")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> RetailerOrderListResponse:
+    service = RetailerService(db)
+    return await service.list_orders(
+        retailer=retailer,
+        status=status,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/orders/{order_id}",
+    response_model=RetailerOrderDetailResponse,
+    summary="Get single order detail scoped to this retailer",
+)
+async def get_retailer_order_detail(
+    order_id: uuid.UUID,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerOrderDetailResponse:
+    service = RetailerService(db)
+    return await service.get_order_detail(order_id, retailer)
+
+
+@router.patch(
+    "/orders/{order_id}/status",
+    response_model=RetailerOrderDetailResponse,
+    summary="Update fulfillment status of an order",
+)
+async def update_retailer_order_status(
+    order_id: uuid.UUID,
+    body: RetailerOrderStatusUpdateRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerOrderDetailResponse:
+    service = RetailerService(db)
+    updated = await service.update_order_status(order_id, retailer, body)
+    await db.commit()
+    return updated
+
+
+# ================= Retailer Offers & Discounts =================
+
+
+@router.get(
+    "/offers",
+    response_model=list[RetailerOfferItem],
+    summary="List promotional offers and discounts created by retailer",
+)
+async def list_retailer_offers(
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[RetailerOfferItem]:
+    service = RetailerService(db)
+    return await service.list_offers(retailer)
+
+
+@router.post(
+    "/offers",
+    response_model=RetailerOfferItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new store offer or discount",
+)
+async def create_retailer_offer(
+    body: RetailerOfferCreateRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerOfferItem:
+    service = RetailerService(db)
+    offer = await service.create_offer(retailer, body)
+    await db.commit()
+    return offer
+
+
+@router.put(
+    "/offers/{offer_id}",
+    response_model=RetailerOfferItem,
+    summary="Update an existing store offer",
+)
+async def update_retailer_offer(
+    offer_id: uuid.UUID,
+    body: RetailerOfferUpdateRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerOfferItem:
+    service = RetailerService(db)
+    offer = await service.update_offer(offer_id, retailer, body)
+    await db.commit()
+    return offer
+
+
+@router.delete(
+    "/offers/{offer_id}",
+    response_model=MessageResponse,
+    summary="Deactivate a store offer",
+)
+async def delete_retailer_offer(
+    offer_id: uuid.UUID,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> MessageResponse:
+    service = RetailerService(db)
+    await service.delete_offer(offer_id, retailer)
+    await db.commit()
+    return MessageResponse(message="Offer successfully deactivated.")
+
+
+# ================= Retailer Sales Analytics =================
+
+
+@router.get(
+    "/analytics",
+    response_model=RetailerAnalyticsResponse,
+    summary="Get comprehensive store sales analytics and metrics",
+)
+async def get_retailer_analytics(
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerAnalyticsResponse:
+    service = RetailerService(db)
+    return await service.get_analytics(retailer)
