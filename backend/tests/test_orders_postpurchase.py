@@ -472,7 +472,9 @@ async def test_authenticated_order_visibility_and_logout_login_persistence(
     assert details_resp.json()["order_number"] == order_data["order_number"]
 
     # 7. Customer logs out
-    csrf_token = reg_resp.json().get("csrf_token") or async_client.cookies.get("XSRF-TOKEN")
+    csrf_token = reg_resp.json().get("csrf_token") or async_client.cookies.get(
+        "XSRF-TOKEN"
+    )
     logout_resp = await async_client.post(
         "/api/v1/auth/logout",
         headers={"Authorization": f"Bearer {token}", "X-CSRF-Token": csrf_token or ""},
