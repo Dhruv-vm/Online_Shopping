@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [0.6.0] — 2026-11-19
+
+### Added
+- **Phase 5A Multi-Role Portals & RBAC Foundation:**
+  - **Alembic Migration 0012 (`0012_multi_role_portals`):** Extended `retailers` table with unique `user_id` foreign key referencing `users.id`, `business_address`, `contact_phone`, `contact_email`, `business_hours` (JSONB), `policies` (JSONB), `is_open`, and `verification_status` (`PENDING`, `VERIFIED`, `SUSPENDED`). Created `retailer_verification_documents` table with foreign key to `retailers.id`.
+  - **Server-Side Authorization & Tenancy Isolation:** Created `require_admin`, `require_retailer`, and `get_current_retailer` dependencies in `app.modules.identity.dependencies`. Tenant boundary is strictly isolated via JWT session extraction, preventing cross-tenant data leakage or spoofing. Role self-promotion is blocked via role immutability.
+  - **Merchant Registration Endpoint:** Added `POST /api/v1/auth/retailer/register` for atomic creation of retailer user accounts and store records with automatic slug disambiguation.
+  - **Admin Management APIs:** Added `GET /api/v1/admin/overview`, `GET /api/v1/admin/retailers`, and `POST /api/v1/admin/retailers/{retailer_id}/verify` for onboarding review and status updates.
+  - **Retailer Profile & Overview APIs:** Added `GET /api/v1/retailer/profile`, `PUT /api/v1/retailer/profile`, and `GET /api/v1/retailer/overview`.
+  - **Frontend Portals & Layouts:** Built `/admin` (overview KPIs, retailer onboarding verification queue), `/retailer` (store dashboard, quick metrics, live open/closed toggle), `/retailer/profile` (store settings), and `/register/retailer` (onboarding form). Role guards enforce strict access redirection or 403 Forbidden states.
+  - **Role-Based Navigation:** Added dynamic role links (`Admin Portal` for admins, `Retailer Portal` for retailers, "Sell on BASKET" CTA for customers) to header and mobile drawer.
+- **Hardened Checkout Reservation Derivation:**
+  - Reinforced server-authoritative `quote_id` derivation from inventory reservations in `OrderService.create_order`.
+  - Enforced strict ownership validation (anti-IDOR), status validation (`ACTIVE` only, rejecting `CONFIRMED`, `EXPIRED`, `RELEASED`), server UTC expiry checks, and quote association validation before resolving `effective_quote_id`.
+  - Added 5 negative tests in `test_orders.py` covering arbitrary, foreign-owned, expired, released, and unassociated reservations.
+
+---
+
 ## [0.5.0] — 2026-11-19
 
 ### Added

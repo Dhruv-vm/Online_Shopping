@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.core.config import settings
+from app.modules.admin.router import router as admin_router
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
@@ -9,6 +10,7 @@ from app.modules.orders.router import router as orders_router
 from app.modules.payments.router import internal_router as internal_payments_router
 from app.modules.payments.router import router as payments_router
 from app.modules.pricing.router import router as pricing_router
+from app.modules.retailer.router import router as retailer_router
 from app.modules.search.router import router as search_router
 
 api_router = APIRouter()
@@ -39,6 +41,12 @@ api_router.include_router(orders_router)
 # Mount Payments & Gateway endpoints (Phase 2F)
 api_router.include_router(payments_router)
 api_router.include_router(internal_payments_router)
+
+# Mount Retailer Portal endpoints (Phase 5A)
+api_router.include_router(retailer_router)
+
+# Mount Admin Portal endpoints (Phase 5A)
+api_router.include_router(admin_router)
 
 
 @api_router.get("/info", tags=["System"])

@@ -146,6 +146,13 @@ During Phase 4 testing, a critical issue was observed where customers completed 
 - **Regression Tests:** Added tests in `backend/tests/test_orders_postpurchase.py` verifying customer order visibility, logout/login persistence, anti-IDOR isolation, and idempotent order creation.
 - **Browser Subagent E2E Verification:** Visually verified `/account`, `/orders`, `/orders/[id]`, and `/orders/[id]/track` with live screenshots in the browser.
 
+### 4.3 Phase 5A Multi-Role Portals & RBAC Foundation + Hardened Checkout Derivation
+- **Alembic Migration 0012 (`0012_multi_role_portals`):** Added `user_id` FK (unique, indexed) to `retailers`, plus business address, contact phone/email, business hours (JSONB), policies (JSONB), `is_open`, and `verification_status` (`PENDING`, `VERIFIED`, `SUSPENDED`). Created `retailer_verification_documents` table. Verified clean upgrade and downgrade.
+- **Server-Side RBAC Enforcement:** Implemented `require_admin`, `require_retailer`, and `get_current_retailer` dependencies in `app.modules.identity.dependencies`. Retailer tenant data isolation is cryptographically verified from the authenticated user's JWT session; retailers can never access or modify another retailer's store profile or metrics. Prevented self-promotion by enforcing role immutability.
+- **Merchant Onboarding & Admin Moderation:** Mounted `POST /api/v1/auth/retailer/register` for atomic user + retailer creation. Mounted Admin endpoints (`GET /api/v1/admin/overview`, `GET /api/v1/admin/retailers`, `POST /api/v1/admin/retailers/{id}/verify`) and Retailer endpoints (`GET /api/v1/retailer/profile`, `PUT /api/v1/retailer/profile`, `GET /api/v1/retailer/overview`).
+- **Frontend Role Portals:** Built `/admin` (overview KPIs, retailer onboarding verification queue), `/retailer` (store dashboard, quick metrics, live open/closed toggle), `/retailer/profile` (store settings), and `/register/retailer` (onboarding form). Role guards enforce strict access redirection or 403 Forbidden states.
+- **Hardened Checkout Reservation Derivation:** In `backend/app/modules/orders/service.py`, reinforced server-authoritative `quote_id` derivation from inventory reservations. The derivation strictly validates reservation ownership (anti-IDOR), status (`ACTIVE` only, rejecting `CONFIRMED`, `EXPIRED`, `RELEASED`), server UTC expiry, and quote association before resolving `effective_quote_id`. Added 5 negative tests in `test_orders.py` verifying all failure scenarios.
+
 ---
 
 ## 5. Feature Specification vs. Implementation Matrix
@@ -159,16 +166,16 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Persistent Cart & Merging** | Customer | Core | **Fully Implemented** | Guest carts, authenticated carts, automated merge on login. |
 | **Pricing & HMAC Quotes** | Platform / Retailer | Core | **Fully Implemented** | GST tax computation, discounts, 5-minute signed quotes. |
 | **Inventory Reservations** | System | Core | **Fully Implemented** | All-or-nothing stock locking, row locks, 10-minute expiry. |
-| **Checkout & Order Creation** | Customer | Core | **Fully Implemented** | Atomic PostgreSQL orders, immutable item snapshots, outbox. |
+| **Checkout & Order Creation** | Customer | Core | **Fully Implemented** | Atomic PostgreSQL orders, immutable item snapshots, outbox, server-authoritative reservation derivation. |
 | **Razorpay Payment Gateway** | Platform / Customer | Core | **Fully Implemented** | Dual-mode sandbox, server capture verification, HMAC webhooks. |
 | **Transactional Outbox & Kafka** | System | Core | **Fully Implemented** | Outbox publisher, lease fencing, Kafka SASL_SSL, consumer inbox. |
 | **Order Tracking (7 Stages)** | Customer | Core | **Fully Implemented** | 7-stage visual tracker, carrier consignments, external URLs. |
 | **Order Cancellations & Returns** | Customer | Core | **Fully Implemented** | Pre-dispatch cancellation, post-delivery returns & inspections. |
 | **Customer Notifications** | Customer | Core | **Fully Implemented** | In-app notification center, unread counters, mark as read. |
 | **Customer Account Management** | Customer | Core | **Fully Implemented** | Profile, saved addresses, recent purchases, session revoke. |
-| **Admin Panel Dashboard** | Admin | Core | **Planned (Phase 5)** | Spec defined in `FEATURE_SPECIFICATION.md` §1; models ready. |
-| **Retailer Panel Dashboard** | Retailer | Core | **Planned (Phase 5)** | Spec defined in `FEATURE_SPECIFICATION.md` §2; models ready. |
-| **Role-Based Access Control (RBAC)** | Platform | Core | **Partial (Customer/Admin Roles in DB)** | `users.role` exists; full role-specific dashboards planned Phase 5. |
+| **Admin Panel Dashboard** | Admin | Core | **Partially Implemented (Phase 5A)** | Overview KPIs, retailer moderation queue, verify/suspend APIs, `/admin` UI. |
+| **Retailer Panel Dashboard** | Retailer | Core | **Partially Implemented (Phase 5A)** | Store profile, open/pause toggle, onboarding registration, overview metrics, `/retailer` UI. |
+| **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
 | **Basket Mission & Intent Memory** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.2, §3.3. |
 | **Substitute & Price Intelligence** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.4, §3.10. |
 | **Demand Gap & Community Buying** | Admin / Retailer / Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.5, §3.6, §3.7. |

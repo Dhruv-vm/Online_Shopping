@@ -137,6 +137,73 @@ class OrderService:
                     message="Inventory reservation was not found.",
                     status_code=404,
                 )
+
+            # Validate reservation ownership to prevent foreign-owned derivation or IDOR
+            if customer_id:
+                if res_peek.customer_id != customer_id:
+                    raise AppException(
+                        code="RESERVATION_NOT_FOUND",
+                        message="Inventory reservation was not found.",
+                        status_code=404,
+                    )
+            elif guest_token_hash:
+                if (
+                    res_peek.guest_token_hash != guest_token_hash
+                    or res_peek.customer_id is not None
+                ):
+                    raise AppException(
+                        code="RESERVATION_NOT_FOUND",
+                        message="Inventory reservation was not found.",
+                        status_code=404,
+                    )
+
+            # Validate reservation status
+            if res_peek.status == ReservationStatus.CONFIRMED.value:
+                raise AppException(
+                    code="RESERVATION_ALREADY_CONFIRMED",
+                    message="Reservation is already confirmed.",
+                    status_code=409,
+                )
+            if res_peek.status == ReservationStatus.EXPIRED.value:
+                raise AppException(
+                    code="RESERVATION_EXPIRED",
+                    message="Reservation hold has expired.",
+                    status_code=409,
+                )
+            if res_peek.status == ReservationStatus.RELEASED.value:
+                raise AppException(
+                    code="RESERVATION_RELEASED",
+                    message="Reservation hold has been released.",
+                    status_code=409,
+                )
+            if res_peek.status != ReservationStatus.ACTIVE.value:
+                raise AppException(
+                    code="RESERVATION_INVALID_STATUS",
+                    message=f"Reservation status is {res_peek.status}. Only active reservations can be ordered.",
+                    status_code=409,
+                )
+
+            # Validate reservation expiry
+            res_peek_exp = (
+                res_peek.expires_at.replace(tzinfo=UTC)
+                if res_peek.expires_at.tzinfo is None
+                else res_peek.expires_at
+            )
+            if res_peek_exp < now:
+                raise AppException(
+                    code="RESERVATION_EXPIRED",
+                    message="Reservation hold has expired.",
+                    status_code=409,
+                )
+
+            # Validate quote association
+            if not res_peek.quote_id:
+                raise AppException(
+                    code="RESERVATION_NO_QUOTE_ASSOCIATED",
+                    message="Inventory reservation has no associated quote.",
+                    status_code=400,
+                )
+
             effective_quote_id = res_peek.quote_id
 
         # 2. Resolve Delivery Address snapshot early to compute canonical request hash

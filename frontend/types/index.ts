@@ -162,9 +162,84 @@ export interface User {
   email: string;
   phone?: string | null;
   full_name: string;
-  role: string;
+  role: "customer" | "retailer" | "admin" | string;
+  is_active: boolean;
+  retailer_id?: string | null;
+  store_name?: string | null;
+  verification_status?: "PENDING" | "VERIFIED" | "SUSPENDED" | string | null;
+  created_at: string;
+}
+
+export interface RetailerProfile {
+  id: string;
+  user_id: string | null;
+  name: string;
+  slug: string;
+  description: string | null;
+  logo_url: string | null;
+  rating: number;
+  state: string | null;
+  business_address: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
+  business_hours: Record<string, string> | null;
+  policies: Record<string, string> | null;
+  is_open: boolean;
+  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | string;
   is_active: boolean;
   created_at: string;
+  updated_at?: string | null;
+}
+
+export interface RetailerOverview {
+  retailer_id: string;
+  store_name: string;
+  slug: string;
+  state: string | null;
+  is_open: boolean;
+  verification_status: string;
+  rating: number;
+  total_listings: number;
+  total_inventory_units: number;
+  recent_orders_count: number;
+}
+
+export interface AdminOverview {
+  total_orders: number;
+  total_revenue_paise: number;
+  total_customers: number;
+  total_retailers: number;
+  pending_verifications: number;
+  active_products: number;
+}
+
+export interface AdminRetailerListItem {
+  id: string;
+  name: string;
+  slug: string;
+  state: string | null;
+  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | string;
+  is_active: boolean;
+  is_open: boolean;
+  business_address: string | null;
+  contact_phone: string | null;
+  contact_email: string | null;
+  owner_name: string | null;
+  owner_email: string | null;
+  created_at: string;
+}
+
+export interface RetailerRegisterPayload {
+  email: string;
+  password: string;
+  full_name: string;
+  phone: string;
+  store_name: string;
+  state: string;
+  business_address: string;
+  contact_email?: string;
+  contact_phone?: string;
+  description?: string;
 }
 
 export interface AuthResponse {
