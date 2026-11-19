@@ -15,6 +15,7 @@ import {
   Info,
   Loader2,
   PackageX,
+  Scale,
   ShieldCheck,
   ShoppingBag,
   ShoppingBasket,
@@ -25,6 +26,7 @@ import {
   Truck,
 } from "lucide-react";
 import { useCart } from "@/lib/cart/cart-context";
+import { useCompare } from "@/lib/compare/compare-context";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -34,6 +36,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
   const resolvedParams = use(params);
   const productIdOrSlug = resolvedParams.id;
   const { addItem } = useCart();
+  const { isInCompare, toggleCompare } = useCompare();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantDetail | null>(null);
@@ -392,6 +395,21 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                           Add to Basket • {formatPrice(currentListing.selling_price_paise * quantity, currentListing.currency)}
                         </>
                       )}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => toggleCompare(product.slug)}
+                      className={`h-11 px-4 border ${
+                        isInCompare(product.slug)
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-600 dark:bg-emerald-950/40 font-semibold"
+                          : "hover:bg-muted"
+                      }`}
+                      title={isInCompare(product.slug) ? "Remove from comparison" : "Add to comparison"}
+                    >
+                      <Scale className="h-4 w-4 mr-2" />
+                      {isInCompare(product.slug) ? "Comparing" : "Compare"}
                     </Button>
                   </div>
 

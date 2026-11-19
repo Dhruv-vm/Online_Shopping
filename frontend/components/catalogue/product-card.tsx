@@ -1,15 +1,21 @@
+"use client";
+
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatPrice } from "@/lib/utils";
+import { useCompare } from "@/lib/compare/compare-context";
 import type { ProductSummary } from "@/types";
-import { Store, Tag } from "lucide-react";
+import { Scale, Store, Tag } from "lucide-react";
 
 interface ProductCardProps {
   product: ProductSummary;
 }
 
 export function ProductCard({ product }: ProductCardProps) {
+  const { isInCompare, toggleCompare } = useCompare();
+  const inCompare = isInCompare(product.slug);
+
   const discountPercent =
     product.original_price_paise &&
     product.original_price_paise > product.min_price_paise
@@ -61,6 +67,25 @@ export function ProductCard({ product }: ProductCardProps) {
               {product.category_name}
             </Badge>
           </div>
+
+          {/* Quick Compare Button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              toggleCompare(product.slug);
+            }}
+            className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur-md shadow-xs transition-colors ${
+              inCompare
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "bg-background/90 text-foreground hover:bg-background border border-border/60"
+            }`}
+            title={inCompare ? "Remove from comparison" : "Add to comparison"}
+          >
+            <Scale className="h-3 w-3" />
+            {inCompare ? "Comparing" : "Compare"}
+          </button>
         </div>
 
         {/* Product Details Content */}

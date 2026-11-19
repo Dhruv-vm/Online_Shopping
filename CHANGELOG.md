@@ -5,6 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.0.0-phase1] — 2026-11-19
+
+### Added
+- **Phase 1 Master Core Marketplace Implementation:**
+  - **Demo Dataset & Seed Automation (`seed_phase1_demo.py` & `validate_phase1_demo.py`):**
+    - Seeded two verified active demo retailers: `Basket Mart` (`retailer1@basket.demo`) and `Basket Lifestyle` (`retailer2@basket.demo`).
+    - Seeded platform administrator (`admin@basket.demo`) and customer (`customer@basket.demo` with delivery address).
+    - Seeded exactly 10 top-level canonical categories (`parent_id IS NULL`): Grocery & Food, Electronics, Fashion & Clothing, Home & Kitchen, Beauty & Personal Care, Sports & Fitness, Books & Stationery, Furniture & Decor, Automotive Accessories, Toys & Baby Products.
+    - Seeded exactly 50 realistic demo products (25 for Basket Mart, 25 for Basket Lifestyle) distributed 2-3 per category, each with unique SKUs, MRPs, selling prices, GST rates (0%, 5%, 12%, 18%, 28%), HSN codes, high-resolution photography, and `store_inventory` records.
+    - Automated validator confirmed 50 valid products, 50 valid retailer mappings, 50 valid category mappings, 0 orphaned products, and 0 duplicate SKUs.
+  - **Retailer Module & Portal Integration:**
+    - Updated retailer navigation layout strictly matching Section 8.8 (`/retailer/layout.tsx`).
+    - Added custom product and listing creation backend API (`POST /api/v1/retailer/products`) and frontend form (`/retailer/listings/new`).
+    - Added retailer order management (`/retailer/orders`) with line-item tenant isolation, order breakdown, and status transition actions (`CONFIRMED` -> `PROCESSING` -> `PACKED` -> `SHIPPED` -> `DELIVERED`).
+    - Added retailer promotions & offers console (`/retailer/offers`, `GET/POST/PUT/DELETE /api/v1/retailer/offers`) supporting percentage and fixed-amount discounts.
+    - Added retailer sales & performance analytics dashboard (`/retailer/analytics`, `GET /api/v1/retailer/analytics`) with gross sales, AOV, order status pipeline, stock health, and top selling products.
+    - Added retailer operating settings console (`/retailer/settings`) with live open/close toggle, business hours, and store return policies.
+  - **Customer Module & Product Comparison:**
+    - Built side-by-side Product Comparison page (`/compare`) allowing customer to compare 2 to 4 products on Price, MRP, Discount %, Retailer, Stock Availability, Category, SKU, and key technical specifications.
+    - Added direct "Add to Basket" action directly from comparison matrix.
+    - Added comparison toggle buttons on Product Cards (`product-card.tsx`), Product Detail Page (`products/[id]/page.tsx`), and comparison badge in Header (`header.tsx`).
+    - Implemented clean empty state with direct CTA to browse catalogue products.
+  - **Automated Test Suite (`backend/tests/test_phase1_core_marketplace.py`):**
+    - Added comprehensive automated test suite covering Test A (Retailer 1 Operations), Test B (Retailer 2 Tenant Isolation), Test C (Customer Experience), Test D (End-to-End Multi-Retailer Purchase Flow), and Test E (Admin Integration). All 5 tests passing against PostgreSQL database.
+
+---
+
 ## [0.7.1] — 2026-11-19
 
 ### Added

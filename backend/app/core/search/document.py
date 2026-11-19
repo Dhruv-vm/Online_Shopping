@@ -26,7 +26,16 @@ def build_product_document(
     )
     category_name = cat.name if cat else ""
     category_slug = cat.slug if cat else ""
-    parent_cat_name = cat.parent.name if cat and getattr(cat, "parent", None) else None
+    parent_cat_name = None
+    if cat:
+        try:
+            from sqlalchemy import inspect as sa_inspect
+
+            insp = sa_inspect(cat)
+            if "parent" in insp.dict and insp.dict["parent"]:
+                parent_cat_name = insp.dict["parent"].name
+        except Exception:
+            parent_cat_name = None
 
     # Variants and listings extraction
     prod_variants = (

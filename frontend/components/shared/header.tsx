@@ -18,6 +18,7 @@ import {
   Bell,
   Check,
   CheckCheck,
+  Scale,
   ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useCart } from "@/lib/cart/cart-context";
+import { useCompare } from "@/lib/compare/compare-context";
 import { apiClient } from "@/lib/api/client";
 import type { CustomerNotification } from "@/types/index";
 
@@ -32,6 +34,7 @@ export function Header() {
   const router = useRouter();
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const { totalQuantity } = useCart();
+  const { compareCount } = useCompare();
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -184,6 +187,20 @@ export function Header() {
           >
             <Package className="h-4 w-4" />
             Orders
+          </Link>
+
+          {/* Compare Link (Desktop) */}
+          <Link
+            href="/compare"
+            className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400 relative"
+          >
+            <Scale className="h-4 w-4" />
+            Compare
+            {compareCount > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                {compareCount}
+              </span>
+            )}
           </Link>
 
           {/* Notification Center Popover Trigger */}
@@ -453,6 +470,21 @@ export function Header() {
             >
               <Package className="h-4 w-4 text-emerald-600" />
               My Orders & Tracking
+            </Link>
+            <Link
+              href="/compare"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <Scale className="h-4 w-4 text-emerald-600" />
+                Compare Products
+              </div>
+              {compareCount > 0 && (
+                <Badge className="bg-emerald-600 text-white text-xs">
+                  {compareCount}
+                </Badge>
+              )}
             </Link>
             <Link
               href="/retailers"

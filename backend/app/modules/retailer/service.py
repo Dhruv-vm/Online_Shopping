@@ -1,3 +1,5 @@
+import datetime
+import re
 import uuid
 
 from sqlalchemy import func, or_, select
@@ -8,17 +10,26 @@ from app.core.exceptions import AppException
 from app.modules.catalogue.models import (
     Category,
     Product,
+    ProductImage,
     ProductListing,
     ProductVariant,
     Retailer,
     StoreInventory,
 )
-from app.modules.orders.models import OrderItem
+from app.modules.orders.models import (
+    CustomerNotification,
+    Order,
+    OrderItem,
+    OrderStatusHistory,
+)
+from app.modules.pricing.models import Discount
 from app.modules.retailer.schemas import (
     CatalogueProductLookupItem,
     CatalogueVariantItem,
     InventorySummaryStats,
     ListingInventorySummary,
+    RetailerAnalyticsProductItem,
+    RetailerAnalyticsResponse,
     RetailerBulkInventoryAdjustmentRequest,
     RetailerInventoryAdjustmentRequest,
     RetailerInventoryDashboardResponse,
@@ -27,10 +38,24 @@ from app.modules.retailer.schemas import (
     RetailerListingListResponse,
     RetailerListingResponse,
     RetailerListingUpdateRequest,
+    RetailerOfferCreateRequest,
+    RetailerOfferItem,
+    RetailerOfferUpdateRequest,
+    RetailerOrderDetailResponse,
+    RetailerOrderItemResponse,
+    RetailerOrderListItem,
+    RetailerOrderListResponse,
+    RetailerOrderStatusUpdateRequest,
     RetailerOverviewResponse,
+    RetailerProductCreateRequest,
     RetailerProfileResponse,
     RetailerProfileUpdateRequest,
 )
+
+
+def _slugify(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return cleaned or "product"
 
 
 class RetailerService:
@@ -764,4 +789,585 @@ class RetailerService:
             is_out_of_stock=available <= 0,
             is_active=listing.is_active,
             updated_at=inv.updated_at,
+        )
+
+    # ================= Custom Product & Listing Creation =================
+
+    async def create_custom_product_and_listing(
+        self, retailer: Retailer, req: RetailerProductCreateRequest
+    ) -> RetailerListingResponse:
+        self._assert_verified_and_active(retailer, "create store products")
+
+        # Verify category exists
+        cat_stmt = select(Category).where(Category.id == req.category_id)
+        category = (await self.session.execute(cat_stmt)).scalar_one_or_none()
+        if not category:
+            raise AppException(
+                code="CATEGORY_NOT_FOUND",
+                message="The specified category does not exist.",
+                status_code=404,
+            )
+
+        # Check for duplicate variant SKU
+        sku_stmt = select(ProductVariant).where(ProductVariant.sku == req.sku.strip())
+        existing_sku = (await self.session.execute(sku_stmt)).scalar_one_or_none()
+        if existing_sku:
+            raise AppException(
+                code="SKU_ALREADY_EXISTS",
+                message=f"Product variant with SKU '{req.sku}' already exists in platform catalogue.",
+                status_code=409,
+            )
+
+        # Generate unique product slug
+        base_slug = _slugify(req.name)
+        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
+        product = Product(
+            id=uuid.uuid4(),
+            name=req.name.strip(),
+            slug=slug,
+            brand=req.brand.strip(),
+            category_id=req.category_id,
+            description=req.description.strip() if req.description else None,
+            is_active=req.is_active,
+        )
+        self.session.add(product)
+        await self.session.flush()
+
+        if req.image_url and req.image_url.strip():
+            img = ProductImage(
+                id=uuid.uuid4(),
+                product_id=product.id,
+                url=req.image_url.strip(),
+                is_primary=True,
+                sort_order=0,
+            )
+            self.session.add(img)
+            await self.session.flush()
+
+        variant = ProductVariant(
+            id=uuid.uuid4(),
+            product_id=product.id,
+            name=req.variant_name.strip() if req.variant_name else "Standard",
+            sku=req.sku.strip(),
+            attributes={"brand": req.brand.strip(), "retailer": retailer.name},
+            is_active=req.is_active,
+        )
+        self.session.add(variant)
+        await self.session.flush()
+
+        listing = ProductListing(
+            id=uuid.uuid4(),
+            retailer_id=retailer.id,
+            variant_id=variant.id,
+            seller_sku=(req.seller_sku or req.sku).strip(),
+            original_price_paise=req.original_price_paise,
+            selling_price_paise=req.selling_price_paise,
+            currency="INR",
+            hsn_code=req.hsn_code.strip() if req.hsn_code else "84713010",
+            gst_rate_basis_points=req.gst_rate_basis_points,
+            is_active=req.is_active,
+        )
+        self.session.add(listing)
+        await self.session.flush()
+
+        inventory = StoreInventory(
+            id=uuid.uuid4(),
+            listing_id=listing.id,
+            on_hand_quantity=req.initial_on_hand_quantity,
+            reserved_quantity=0,
+            low_stock_threshold=req.low_stock_threshold,
+        )
+        self.session.add(inventory)
+        await self.session.flush()
+
+        full_listing = await self._get_full_listing(listing.id, retailer.id)
+        return self._build_listing_response(full_listing)
+
+    # ================= Retailer Orders =================
+
+    async def list_orders(
+        self,
+        retailer: Retailer,
+        status: str | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> RetailerOrderListResponse:
+        # Enforce retailer tenant isolation on orders:
+        # Only fetch orders containing OrderItems for this retailer
+        subq = (
+            select(OrderItem.order_id)
+            .where(OrderItem.retailer_id == retailer.id)
+            .distinct()
+            .subquery()
+        )
+
+        query = (
+            select(Order)
+            .join(subq, Order.id == subq.c.order_id)
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.status_history),
+            )
+        )
+
+        if status and status.strip():
+            query = query.where(Order.status == status.strip().upper())
+
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            query = query.where(func.lower(Order.order_number).like(term))
+
+        count_stmt = select(func.count()).select_from(query.subquery())
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+
+        paged_stmt = query.order_by(Order.created_at.desc()).limit(limit).offset(offset)
+        orders = (await self.session.execute(paged_stmt)).scalars().all()
+
+        items: list[RetailerOrderListItem] = []
+        for o in orders:
+            # Filter order items strictly to this retailer
+            my_items = [item for item in o.items if item.retailer_id == retailer.id]
+            if not my_items:
+                continue
+
+            subtotal = sum(i.total_selling_price_paise for i in my_items)
+            tax = sum(i.total_tax_paise for i in my_items)
+            total_paise = subtotal + tax
+
+            snap = o.delivery_address_snapshot or {}
+            cust_name = (
+                snap.get("recipient_name") or snap.get("full_name") or "Valued Customer"
+            )
+            city = snap.get("city")
+            state = snap.get("state")
+
+            item_responses = [
+                RetailerOrderItemResponse(
+                    id=i.id,
+                    order_id=i.order_id,
+                    listing_id=i.listing_id,
+                    variant_id=i.variant_id,
+                    product_title=i.product_title,
+                    variant_title=i.variant_title,
+                    sku=i.sku,
+                    quantity=i.quantity,
+                    unit_selling_price_paise=i.unit_selling_price_paise,
+                    total_selling_price_paise=i.total_selling_price_paise,
+                    total_tax_paise=i.total_tax_paise,
+                    created_at=i.created_at,
+                )
+                for i in my_items
+            ]
+
+            items.append(
+                RetailerOrderListItem(
+                    id=o.id,
+                    order_number=o.order_number,
+                    status=o.status,
+                    payment_status=o.payment_status,
+                    customer_name=cust_name,
+                    delivery_city=city,
+                    delivery_state=state,
+                    total_items=sum(i.quantity for i in my_items),
+                    retailer_subtotal_paise=subtotal,
+                    retailer_tax_paise=tax,
+                    retailer_total_paise=total_paise,
+                    created_at=o.created_at,
+                    items=item_responses,
+                )
+            )
+
+        return RetailerOrderListResponse(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_order_detail(
+        self, order_id: uuid.UUID, retailer: Retailer
+    ) -> RetailerOrderDetailResponse:
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.status_history),
+            )
+            .where(Order.id == order_id)
+        )
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise AppException(
+                code="ORDER_NOT_FOUND",
+                message="Order not found.",
+                status_code=404,
+            )
+
+        # Enforce tenant isolation: check that this order has items for this retailer
+        my_items = [i for i in order.items if i.retailer_id == retailer.id]
+        if not my_items:
+            raise AppException(
+                code="ORDER_NOT_FOUND",
+                message="Order not found or does not belong to this retailer.",
+                status_code=404,
+            )
+
+        subtotal = sum(i.total_selling_price_paise for i in my_items)
+        tax = sum(i.total_tax_paise for i in my_items)
+        total_paise = subtotal + tax
+
+        snap = order.delivery_address_snapshot or {}
+        cust_name = (
+            snap.get("recipient_name") or snap.get("full_name") or "Valued Customer"
+        )
+
+        item_responses = [
+            RetailerOrderItemResponse(
+                id=i.id,
+                order_id=i.order_id,
+                listing_id=i.listing_id,
+                variant_id=i.variant_id,
+                product_title=i.product_title,
+                variant_title=i.variant_title,
+                sku=i.sku,
+                quantity=i.quantity,
+                unit_selling_price_paise=i.unit_selling_price_paise,
+                total_selling_price_paise=i.total_selling_price_paise,
+                total_tax_paise=i.total_tax_paise,
+                created_at=i.created_at,
+            )
+            for i in my_items
+        ]
+
+        histories = [
+            {
+                "from_status": h.from_status,
+                "to_status": h.to_status,
+                "reason": h.reason,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+            }
+            for h in order.status_history
+        ]
+
+        return RetailerOrderDetailResponse(
+            id=order.id,
+            order_number=order.order_number,
+            status=order.status,
+            payment_status=order.payment_status,
+            customer_name=cust_name,
+            delivery_address=snap,
+            items=item_responses,
+            retailer_subtotal_paise=subtotal,
+            retailer_tax_paise=tax,
+            retailer_total_paise=total_paise,
+            created_at=order.created_at,
+            status_history=histories,
+        )
+
+    async def update_order_status(
+        self,
+        order_id: uuid.UUID,
+        retailer: Retailer,
+        req: RetailerOrderStatusUpdateRequest,
+    ) -> RetailerOrderDetailResponse:
+        self._assert_verified_and_active(retailer, "update order status")
+
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.status_history),
+            )
+            .where(Order.id == order_id)
+        )
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise AppException(
+                code="ORDER_NOT_FOUND",
+                message="Order not found.",
+                status_code=404,
+            )
+
+        my_items = [i for i in order.items if i.retailer_id == retailer.id]
+        if not my_items:
+            raise AppException(
+                code="ORDER_NOT_FOUND",
+                message="Order not found or does not belong to this retailer.",
+                status_code=404,
+            )
+
+        target_status = req.status.strip().upper()
+        allowed_statuses = {
+            "CONFIRMED",
+            "PROCESSING",
+            "PACKED",
+            "SHIPPED",
+            "OUT_FOR_DELIVERY",
+            "DELIVERED",
+            "CANCELLED",
+        }
+        if target_status not in allowed_statuses:
+            raise AppException(
+                code="INVALID_STATUS_TRANSITION",
+                message=f"Invalid target status '{target_status}'. Allowed: {', '.join(sorted(allowed_statuses))}",
+                status_code=422,
+            )
+
+        old_status = order.status
+        order.status = target_status
+
+        hist = OrderStatusHistory(
+            id=uuid.uuid4(),
+            order_id=order.id,
+            from_status=old_status,
+            to_status=target_status,
+            reason=req.reason or f"Status updated by {retailer.name}",
+        )
+        self.session.add(hist)
+
+        if order.customer_id:
+            notif = CustomerNotification(
+                id=uuid.uuid4(),
+                customer_id=order.customer_id,
+                order_id=order.id,
+                title=f"Order {order.order_number} {target_status.replace('_', ' ').title()}",
+                message=f"Your order status has been updated to {target_status} by {retailer.name}.",
+                event_type=f"ORDER_{target_status}",
+            )
+            self.session.add(notif)
+
+        await self.session.flush()
+        return await self.get_order_detail(order.id, retailer)
+
+    # ================= Retailer Offers & Discounts =================
+
+    async def list_offers(self, retailer: Retailer) -> list[RetailerOfferItem]:
+        # Scoped to RET_<retailer.id.hex[:24]> or retailer's listings
+        scope_prefix = f"RET_{retailer.id.hex[:24]}"
+        stmt = (
+            select(Discount)
+            .outerjoin(ProductListing, Discount.listing_id == ProductListing.id)
+            .where(
+                or_(
+                    Discount.scope == scope_prefix,
+                    ProductListing.retailer_id == retailer.id,
+                )
+            )
+            .order_by(Discount.created_at.desc())
+        )
+        discounts = (await self.session.execute(stmt)).scalars().all()
+        return [RetailerOfferItem.model_validate(d) for d in discounts]
+
+    async def create_offer(
+        self, retailer: Retailer, req: RetailerOfferCreateRequest
+    ) -> RetailerOfferItem:
+        self._assert_verified_and_active(retailer, "create offers")
+
+        if req.listing_id:
+            chk = (
+                await self.session.execute(
+                    select(ProductListing.id).where(
+                        ProductListing.id == req.listing_id,
+                        ProductListing.retailer_id == retailer.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not chk:
+                raise AppException(
+                    code="LISTING_NOT_FOUND",
+                    message="Listing not found in your store catalogue.",
+                    status_code=404,
+                )
+
+        if req.code and req.code.strip():
+            existing_code = (
+                await self.session.execute(
+                    select(Discount.id).where(Discount.code == req.code.strip())
+                )
+            ).scalar_one_or_none()
+            if existing_code:
+                raise AppException(
+                    code="OFFER_CODE_EXISTS",
+                    message=f"Offer code '{req.code}' is already in use.",
+                    status_code=409,
+                )
+
+        scope = f"RET_{retailer.id.hex[:24]}"
+        discount = Discount(
+            id=uuid.uuid4(),
+            code=req.code.strip() if req.code else None,
+            name=req.name.strip(),
+            description=req.description.strip() if req.description else None,
+            discount_type=req.discount_type,
+            discount_value=req.discount_value,
+            listing_id=req.listing_id,
+            scope=scope,
+            min_order_paise=req.min_order_paise,
+            max_discount_paise=req.max_discount_paise,
+            is_active=req.is_active,
+            valid_from=datetime.datetime.now(datetime.UTC),
+            valid_to=req.valid_to,
+        )
+        self.session.add(discount)
+        await self.session.flush()
+        return RetailerOfferItem.model_validate(discount)
+
+    async def update_offer(
+        self, offer_id: uuid.UUID, retailer: Retailer, req: RetailerOfferUpdateRequest
+    ) -> RetailerOfferItem:
+        self._assert_verified_and_active(retailer, "update offers")
+        scope_prefix = f"RET_{retailer.id.hex[:24]}"
+
+        stmt = select(Discount).where(
+            Discount.id == offer_id,
+            Discount.scope == scope_prefix,
+        )
+        discount = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not discount:
+            raise AppException(
+                code="OFFER_NOT_FOUND",
+                message="Offer not found or not owned by your store.",
+                status_code=404,
+            )
+
+        if req.name is not None:
+            discount.name = req.name.strip()
+        if req.description is not None:
+            discount.description = req.description.strip() or None
+        if req.discount_value is not None:
+            discount.discount_value = req.discount_value
+        if req.min_order_paise is not None:
+            discount.min_order_paise = req.min_order_paise
+        if req.max_discount_paise is not None:
+            discount.max_discount_paise = req.max_discount_paise
+        if req.is_active is not None:
+            discount.is_active = req.is_active
+        if req.valid_to is not None:
+            discount.valid_to = req.valid_to
+
+        await self.session.flush()
+        return RetailerOfferItem.model_validate(discount)
+
+    async def delete_offer(self, offer_id: uuid.UUID, retailer: Retailer) -> None:
+        self._assert_verified_and_active(retailer, "delete offers")
+        scope_prefix = f"RET_{retailer.id.hex[:24]}"
+
+        stmt = select(Discount).where(
+            Discount.id == offer_id,
+            Discount.scope == scope_prefix,
+        )
+        discount = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not discount:
+            raise AppException(
+                code="OFFER_NOT_FOUND",
+                message="Offer not found or not owned by your store.",
+                status_code=404,
+            )
+
+        discount.is_active = False
+        await self.session.flush()
+
+    # ================= Retailer Analytics =================
+
+    async def get_analytics(self, retailer: Retailer) -> RetailerAnalyticsResponse:
+        # Aggregated stats from OrderItem
+        items_stmt = (
+            select(
+                OrderItem.listing_id,
+                OrderItem.product_title,
+                OrderItem.sku,
+                func.sum(OrderItem.quantity).label("units_sold"),
+                func.sum(OrderItem.total_selling_price_paise).label("revenue_paise"),
+            )
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                OrderItem.retailer_id == retailer.id,
+                Order.status != "CANCELLED",
+            )
+            .group_by(OrderItem.listing_id, OrderItem.product_title, OrderItem.sku)
+            .order_by(func.sum(OrderItem.total_selling_price_paise).desc())
+        )
+        top_items_rows = (await self.session.execute(items_stmt)).all()
+
+        top_selling = [
+            RetailerAnalyticsProductItem(
+                listing_id=row.listing_id,
+                product_name=row.product_title,
+                variant_sku=row.sku or "",
+                units_sold=int(row.units_sold or 0),
+                revenue_paise=int(row.revenue_paise or 0),
+            )
+            for row in top_items_rows[:10]
+        ]
+
+        total_units = sum(i.units_sold for i in top_selling)
+        total_rev = sum(i.revenue_paise for i in top_selling)
+
+        # Distinct orders count
+        orders_count_stmt = (
+            select(func.count(func.distinct(OrderItem.order_id)))
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                OrderItem.retailer_id == retailer.id,
+                Order.status != "CANCELLED",
+            )
+        )
+        total_orders = (await self.session.execute(orders_count_stmt)).scalar() or 0
+
+        aov = total_rev // total_orders if total_orders > 0 else 0
+
+        # Orders by status
+        status_stmt = (
+            select(Order.status, func.count(func.distinct(Order.id)))
+            .join(OrderItem, Order.id == OrderItem.order_id)
+            .where(OrderItem.retailer_id == retailer.id)
+            .group_by(Order.status)
+        )
+        status_rows = (await self.session.execute(status_stmt)).all()
+        orders_by_status = {row[0]: int(row[1]) for row in status_rows}
+
+        # Stock health from StoreInventory
+        inv_stmt = (
+            select(
+                func.count()
+                .filter(
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                    > StoreInventory.low_stock_threshold
+                )
+                .label("in_stock"),
+                func.count()
+                .filter(
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                    <= StoreInventory.low_stock_threshold,
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                    > 0,
+                )
+                .label("low_stock"),
+                func.count()
+                .filter(
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                    <= 0
+                )
+                .label("out_of_stock"),
+            )
+            .join(ProductListing, StoreInventory.listing_id == ProductListing.id)
+            .where(
+                ProductListing.retailer_id == retailer.id,
+                ProductListing.is_active.is_(True),
+            )
+        )
+        inv_counts = (await self.session.execute(inv_stmt)).one()
+
+        return RetailerAnalyticsResponse(
+            total_revenue_paise=total_rev,
+            total_orders=total_orders,
+            total_units_sold=total_units,
+            average_order_value_paise=aov,
+            orders_by_status=orders_by_status,
+            top_selling_products=top_selling,
+            in_stock_count=int(inv_counts.in_stock or 0),
+            low_stock_count=int(inv_counts.low_stock or 0),
+            out_of_stock_count=int(inv_counts.out_of_stock or 0),
         )

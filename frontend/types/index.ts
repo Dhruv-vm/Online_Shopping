@@ -1335,3 +1335,144 @@ export interface SearchFilterParams {
   page_size?: number;
   force_fallback?: boolean;
 }
+
+// ================= Phase 1 Retailer Portal Extensions =================
+
+export interface RetailerProductCreatePayload {
+  name: string;
+  brand: string;
+  category_id: string;
+  description?: string;
+  image_url?: string;
+  variant_name?: string;
+  sku: string;
+  seller_sku?: string;
+  original_price_paise: number;
+  selling_price_paise: number;
+  hsn_code?: string;
+  gst_rate_basis_points?: number;
+  initial_on_hand_quantity?: number;
+  low_stock_threshold?: number;
+  is_active?: boolean;
+}
+
+export interface RetailerOrderItem {
+  id: string;
+  order_id: string;
+  listing_id: string;
+  variant_id: string;
+  product_title: string;
+  variant_title: string;
+  sku?: string | null;
+  quantity: number;
+  unit_selling_price_paise: number;
+  total_selling_price_paise: number;
+  total_tax_paise: number;
+  created_at: string;
+}
+
+export interface RetailerOrderListItem {
+  id: string;
+  order_number: string;
+  status: string;
+  payment_status: string;
+  customer_name: string;
+  delivery_city?: string | null;
+  delivery_state?: string | null;
+  total_items: number;
+  retailer_subtotal_paise: number;
+  retailer_tax_paise: number;
+  retailer_total_paise: number;
+  created_at: string;
+  items: RetailerOrderItem[];
+}
+
+export interface RetailerOrderListResponse {
+  items: RetailerOrderListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface RetailerOrderDetailResponse {
+  id: string;
+  order_number: string;
+  status: string;
+  payment_status: string;
+  customer_name: string;
+  delivery_address: Record<string, any>;
+  items: RetailerOrderItem[];
+  retailer_subtotal_paise: number;
+  retailer_tax_paise: number;
+  retailer_total_paise: number;
+  created_at: string;
+  status_history: Array<{
+    from_status?: string | null;
+    to_status: string;
+    reason?: string | null;
+    created_at?: string | null;
+  }>;
+}
+
+export interface RetailerOrderStatusUpdatePayload {
+  status: string;
+  reason?: string;
+}
+
+export interface RetailerOfferItem {
+  id: string;
+  code?: string | null;
+  name: string;
+  description?: string | null;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value: number;
+  listing_id?: string | null;
+  min_order_paise: number;
+  max_discount_paise?: number | null;
+  is_active: boolean;
+  valid_from: string;
+  valid_to?: string | null;
+}
+
+export interface RetailerOfferCreatePayload {
+  code?: string;
+  name: string;
+  description?: string;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value: number;
+  listing_id?: string;
+  min_order_paise?: number;
+  max_discount_paise?: number;
+  is_active?: boolean;
+  valid_to?: string;
+}
+
+export interface RetailerOfferUpdatePayload {
+  name?: string;
+  description?: string;
+  discount_value?: number;
+  min_order_paise?: number;
+  max_discount_paise?: number;
+  is_active?: boolean;
+  valid_to?: string;
+}
+
+export interface RetailerAnalyticsProductItem {
+  listing_id: string;
+  product_name: string;
+  variant_sku: string;
+  units_sold: number;
+  revenue_paise: number;
+}
+
+export interface RetailerAnalyticsResponse {
+  total_revenue_paise: number;
+  total_orders: number;
+  total_units_sold: number;
+  average_order_value_paise: number;
+  orders_by_status: Record<string, number>;
+  top_selling_products: RetailerAnalyticsProductItem[];
+  in_stock_count: number;
+  low_stock_count: number;
+  out_of_stock_count: number;
+}

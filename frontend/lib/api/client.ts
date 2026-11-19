@@ -68,6 +68,16 @@ import type {
   RetailerInventoryDashboard,
   RetailerInventoryItem,
   RetailerInventoryAdjustmentPayload,
+  RetailerProductCreatePayload,
+  RetailerOrderItem,
+  RetailerOrderListItem,
+  RetailerOrderListResponse,
+  RetailerOrderDetailResponse,
+  RetailerOrderStatusUpdatePayload,
+  RetailerOfferItem,
+  RetailerOfferCreatePayload,
+  RetailerOfferUpdatePayload,
+  RetailerAnalyticsResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -981,6 +991,73 @@ class ApiClient {
       `/api/v1/retailer/listings/${encodeURIComponent(listingId)}/inventory`,
       payload
     );
+  }
+
+  public async createRetailerProduct(
+    payload: RetailerProductCreatePayload
+  ): Promise<RetailerListingItem> {
+    return this.post<RetailerListingItem>("/api/v1/retailer/products", payload);
+  }
+
+  public async listRetailerOrders(params?: {
+    status?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<RetailerOrderListResponse> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.search) qs.set("search", params.search);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<RetailerOrderListResponse>(`/api/v1/retailer/orders${query}`);
+  }
+
+  public async getRetailerOrder(orderId: string): Promise<RetailerOrderDetailResponse> {
+    return this.get<RetailerOrderDetailResponse>(
+      `/api/v1/retailer/orders/${encodeURIComponent(orderId)}`
+    );
+  }
+
+  public async updateRetailerOrderStatus(
+    orderId: string,
+    payload: RetailerOrderStatusUpdatePayload
+  ): Promise<RetailerOrderDetailResponse> {
+    return this.patch<RetailerOrderDetailResponse>(
+      `/api/v1/retailer/orders/${encodeURIComponent(orderId)}/status`,
+      payload
+    );
+  }
+
+  public async listRetailerOffers(): Promise<RetailerOfferItem[]> {
+    return this.get<RetailerOfferItem[]>("/api/v1/retailer/offers");
+  }
+
+  public async createRetailerOffer(
+    payload: RetailerOfferCreatePayload
+  ): Promise<RetailerOfferItem> {
+    return this.post<RetailerOfferItem>("/api/v1/retailer/offers", payload);
+  }
+
+  public async updateRetailerOffer(
+    offerId: string,
+    payload: RetailerOfferUpdatePayload
+  ): Promise<RetailerOfferItem> {
+    return this.put<RetailerOfferItem>(
+      `/api/v1/retailer/offers/${encodeURIComponent(offerId)}`,
+      payload
+    );
+  }
+
+  public async deleteRetailerOffer(offerId: string): Promise<MessageResponse> {
+    return this.delete<MessageResponse>(
+      `/api/v1/retailer/offers/${encodeURIComponent(offerId)}`
+    );
+  }
+
+  public async getRetailerAnalytics(): Promise<RetailerAnalyticsResponse> {
+    return this.get<RetailerAnalyticsResponse>("/api/v1/retailer/analytics");
   }
 }
 
