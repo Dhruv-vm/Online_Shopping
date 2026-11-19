@@ -173,9 +173,19 @@ Establish strict role-based access control (RBAC), multi-role authentication, re
   - Non-retailers receiving HTTP 403 Forbidden on `/api/v1/retailer/*`.
   - A registered retailer can log in, access `/retailer`, view their store profile, and toggle store open/closed status.
 
-#### Vertical Slice 5B: Retailer Store, Catalogue Listings & Inventory Management
+#### Vertical Slice 5B: Retailer Store, Catalogue Listings & Inventory Management [COMPLETED]
 - **Features Covered:** 2.2, 2.3, 2.6.
-- **Deliverables:** Retailer listing creation from platform catalogue, variant pricing overrides, real-time stock adjustments, and low-stock threshold triggers.
+- **Deliverables:**
+  - **Schema:** Alembic migration `0013_retailer_inventory` adding `low_stock_threshold` (`INTEGER`, default 10) to `store_inventory` with non-negative check constraint.
+  - **Backend Services & APIs:**
+    - Catalogue variant lookup (`GET /api/v1/retailer/catalogue/products`) with `is_already_listed` deduplication detection.
+    - Retailer listing lifecycle (`GET /api/v1/retailer/listings`, `POST /api/v1/retailer/listings`, `GET /api/v1/retailer/listings/{id}`, `PUT /api/v1/retailer/listings/{id}`, `DELETE /api/v1/retailer/listings/{id}`) with strict authenticated session retailer derivation (anti-IDOR), custom seller SKUs, and selling price <= MRP validation.
+    - Warehouse stock management (`GET /api/v1/retailer/inventory`, `POST /api/v1/retailer/listings/{id}/inventory`, `POST /api/v1/retailer/inventory/bulk-adjust`) with `SELECT ... FOR UPDATE` row locks, negative stock prevention, customer reservation hold protection (`CANNOT_REDUCE_BELOW_RESERVED`), and low-stock threshold alert triggers.
+  - **Frontend Pages & Components:**
+    - `/retailer/listings`: Filterable, searchable store listings table with inline status toggles, pricing edit modal, and new listing action.
+    - `/retailer/listings/new`: Canonical catalogue explorer and listing creation wizard with live variant selector and price margin calculations.
+    - `/retailer/inventory`: Real-time stock dashboard with 6 KPI summary cards (Total Items, On-Hand Units, Reserved Holds, Available Stock, Low Stock Alerts, Out of Stock Alerts), alert filter tabs, and SET/DELTA inventory adjustment modals.
+  - **Verification:** 7 comprehensive integration tests in `test_retailer_listings_inventory.py` covering RBAC, catalogue lookup, listing CRUD, anti-IDOR tenant isolation, pricing hierarchies, reservation safety, and concurrent race condition protections. 4 client test suites in `portals.test.ts`. Full test suites green (379 backend, 67 frontend).
 
 #### Vertical Slice 5C: Admin Marketplace Moderation, Retailer Approval & Platform Deals
 - **Features Covered:** 1.1, 1.2, 1.3, 1.7.

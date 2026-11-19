@@ -2,10 +2,10 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-19T17:30:00+05:30  
-> **Base Branch:** `integration` (commit `16a3003`)  
-> **Head Status:** Single Alembic head `0011_order_postpurchase`  
-> **Test Status:** 361 Backend Tests Passed (100%), 63 Frontend Tests Passed (100%), CI Green  
+> **Last Audited:** 2026-11-19T18:55:00+05:30  
+> **Base Branch:** `integration` (commit `df30ee0`)  
+> **Head Status:** Single Alembic head `0013_retailer_inventory`  
+> **Test Status:** 379 Backend Tests Passed (100%), 67 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -153,6 +153,15 @@ During Phase 4 testing, a critical issue was observed where customers completed 
 - **Frontend Role Portals:** Built `/admin` (overview KPIs, retailer onboarding verification queue), `/retailer` (store dashboard, quick metrics, live open/closed toggle), `/retailer/profile` (store settings), and `/register/retailer` (onboarding form). Role guards enforce strict access redirection or 403 Forbidden states.
 - **Hardened Checkout Reservation Derivation:** In `backend/app/modules/orders/service.py`, reinforced server-authoritative `quote_id` derivation from inventory reservations. The derivation strictly validates reservation ownership (anti-IDOR), status (`ACTIVE` only, rejecting `CONFIRMED`, `EXPIRED`, `RELEASED`), server UTC expiry, and quote association before resolving `effective_quote_id`. Added 5 negative tests in `test_orders.py` verifying all failure scenarios.
 
+### 4.4 Phase 5B Retailer Store Listings, Variant Pricing & Inventory Management
+- **Alembic Migration 0013 (`0013_retailer_inventory`):** Added `low_stock_threshold` (`INTEGER`, default 10, non-negative check constraint) to `store_inventory`. Verified clean downgrade to `0012_multi_role_portals` and upgrade back to `0013_retailer_inventory`.
+- **Catalogue Variant Browsing & Deduplication:** Mounted `GET /api/v1/retailer/catalogue/products` allowing verified retailers to search canonical products and select variants, automatically detecting if the variant is already listed (`is_already_listed`, `existing_listing_id`).
+- **Store Listings CRUD & Strict Anti-IDOR:** Mounted `GET /api/v1/retailer/listings`, `POST /api/v1/retailer/listings`, `GET /api/v1/retailer/listings/{id}`, `PUT /api/v1/retailer/listings/{id}`, and `DELETE /api/v1/retailer/listings/{id}`. The backend derives `retailer_id` exclusively from the authenticated session; client-supplied retailer IDs are never accepted. Negative isolation tests prove Retailer A cannot read, update, delete, or adjust inventory for Retailer B's listings (HTTP 404).
+- **Variant Pricing Rules & MRP Invariants:** Retailers set independent original price (MRP) and selling price per variant. Pydantic validators and service business rules enforce `selling_price <= original_price` (`INVALID_PRICING`), preventing accidental or fraudulent negative discounts.
+- **Warehouse Stock Management & Concurrency Protection:** Mounted `GET /api/v1/retailer/inventory`, `POST /api/v1/retailer/listings/{id}/inventory`, and `POST /api/v1/retailer/inventory/bulk-adjust`. All inventory mutations acquire `SELECT ... FOR UPDATE` row locks. Adjustments support `SET` and `DELTA` types, enforce database-backed non-negative stock invariants, and forbid reducing on-hand stock below active customer reservation holds (`CANNOT_REDUCE_BELOW_RESERVED`). Parallel async race tests prove concurrent decrements cannot oversubscribe inventory or cause lost updates.
+- **Low-Stock Alerting:** Configurable `low_stock_threshold` triggers real-time `is_low_stock` state flags in database queries, powering the warning banner in `/retailer` and dedicated `LOW_STOCK` filter tabs in the inventory console.
+- **Frontend Consoles:** Implemented `/retailer/listings` (listings table with search and pricing edit modal), `/retailer/listings/new` (catalogue explorer with live variant preview), and `/retailer/inventory` (warehouse console with 6 KPI cards, status filters, and stock adjustment modal).
+
 ---
 
 ## 5. Feature Specification vs. Implementation Matrix
@@ -162,6 +171,9 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | Feature Area | Role | Finalized Spec Status | Codebase Implementation Status | Current Notes & Evidence |
 |:---|:---:|:---:|:---:|:---|
 | **Product Catalogue & Variants** | Admin / Retailer / Customer | Core | **Fully Implemented** | Database models, API routes, SSR storefront browsing. |
+| **Retailer Catalogue Listings (2.2)** | Retailer | Core | **Fully Implemented (Phase 5B)** | Listing creation from platform catalogue, custom seller SKUs, active/paused toggles, deduplication. |
+| **Retailer Variant Pricing (2.3)** | Retailer | Core | **Fully Implemented (Phase 5B)** | Independent selling price & MRP per variant, margin validation, no platform catalogue mutation. |
+| **Retailer Inventory & Stock (2.6)** | Retailer | Core | **Fully Implemented (Phase 5B)** | Warehouse console, SET/DELTA adjustments, row locks, hold protection, low-stock threshold alerts. |
 | **Faceted Search (OpenSearch)** | Customer | Core | **Fully Implemented** | OpenSearch indexing, facets, circuit breaker, SQL fallback. |
 | **Persistent Cart & Merging** | Customer | Core | **Fully Implemented** | Guest carts, authenticated carts, automated merge on login. |
 | **Pricing & HMAC Quotes** | Platform / Retailer | Core | **Fully Implemented** | GST tax computation, discounts, 5-minute signed quotes. |
@@ -174,7 +186,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Customer Notifications** | Customer | Core | **Fully Implemented** | In-app notification center, unread counters, mark as read. |
 | **Customer Account Management** | Customer | Core | **Fully Implemented** | Profile, saved addresses, recent purchases, session revoke. |
 | **Admin Panel Dashboard** | Admin | Core | **Partially Implemented (Phase 5A)** | Overview KPIs, retailer moderation queue, verify/suspend APIs, `/admin` UI. |
-| **Retailer Panel Dashboard** | Retailer | Core | **Partially Implemented (Phase 5A)** | Store profile, open/pause toggle, onboarding registration, overview metrics, `/retailer` UI. |
+| **Retailer Panel Dashboard** | Retailer | Core | **Expanded (Phase 5A + 5B)** | Store profile, open/pause toggle, `/retailer/listings`, `/retailer/inventory`, overview metrics. |
 | **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
 | **Basket Mission & Intent Memory** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.2, §3.3. |
 | **Substitute & Price Intelligence** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.4, §3.10. |

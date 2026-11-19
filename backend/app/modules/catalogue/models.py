@@ -348,6 +348,9 @@ class StoreInventory(Base):
     )
     on_hand_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reserved_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    low_stock_threshold: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -366,12 +369,20 @@ class StoreInventory(Base):
     def available_quantity(self) -> int:
         return max(0, self.on_hand_quantity - self.reserved_quantity)
 
+    @property
+    def is_low_stock(self) -> bool:
+        return self.available_quantity <= self.low_stock_threshold
+
     __table_args__ = (
         CheckConstraint(
             "on_hand_quantity >= 0", name="chk_inventory_on_hand_non_negative"
         ),
         CheckConstraint(
             "reserved_quantity >= 0", name="chk_inventory_reserved_non_negative"
+        ),
+        CheckConstraint(
+            "low_stock_threshold >= 0",
+            name="chk_inventory_low_stock_threshold_non_negative",
         ),
         CheckConstraint(
             "on_hand_quantity >= reserved_quantity",
