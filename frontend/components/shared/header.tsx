@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -14,12 +14,18 @@ import {
   LogOut,
   MapPin,
   ShoppingCart,
+  Package,
+  Bell,
+  Check,
+  CheckCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useCart } from "@/lib/cart/cart-context";
+import { apiClient } from "@/lib/api/client";
+import type { CustomerNotification } from "@/types/index";
 
 export function Header() {
   const router = useRouter();
@@ -27,6 +33,73 @@ export function Header() {
   const { totalQuantity } = useCart();
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchNotifications = async () => {
+      try {
+        const countRes = await apiClient.getUnreadNotificationCount();
+        if (mounted) setUnreadCount(countRes.unread_count || 0);
+      } catch {
+        // Guest or unauthenticated background fetch ignored
+      }
+    };
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [isAuthenticated]);
+
+  const loadNotifications = async () => {
+    try {
+      const res = await apiClient.listNotifications(15, 0);
+      setNotifications(res.items || []);
+      setUnreadCount(res.unread_count || 0);
+    } catch {
+      // Fallback gracefully
+    }
+  };
+
+  const toggleNotifications = () => {
+    const nextState = !notificationsOpen;
+    setNotificationsOpen(nextState);
+    if (nextState) {
+      loadNotifications();
+    }
+  };
+
+  const handleMarkAsRead = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await apiClient.markNotificationAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      // Ignore
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotificationsOpen(false);
+      }
+    };
+    if (notificationsOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [notificationsOpen]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,6 +175,107 @@ export function Header() {
             <Store className="h-4 w-4" />
             Retailers
           </Link>
+
+          {/* Orders Link (Desktop) */}
+          <Link
+            href="/orders"
+            className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+          >
+            <Package className="h-4 w-4" />
+            Orders
+          </Link>
+
+          {/* Notification Center Popover Trigger */}
+          <div className="relative" ref={notifRef}>
+            <button
+              type="button"
+              onClick={toggleNotifications}
+              className="relative p-2 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400 focus:outline-none"
+              aria-label="Notification Center"
+              title="Notifications"
+            >
+              <Bell className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow-xs">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Notification Dropdown Panel */}
+            {notificationsOpen && (
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-xl border bg-card p-0 shadow-xl z-50 overflow-hidden text-card-foreground">
+                <div className="flex items-center justify-between border-b px-4 py-3 bg-muted/30">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-emerald-600" />
+                    <span className="text-sm font-semibold">Notifications</span>
+                    {unreadCount > 0 && (
+                      <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                        {unreadCount} unread
+                      </Badge>
+                    )}
+                  </div>
+                  <Link
+                    href="/orders"
+                    onClick={() => setNotificationsOpen(false)}
+                    className="text-xs text-emerald-600 hover:underline font-medium"
+                  >
+                    View Orders
+                  </Link>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-muted/40">
+                  {notifications.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-muted-foreground">
+                      No notifications yet.
+                    </div>
+                  ) : (
+                    notifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => {
+                          if (notif.order_id) {
+                            router.push(`/orders/${notif.order_id}`);
+                            setNotificationsOpen(false);
+                          }
+                        }}
+                        className={`p-3.5 hover:bg-muted/50 cursor-pointer transition-colors flex items-start gap-3 ${
+                          !notif.is_read ? "bg-emerald-50/50 dark:bg-emerald-950/20" : ""
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="text-xs font-semibold text-foreground truncate">
+                              {notif.title}
+                            </h4>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {new Date(notif.created_at).toLocaleDateString("en-IN", {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                            {notif.message}
+                          </p>
+                        </div>
+                        {!notif.is_read && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleMarkAsRead(notif.id, e)}
+                            title="Mark as read"
+                            className="p-1 text-muted-foreground hover:text-emerald-600 shrink-0"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Cart Icon Link (Desktop) */}
           <Link
@@ -247,6 +421,14 @@ export function Header() {
               className="px-3 py-2 rounded-md hover:bg-muted text-foreground"
             >
               Categories
+            </Link>
+            <Link
+              href="/orders"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center gap-2"
+            >
+              <Package className="h-4 w-4 text-emerald-600" />
+              My Orders & Tracking
             </Link>
             <Link
               href="/retailers"

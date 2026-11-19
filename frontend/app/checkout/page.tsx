@@ -309,11 +309,49 @@ function CheckoutContent() {
                 </p>
               </div>
             </div>
-            <div className="flex justify-end pt-2">
-              <Link href="/account">
-                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
-                  View My Orders
-                  <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+            {order?.guest_access_token && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md text-xs space-y-1.5">
+                <span className="font-semibold text-amber-900 dark:text-amber-200 block">
+                  Guest Order Access Token (Save this to view & track your order):
+                </span>
+                <p className="font-mono text-[11px] select-all bg-white dark:bg-black/40 p-2 rounded border border-amber-300 dark:border-amber-800 break-all text-foreground">
+                  {order.guest_access_token}
+                </p>
+                <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                  Bookmark your order details or enter this token in the Orders page to track delivery status.
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
+              <Link
+                href={
+                  order?.id
+                    ? `/orders/${order.id}${
+                        order.guest_access_token
+                          ? `?access_token=${encodeURIComponent(order.guest_access_token)}`
+                          : ""
+                      }`
+                    : "/orders"
+                }
+              >
+                <Button variant="outline" size="sm" className="text-xs">
+                  View Order Details
+                </Button>
+              </Link>
+              <Link
+                href={
+                  order?.id
+                    ? `/orders/${order.id}/track${
+                        order.guest_access_token
+                          ? `?access_token=${encodeURIComponent(order.guest_access_token)}`
+                          : ""
+                      }`
+                    : "/orders"
+                }
+              >
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5">
+                  Track Order
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               </Link>
             </div>

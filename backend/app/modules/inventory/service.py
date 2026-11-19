@@ -572,6 +572,21 @@ class ReservationService:
         await self.session.flush()
         return res
 
+    async def restock_inventory_items(
+        self,
+        items: list[tuple[uuid.UUID, int]],
+    ) -> None:
+        """Restocks items back into on_hand_quantity in deterministic lock order."""
+        if not items:
+            return
+        listing_ids = [listing_id for listing_id, _ in items]
+        inventories = await self.repo.lock_inventories_for_update(listing_ids)
+        for listing_id, qty in items:
+            inv = inventories.get(listing_id)
+            if inv and qty > 0:
+                inv.on_hand_quantity += qty
+        await self.session.flush()
+
     async def cleanup_expired_reservations(self, limit: int = 100) -> int:
         """Background cleanup job to expire reservations past their TTL and release stock."""
         expired_active = await self.repo.get_expired_active_reservations(limit=limit)
