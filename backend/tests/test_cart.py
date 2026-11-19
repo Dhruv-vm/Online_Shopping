@@ -3,26 +3,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
-
-async def get_test_listings(async_client: AsyncClient) -> list[dict]:
-    """Helper to fetch active product listings from catalogue."""
-    response = await async_client.get("/api/v1/products?limit=10")
-    assert response.status_code == 200
-    products = response.json()["items"]
-    listings = []
-    for prod in products:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        assert detail_resp.status_code == 200
-        detail = detail_resp.json()
-        for variant in detail.get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) > 0
-                ):
-                    listings.append(listing)
-    listings.sort(key=lambda item: item.get("available_quantity", 0), reverse=True)
-    return listings
+from tests.factories import get_test_listings
 
 
 @pytest.mark.asyncio

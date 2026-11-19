@@ -321,9 +321,14 @@ async def test_opensearch_consumer_handles_product_upsert(
         bind=db_session.bind, expire_on_commit=False, class_=AsyncSession
     )
 
-    # 1. Fetch existing seeded product
+    # 1. Fetch existing seeded product or create one
     stmt = select(Product).limit(1)
-    prod = (await db_session.execute(stmt)).scalar_one()
+    prod = (await db_session.execute(stmt)).scalar_one_or_none()
+    if prod is None:
+        from tests.factories import create_test_listing
+
+        await create_test_listing(product_name="OpenSearch Upsert Test Product")
+        prod = (await db_session.execute(stmt)).scalar_one()
 
     # 2. Setup OpenSearch index and consumer
     write_alias = "basket_products_write"
@@ -372,7 +377,12 @@ async def test_opensearch_consumer_handles_version_conflict_as_safe_noop(
     )
 
     stmt = select(Product).offset(1).limit(1)
-    prod = (await db_session.execute(stmt)).scalar_one()
+    prod = (await db_session.execute(stmt)).scalar_one_or_none()
+    if prod is None:
+        from tests.factories import create_test_listing
+
+        await create_test_listing(product_name="OpenSearch Conflict Test Product")
+        prod = (await db_session.execute(select(Product).limit(1))).scalar_one()
     prod_id = prod.id
 
     write_alias = "basket_products_write"
