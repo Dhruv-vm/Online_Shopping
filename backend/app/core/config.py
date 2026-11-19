@@ -1,10 +1,17 @@
+from pathlib import Path
+
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_CONFIG_FILE = Path(__file__).resolve()
+_APP_DIR = _CONFIG_FILE.parent.parent  # backend/app
+_BACKEND_DIR = _APP_DIR.parent  # backend
+_ROOT_DIR = _BACKEND_DIR.parent  # Online_Shopping (repo root)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=[".env", "backend/.env"],
+        env_file=[str(_BACKEND_DIR / ".env"), str(_ROOT_DIR / ".env"), ".env"],
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -303,6 +310,26 @@ class Settings(BaseSettings):
             raise ValueError("OUTBOX_BATCH_SIZE must be between 1 and 20.")
         return v
 
+    @field_validator("KAFKA_SSL_CA_LOCATION", mode="after")
+    @classmethod
+    def resolve_kafka_ssl_ca_location(cls, v: str | None) -> str | None:
+        if not v or not v.strip():
+            return None
+        ca_str = v.strip()
+        p = Path(ca_str)
+        if p.is_file():
+            return str(p.resolve())
+        # Try relative to repo root
+        repo_p = _ROOT_DIR / ca_str
+        if repo_p.is_file():
+            return str(repo_p.resolve())
+        # Strip potential repo root directory duplicate prefix (e.g. Online_Shopping/...)
+        if ca_str.startswith("Online_Shopping/"):
+            sub_p = _ROOT_DIR / ca_str[len("Online_Shopping/") :]
+            if sub_p.is_file():
+                return str(sub_p.resolve())
+        return ca_str
+
     @field_validator("OPENSEARCH_URL", mode="before")
     @classmethod
     def clean_opensearch_url(cls, v: object) -> str | None:
@@ -310,7 +337,24 @@ class Settings(BaseSettings):
             return None
         if isinstance(v, str):
             s = v.strip()
-            return s if s else None
+            if not s:
+                return None
+            # Strip embedded basic auth credentials if present (e.g. https://user:pass@host:port)
+            if "@" in s:
+                try:
+                    from urllib.parse import urlparse, urlunparse
+
+                    p = urlparse(s)
+                    if p.username or p.password:
+                        netloc = p.hostname or ""
+                        if p.port:
+                            netloc += f":{p.port}"
+                        return urlunparse(
+                            (p.scheme, netloc, p.path, p.params, p.query, p.fragment)
+                        ).rstrip("/")
+                except Exception:
+                    pass
+            return s.rstrip("/")
         return str(v)
 
     @field_validator("OPENSEARCH_URL", mode="after")

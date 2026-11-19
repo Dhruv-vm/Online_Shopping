@@ -41,11 +41,32 @@ class DeliveryAddressInput(BaseModel):
 
 
 class CreateOrderRequest(BaseModel):
-    quote_id: uuid.UUID
+    quote_id: uuid.UUID | None = None
     reservation_id: uuid.UUID
     delivery_address_id: uuid.UUID | None = None
     delivery_address: DeliveryAddressInput | None = None
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+    @field_validator("quote_id", mode="before")
+    @classmethod
+    def clean_empty_quote_id(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @field_validator("delivery_address_id", mode="before")
+    @classmethod
+    def clean_empty_address_id(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def clean_empty_idempotency_key(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
 
 
 class OrderItemResponse(BaseModel):

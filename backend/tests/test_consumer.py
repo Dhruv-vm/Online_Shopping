@@ -25,7 +25,7 @@ from app.core.events.inbox import (
     OrderSummaryProjection,
     get_inbox_record,
 )
-from app.core.events.kafka import MockKafkaProducer
+from app.core.events.kafka import EventProducer, MockKafkaProducer
 from app.core.events.outbox_publisher import (
     compute_next_attempt_at,
     sanitize_error_message,
@@ -153,6 +153,76 @@ class TestConsumerPureLogicAndSafety:
                 prod_settings,
                 force_mock=True,
             )
+
+    def test_get_kafka_consumer_factory_passes_sasl_auth_kwargs(self, test_ca_pem_file):
+        from unittest.mock import patch
+
+        sasl_settings = Settings(
+            ENVIRONMENT="development",
+            KAFKA_BOOTSTRAP_SERVERS="kafka.example.com:9092",
+            KAFKA_SECURITY_PROTOCOL="SASL_SSL",
+            KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
+            KAFKA_SASL_USERNAME="avnadmin",
+            KAFKA_SASL_PASSWORD="test_password_123",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
+        )
+
+        with patch("app.core.events.consumer.AIOKafkaConsumer") as mock_aiokafka:
+            get_kafka_consumer(
+                "test-group",
+                ["basket.events.orders"],
+                sasl_settings,
+            )
+            assert mock_aiokafka.called
+            call_kwargs = mock_aiokafka.call_args[1]
+            assert call_kwargs["security_protocol"] == "SASL_SSL"
+            assert call_kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+            assert call_kwargs["sasl_plain_username"] == "avnadmin"
+            assert call_kwargs["sasl_plain_password"] == "test_password_123"
+            assert "ssl_context" in call_kwargs
+            assert call_kwargs["ssl_context"] is not None
+
+    async def test_base_consumer_start_passes_sasl_auth_kwargs(self, test_ca_pem_file):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        sasl_settings = Settings(
+            ENVIRONMENT="development",
+            KAFKA_BOOTSTRAP_SERVERS="kafka.example.com:9092",
+            KAFKA_SECURITY_PROTOCOL="SASL_SSL",
+            KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
+            KAFKA_SASL_USERNAME="avnadmin",
+            KAFKA_SASL_PASSWORD="test_password_123",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
+        )
+
+        mock_producer = AsyncMock(spec=EventProducer)
+        mock_producer.is_connected = True
+
+        consumer = OrderProjectionConsumer(
+            session_factory=AsyncMock(),
+            producer=mock_producer,
+            config_settings=sasl_settings,
+            consumer_impl=None,
+        )
+
+        mock_aiokafka_instance = AsyncMock()
+        mock_aiokafka_instance.start = AsyncMock()
+        mock_aiokafka_instance.subscribe = MagicMock()
+
+        with patch(
+            "app.core.events.consumer.AIOKafkaConsumer",
+            return_value=mock_aiokafka_instance,
+        ) as mock_aiokafka_cls:
+            await consumer.start()
+            assert mock_aiokafka_cls.called
+            call_kwargs = mock_aiokafka_cls.call_args[1]
+            assert call_kwargs["security_protocol"] == "SASL_SSL"
+            assert call_kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+            assert call_kwargs["sasl_plain_username"] == "avnadmin"
+            assert call_kwargs["sasl_plain_password"] == "test_password_123"
+            assert "ssl_context" in call_kwargs
+            assert call_kwargs["ssl_context"] is not None
+            await consumer.stop()
 
 
 # ------------------------------------------------------------------------------

@@ -1461,6 +1461,7 @@ def test_internal_service_key_configuration_security():
         RAZORPAY_KEY_ID="rzp_live_realprodkey123",
         RAZORPAY_KEY_SECRET="productionsecret16chars",
         RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
+        KAFKA_BOOTSTRAP_SERVERS="",
     )
     assert prod_settings.INTERNAL_SERVICE_KEY is not None
     assert prod_settings.INTERNAL_SERVICE_KEY.get_secret_value() == strong_key

@@ -225,4 +225,98 @@ test("Orders API Client integration", async (t) => {
       },
     );
   });
+
+  await t.test(
+    "createOrder() supports guest checkout with reservation_id only",
+    async () => {
+      let capturedBody: Record<string, unknown> = {};
+
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return new Response(JSON.stringify(mockOrder), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      };
+
+      const res = await createOrder({
+        reservation_id: "res-uuid-101",
+      });
+
+      assert.equal(capturedBody.reservation_id, "res-uuid-101");
+      assert.equal(capturedBody.delivery_address_id, undefined);
+      assert.equal(res.id, "ord-uuid-123");
+    },
+  );
+
+  await t.test(
+    "createOrder() supports authenticated checkout with saved delivery_address_id",
+    async () => {
+      let capturedBody: Record<string, unknown> = {};
+
+      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+        capturedBody = JSON.parse(init?.body as string);
+        return new Response(JSON.stringify(mockOrder), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      };
+
+      const res = await createOrder({
+        reservation_id: "res-uuid-101",
+        delivery_address_id: "550e8400-e29b-41d4-a716-446655440000",
+      });
+
+      assert.equal(capturedBody.reservation_id, "res-uuid-101");
+      assert.equal(
+        capturedBody.delivery_address_id,
+        "550e8400-e29b-41d4-a716-446655440000",
+      );
+      assert.equal(res.id, "ord-uuid-123");
+    },
+  );
+
+  await t.test(
+    "createOrder() raises ApiClientError with field-level details on 422 validation failure",
+    async () => {
+      globalThis.fetch = async () => {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "The request payload validation failed: delivery_address_id: Input should be a valid UUID, invalid length: found 0",
+              details: [
+                {
+                  loc: ["body", "delivery_address_id"],
+                  msg: "Input should be a valid UUID, invalid length: found 0",
+                  type: "uuid_parsing",
+                },
+              ],
+            },
+          }),
+          {
+            status: 422,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      };
+
+      await assert.rejects(
+        async () => {
+          await createOrder({
+            reservation_id: "res-uuid-101",
+            delivery_address_id: "" as unknown as string,
+          });
+        },
+        (err: unknown) => {
+          assert(err instanceof ApiClientError);
+          assert.equal(err.status, 422);
+          assert.equal(err.code, "VALIDATION_ERROR");
+          assert.match(err.message, /delivery_address_id/);
+          assert.equal(err.details.length, 1);
+          return true;
+        },
+      );
+    },
+  );
 });

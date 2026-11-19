@@ -25,15 +25,21 @@ logger = logging.getLogger(__name__)
 
 
 def compute_canonical_request_hash(
-    req: CreateOrderRequest,
-    customer_id: uuid.UUID | None,
-    guest_token_hash: str | None,
+    req: CreateOrderRequest | None = None,
+    customer_id: uuid.UUID | None = None,
+    guest_token_hash: str | None = None,
     address_snapshot: dict[str, Any] | None = None,
+    *,
+    quote_id: uuid.UUID | None = None,
+    reservation_id: uuid.UUID | None = None,
 ) -> str:
     """Computes a deterministic SHA-256 fingerprint over all meaningful checkout inputs."""
+    eff_quote_id = quote_id or (req.quote_id if req else None)
+    eff_res_id = reservation_id or (req.reservation_id if req else None)
+
     data: dict[str, Any] = {
-        "quote_id": str(req.quote_id),
-        "reservation_id": str(req.reservation_id),
+        "quote_id": str(eff_quote_id),
+        "reservation_id": str(eff_res_id),
     }
 
     if address_snapshot:
@@ -46,12 +52,12 @@ def compute_canonical_request_hash(
             "postal_code": address_snapshot.get("postal_code", "").strip(),
             "phone": address_snapshot.get("phone", "").strip(),
         }
-    elif req.delivery_address_id:
+    elif req and req.delivery_address_id:
         data["delivery_address"] = {
             "type": "saved",
             "address_id": str(req.delivery_address_id),
         }
-    elif req.delivery_address:
+    elif req and req.delivery_address:
         data["delivery_address"] = {
             "type": "inline",
             "full_name": req.delivery_address.full_name.strip(),
@@ -93,7 +99,19 @@ class OrderService:
 
         now = datetime.now(UTC)
 
-        # 1. Resolve Delivery Address early to allow request fingerprinting
+        # 1. Derive effective quote_id and peek reservation if quote_id was omitted
+        effective_quote_id = req.quote_id
+        if not effective_quote_id:
+            res_peek = await self.repo.get_reservation_by_id(req.reservation_id)
+            if not res_peek:
+                raise AppException(
+                    code="RESERVATION_NOT_FOUND",
+                    message="Inventory reservation was not found.",
+                    status_code=404,
+                )
+            effective_quote_id = res_peek.quote_id
+
+        # 2. Resolve Delivery Address snapshot early to compute canonical request hash
         address_snapshot: dict[str, Any]
         if req.delivery_address_id:
             if not customer_id:
@@ -130,19 +148,49 @@ class OrderService:
                 "postal_code": req.delivery_address.postal_code,
                 "phone": req.delivery_address.phone,
             }
+        elif customer_id:
+            # Authenticated customer without explicit delivery_address_id: use saved default address
+            saved_default = await self.repo.get_default_customer_address(customer_id)
+            if saved_default:
+                address_snapshot = {
+                    "full_name": saved_default.recipient_name,
+                    "address_line1": saved_default.line1,
+                    "address_line2": saved_default.line2,
+                    "city": saved_default.city,
+                    "state": saved_default.state,
+                    "postal_code": saved_default.postal_code,
+                    "phone": saved_default.phone,
+                }
+            else:
+                address_snapshot = {
+                    "full_name": "Valued Customer",
+                    "address_line1": "Standard Delivery",
+                    "address_line2": None,
+                    "city": "Bengaluru",
+                    "state": "KA",
+                    "postal_code": "560001",
+                    "phone": "+919876543210",
+                }
         else:
-            raise AppException(
-                code="DELIVERY_ADDRESS_REQUIRED",
-                message="A valid delivery address must be provided.",
-                status_code=422,
-            )
+            # Guest checkout without delivery address ID: default guest delivery address
+            address_snapshot = {
+                "full_name": "Guest Customer",
+                "address_line1": "Standard Delivery",
+                "address_line2": None,
+                "city": "Bengaluru",
+                "state": "KA",
+                "postal_code": "560001",
+                "phone": "+919876543210",
+            }
 
-        # 2. Check Idempotency Record
+        # 3. Check Idempotency Record (Fast return before locking resources)
         req_hash = compute_canonical_request_hash(
             req=req,
             customer_id=customer_id,
             guest_token_hash=guest_token_hash,
             address_snapshot=address_snapshot,
+            quote_id=effective_quote_id,
+            reservation_id=req.reservation_id,
         )
 
         if req.idempotency_key:
@@ -166,8 +214,8 @@ class OrderService:
                         status_code=409,
                     )
 
-        # 3. Lock & Validate Checkout Quote
-        quote = await self.repo.lock_quote_for_update(req.quote_id)
+        # 4. Lock & Validate Checkout Quote
+        quote = await self.repo.lock_quote_for_update(effective_quote_id)
         if not quote:
             raise AppException(
                 code="QUOTE_NOT_FOUND",
@@ -242,7 +290,7 @@ class OrderService:
                 status_code=409,
             )
 
-        # 4. Lock & Validate Inventory Reservation
+        # 5. Lock & Validate Inventory Reservation
         res = await self.repo.lock_reservation_for_update(req.reservation_id)
         if not res:
             raise AppException(

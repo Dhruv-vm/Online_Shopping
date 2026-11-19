@@ -2121,3 +2121,205 @@ class TestOrderAggregateVersionMonotonicity:
             versions = [e.aggregate_version for e in evts]
             assert versions == [1, 2]
             assert len(versions) == len(set(versions))
+
+
+# ------------------------------------------------------------------------------
+# Regression Tests: Checkout Validation & Address Handling
+# ------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_guest_checkout_with_no_delivery_address_id(async_client: AsyncClient):
+    """Guest checkout succeeds when delivery_address_id is completely omitted/None."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    try:
+        app = create_app()
+        guest_cookie = f"guest_order_{uuid.uuid4().hex}"
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={"basket_guest_cart": guest_cookie},
+        ) as client:
+            await client.post(
+                "/api/v1/cart/items",
+                json={"listing_id": str(listing_id), "quantity": 1},
+            )
+            q_resp = await client.post("/api/v1/quotes", json={})
+            assert q_resp.status_code == 201
+            quote_id = q_resp.json()["id"]
+
+            r_resp = await client.post(
+                "/api/v1/reservations", json={"quote_id": quote_id}
+            )
+            assert r_resp.status_code == 201
+            res_id = r_resp.json()["id"]
+
+            # Checkout with NO delivery_address_id and NO quote_id (matching frontend contract)
+            order_resp = await client.post(
+                "/api/v1/orders",
+                json={
+                    "reservation_id": res_id,
+                },
+            )
+            assert order_resp.status_code == 201
+            data = order_resp.json()
+            assert data["customer_id"] is None
+            assert data["status"] == "PENDING_PAYMENT"
+            assert data["delivery_address"]["full_name"] == "Guest Customer"
+            assert data["delivery_address"]["postal_code"] == "560001"
+            assert data["quote_id"] == quote_id
+            assert data["reservation_id"] == res_id
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_guest_checkout_empty_string_delivery_address_id_sanitized(
+    async_client: AsyncClient,
+):
+    """Empty string delivery_address_id is sanitized to None without UUID parsing failure."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    try:
+        app = create_app()
+        guest_cookie = f"guest_order_{uuid.uuid4().hex}"
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={"basket_guest_cart": guest_cookie},
+        ) as client:
+            await client.post(
+                "/api/v1/cart/items",
+                json={"listing_id": str(listing_id), "quantity": 1},
+            )
+            q_resp = await client.post("/api/v1/quotes", json={})
+            assert q_resp.status_code == 201
+            quote_id = q_resp.json()["id"]
+
+            r_resp = await client.post(
+                "/api/v1/reservations", json={"quote_id": quote_id}
+            )
+            assert r_resp.status_code == 201
+            res_id = r_resp.json()["id"]
+
+            # Passing empty string delivery_address_id
+            order_resp = await client.post(
+                "/api/v1/orders",
+                json={
+                    "reservation_id": res_id,
+                    "delivery_address_id": "",
+                },
+            )
+            assert order_resp.status_code == 201
+            data = order_resp.json()
+            assert data["delivery_address"]["full_name"] == "Guest Customer"
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_checkout_with_saved_address(async_client: AsyncClient):
+    """Authenticated customer checks out with valid saved address ID."""
+    listing = await get_test_listing(async_client)
+    listing_id = uuid.UUID(listing["id"])
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        inv_stmt = select(StoreInventory).where(StoreInventory.listing_id == listing_id)
+        orig_inv = (await session.execute(inv_stmt)).scalar_one()
+        orig_on_hand = orig_inv.on_hand_quantity
+        orig_reserved = orig_inv.reserved_quantity
+
+    user_data, _email, addr_id = await setup_customer_with_address(async_client)
+
+    try:
+        await async_client.post(
+            "/api/v1/cart/items",
+            json={"listing_id": str(listing_id), "quantity": 1},
+        )
+        q_resp = await async_client.post(
+            "/api/v1/quotes",
+            json={"delivery_address_id": addr_id},
+        )
+        assert q_resp.status_code == 201
+        quote_id = q_resp.json()["id"]
+
+        r_resp = await async_client.post(
+            "/api/v1/reservations",
+            json={"quote_id": quote_id},
+        )
+        assert r_resp.status_code == 201
+        res_id = r_resp.json()["id"]
+
+        order_resp = await async_client.post(
+            "/api/v1/orders",
+            json={
+                "reservation_id": res_id,
+                "delivery_address_id": addr_id,
+            },
+        )
+        assert order_resp.status_code == 201
+        data = order_resp.json()
+        assert data["customer_id"] == user_data["id"]
+        assert data["delivery_address"]["postal_code"] == "560038"
+    finally:
+        async with session_factory() as session:
+            await session.execute(
+                update(StoreInventory)
+                .where(StoreInventory.listing_id == listing_id)
+                .values(
+                    on_hand_quantity=orig_on_hand,
+                    reserved_quantity=orig_reserved,
+                )
+            )
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_validation_error_handler_field_level_details(async_client: AsyncClient):
+    """Validation errors format informative, actionable field-level error messages."""
+    resp = await async_client.post(
+        "/api/v1/orders",
+        json={"reservation_id": "not-a-valid-uuid"},
+    )
+    assert resp.status_code == 422
+    err = resp.json()["error"]
+    assert err["code"] == "VALIDATION_ERROR"
+    assert "reservation_id" in err["message"]
+    assert len(err["details"]) > 0
+    assert err["details"][0]["loc"][-1] == "reservation_id"
