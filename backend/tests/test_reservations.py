@@ -16,6 +16,7 @@ from app.modules.catalogue.models import StoreInventory
 from app.modules.inventory.models import InventoryReservation, ReservationStatus
 from app.modules.inventory.service import ReservationService
 from app.modules.pricing.models import CheckoutQuote, CheckoutQuoteItem, QuoteStatus
+from tests.factories import get_test_listing, get_two_different_retailer_listings
 
 
 def get_internal_auth_headers(use_token_alias: bool = False) -> dict[str, str]:
@@ -24,45 +25,6 @@ def get_internal_auth_headers(use_token_alias: bool = False) -> dict[str, str]:
     key = settings.INTERNAL_SERVICE_KEY.get_secret_value()
     header_name = "X-Internal-Token" if use_token_alias else "X-Internal-Service-Key"
     return {header_name: key}
-
-
-async def get_test_listing(async_client: AsyncClient, min_stock: int = 5) -> dict:
-    """Helper to fetch an active product listing with sufficient stock."""
-    response = await async_client.get("/api/v1/products?limit=10")
-    assert response.status_code == 200
-    for prod in response.json()["items"]:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        assert detail_resp.status_code == 200
-        for variant in detail_resp.json().get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) >= min_stock
-                ):
-                    return listing
-    raise RuntimeError("No active test listing with sufficient stock found.")
-
-
-async def get_two_different_retailer_listings(
-    async_client: AsyncClient,
-) -> tuple[dict, dict]:
-    """Helper to fetch two listings from distinct retailers."""
-    response = await async_client.get("/api/v1/products?limit=20")
-    assert response.status_code == 200
-    found_first = None
-    for prod in response.json()["items"]:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        for variant in detail_resp.json().get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) >= 5
-                ):
-                    if not found_first:
-                        found_first = listing
-                    elif listing["retailer_id"] != found_first["retailer_id"]:
-                        return found_first, listing
-    raise RuntimeError("Could not find two listings from distinct retailers.")
 
 
 @pytest.mark.asyncio

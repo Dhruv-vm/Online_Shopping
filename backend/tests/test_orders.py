@@ -23,6 +23,7 @@ from app.modules.orders.schemas import CreateOrderRequest
 from app.modules.orders.service import OrderService
 from app.modules.payments.client import RazorpayClient
 from app.modules.pricing.models import CheckoutQuote, QuoteStatus
+from tests.factories import get_test_listing
 from tests.test_payments import generate_payment_signature, setup_customer_and_order
 
 
@@ -31,22 +32,6 @@ def get_internal_auth_headers(use_token_alias: bool = False) -> dict[str, str]:
     key = settings.INTERNAL_SERVICE_KEY.get_secret_value()
     header_name = "X-Internal-Token" if use_token_alias else "X-Internal-Service-Key"
     return {header_name: key}
-
-
-async def get_test_listing(async_client: AsyncClient, min_stock: int = 5) -> dict:
-    response = await async_client.get("/api/v1/products?limit=10")
-    assert response.status_code == 200
-    for prod in response.json()["items"]:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        assert detail_resp.status_code == 200
-        for variant in detail_resp.json().get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) >= min_stock
-                ):
-                    return listing
-    raise RuntimeError("No active test listing with sufficient stock found.")
 
 
 VALID_ADDRESS_PAYLOAD = {

@@ -173,7 +173,13 @@ async def test_search_postgres_sql_fallback(
     app_instance.dependency_overrides[get_search_service] = lambda: custom_service
 
     try:
-        # Search for existing seeded product "Sony" or "MacBook"
+        # Search for MacBook product via PostgreSQL fallback (ensuring test listing if missing)
+        check_resp = await async_client.get("/api/v1/search?q=MacBook")
+        if check_resp.status_code == 200 and check_resp.json().get("total", 0) == 0:
+            from tests.factories import create_test_listing
+
+            await create_test_listing(product_name="Apple MacBook Air 15-inch M3")
+
         response = await async_client.get("/api/v1/search?q=MacBook")
         assert response.status_code == 200
         data = response.json()

@@ -38,6 +38,7 @@ from app.modules.payments.models import (
 from app.modules.payments.reconciliation import ReconciliationService
 from app.modules.payments.repository import PaymentRepository
 from app.modules.payments.webhook import WebhookService
+from tests.factories import get_test_listing
 
 
 def get_internal_auth_headers() -> dict[str, str]:
@@ -55,22 +56,6 @@ def generate_payment_signature(razorpay_order_id: str, razorpay_payment_id: str)
 def generate_webhook_signature(payload_bytes: bytes) -> str:
     secret = settings.RAZORPAY_WEBHOOK_SECRET.get_secret_value()
     return hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-
-
-async def get_test_listing(async_client: AsyncClient, min_stock: int = 5) -> dict:
-    response = await async_client.get("/api/v1/products?limit=10")
-    assert response.status_code == 200
-    for prod in response.json()["items"]:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        assert detail_resp.status_code == 200
-        for variant in detail_resp.json().get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) >= min_stock
-                ):
-                    return listing
-    raise RuntimeError("No active test listing with sufficient stock found.")
 
 
 async def setup_customer_and_order(

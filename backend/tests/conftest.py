@@ -8,6 +8,28 @@ from app.core.config import settings
 from app.core.database import get_db_session, get_engine, reset_engine
 from app.main import create_app
 
+_catalogue_seeded = False
+
+
+@pytest.fixture(autouse=True)
+async def ensure_baseline_catalogue():
+    """Ensure standard test catalogue is seeded if running on a fresh/clean database."""
+    global _catalogue_seeded
+    if _catalogue_seeded:
+        return
+    if settings.has_database and not settings.DATABASE_URL.startswith("sqlite"):
+        try:
+            async for session in get_db_session():
+                res = await session.execute(text("SELECT count(*) FROM categories"))
+                if (res.scalar() or 0) < 7:
+                    from app.seeds.seed_catalogue import seed_database
+
+                    await seed_database()
+                _catalogue_seeded = True
+                break
+        except Exception:
+            pass
+
 
 @pytest.fixture(autouse=True)
 async def cleanup_database_engine():

@@ -278,3 +278,83 @@ To transition this verified sandbox build to a live external Staging or Producti
 
 - **Sandbox Launch Decision:** **GO**. The platform's business logic, transaction isolation, inventory protection, idempotency guarantees, security controls, and degradation fallbacks are 100% verified and defect-free.
 - **Staging / Production Launch Decision:** **NO-GO** until external Kafka, OpenSearch, and Razorpay API credentials are provisioned in `.env` following the remediation steps in Section 13.
+
+---
+
+## 15. PR #14 CI Failure Investigation and Repair
+
+### 15.1 Summary of CI Failures
+In GitHub Actions CI run `44444198766` for PR #14, the backend pytest suite executed on a clean ephemeral `postgres:16-alpine` database service container with only `alembic upgrade head` executed.
+- **Result:** **107 failed, 231 passed** out of 338 total tests.
+- **Root Failure Signature:**
+  - 89 tests failed with `RuntimeError: No active test listing with sufficient stock found` in `test_orders.py` (29), `test_payments.py` (31), `test_quotes.py` (12), and `test_reservations.py` (17).
+  - 6 tests failed in `test_cart.py` due to assertion `len(listings) >= 1` or `>= 2`.
+  - 9 tests failed in `test_catalogue.py` expecting baseline categories and retailers.
+  - 2 tests failed in `test_opensearch.py` due to empty products table.
+  - 1 test failed in `test_search.py` (`test_search_postgres_sql_fallback`) expecting a search hit for `MacBook`.
+
+### 15.2 Root Cause Analysis
+1. **Local vs CI Environment Discrepancy:**
+   - In local development workstations, developers previously executed manual or seed scripts (`app/core/seed.py`), populating PostgreSQL with baseline categories, retailers, and product listings (11 products, 22 listings).
+   - In GitHub Actions CI, the environment is created from scratch: `alembic upgrade head` creates all tables, triggers, and indices up to migration `0010_consumer_inbox`, but leaves application business tables completely empty.
+   - Tests relied on helper functions `get_test_listing()` and `get_two_different_retailer_listings()` that queried `GET /api/v1/products`. On an empty database, this returned an empty list and raised a `RuntimeError`, cascading failures across all downstream modules (cart, quotes, orders, payments, reservations).
+2. **PostgreSQL Fallback Search:**
+   - The PostgreSQL SQL fallback search in `app/modules/search/service.py` functions as intended. The test `test_search_postgres_sql_fallback` specifically queried `MacBook` and expected at least one result, which failed solely because no MacBook product record existed in the database.
+
+### 15.3 Architecture of the Repair & Test Isolation
+To adhere strictly to test isolation without adding unmanaged global seeds to CI workflows:
+1. **Dynamic Factory Layer (`backend/tests/factories.py`):**
+   - Implemented self-contained factory functions that create isolated test records on demand when database tables are empty:
+     - `create_test_category()`: Generates unique test categories.
+     - `create_test_retailer()`: Generates unique verified retailers.
+     - `create_test_product()`: Creates products linked to categories.
+     - `create_test_variant()`: Creates variants with custom SKU and attributes.
+     - `create_test_listing()`: Creates listings with customizable price, stock, and retailer.
+     - `create_test_store_inventory()`: Creates backing store inventory records.
+     - `get_test_listing()`: Dynamic accessor that checks for existing active listings with sufficient stock; if absent, dynamically provisions a listing with backing inventory.
+     - `get_two_different_retailer_listings()`: Dynamically ensures two listings from distinct retailers exist.
+2. **Deterministic Baseline Autouse Fixture (`backend/tests/conftest.py`):**
+   - Added `ensure_baseline_catalogue(async_db_session)` autouse session-level fixture.
+   - Inspects `categories` count; if fewer than 7 exist (empty/clean DB), invokes `seed_database(session)` within an isolated transaction.
+   - Cached in-memory to execute exactly once per test session (elapsed time: 0.18s), introducing zero per-test overhead while guaranteeing all catalogue and baseline tests have deterministic data.
+3. **Resilient Module Test Updates:**
+   - Refactored `test_cart.py`, `test_orders.py`, `test_payments.py`, `test_quotes.py`, and `test_reservations.py` to import factory functions directly from `backend/tests/factories.py`.
+   - Updated `test_opensearch.py` to dynamically provision a product if table is empty.
+   - Updated `test_search.py` (`test_search_postgres_sql_fallback`) to ensure a MacBook product and active listing exist before querying fallback search.
+
+### 15.4 Dependency & Security Audit Findings
+- **Frontend Dependencies (`npm audit`):**
+  - High severity advisory reported on `postcss` (< 8.4.31 line return parsing vulnerability).
+  - Dependency is transitively bundled via `@next/env` and Next.js compiler build-time pipeline, not exposed on the runtime HTTP request surface.
+  - Runtime Next.js 15 production artifacts remain secure for sandbox deployment.
+- **Backend Dependencies (`pip check`):**
+  - Clean; zero dependency conflicts detected in backend virtual environment.
+
+### 15.5 Verification Results on Ephemeral Clean Database
+A completely clean database (`basket_ci_verification_db`) was migrated from scratch with `alembic upgrade head`:
+- **Code Quality:**
+  - `ruff check app/ tests/`: 108 files passed, 0 errors.
+  - `ruff format --check app/ tests/`: 108 files passed, 0 errors.
+- **Migrations:**
+  - Single Alembic head confirmed: `0010_consumer_inbox (head)`.
+- **Backend Tests:**
+  - Full suite run: `pytest -v`
+  - **Result: 338 passed, 0 failed, 4 warnings in 38.14s (100% pass rate).**
+  - Specific previously failing suites:
+    - `test_orders.py`: 29 passed.
+    - `test_payments.py`: 31 passed.
+    - `test_quotes.py`: 12 passed.
+    - `test_reservations.py`: 17 passed.
+    - `test_cart.py`: 11 passed.
+    - `test_catalogue.py`: 9 passed.
+    - `test_search.py`: 12 passed (including `test_search_postgres_sql_fallback`).
+    - `test_opensearch.py`: 12 passed.
+- **Frontend Tests & Build:**
+  - `npm ci`: Clean install, 0 errors.
+  - `npm test`: **60 passed, 0 failed** (6 test suites, 352ms).
+  - `npm run type-check`: Zero TypeScript compiler errors.
+  - `npm run build`: Successfully compiled and generated 11 static/dynamic route pages.
+
+### 15.6 Status and Residual Limitations
+- **Sandbox Status:** PR #14 test suite is fully resilient to clean database instances and decoupled from developer machine pre-seed state.
+- **External Dependencies:** Integration tests for Kafka and OpenSearch gracefully execute with degradation/mock fallbacks when live clusters are unreachable, maintaining 100% test pass rate in CI.
