@@ -162,7 +162,7 @@ Audited via `stage6_performance_reliability.py` using concurrent async requests:
    - Includes health dependencies (`service_healthy`) to ensure proper boot sequence.
 4. **CI/CD Automation (`.github/workflows/ci.yml`):**
    - Backend Job: PostgreSQL 16 service container, Alembic migration run, ruff lint/format check, pytest test suite execution.
-   - Frontend Job: Node.js 20 environment, dependency cache, `type-check`, `npm test`, and `next build`.
+   - Frontend Job: Node.js 22 environment, dependency cache, `type-check`, `npm test`, and `next build`.
 5. **Database Backup & Disaster Recovery:**
    - `scripts/backup-database.sh`: Dumps PostgreSQL database using `pg_dump -Fc` with timestamping and 7-day retention cleanup. Verified with 5.5MB test dump.
    - `scripts/restore-database.sh`: Restores PostgreSQL database using `pg_restore --clean --if-exists`. Tested successfully.

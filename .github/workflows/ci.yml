@@ -58,6 +58,7 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: postgresql+asyncpg://basket:basket_secret@localhost:5432/basket_db
+          DATABASE_SSL_MODE: disable
         run: |
           source .venv/bin/activate
           alembic upgrade head
@@ -66,6 +67,7 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: postgresql+asyncpg://basket:basket_secret@localhost:5432/basket_db
+          DATABASE_SSL_MODE: disable
           SECRET_KEY: test_insecure_secret_key_for_ci_pipeline_only_32_chars
           INTERNAL_SERVICE_KEY: test_internal_service_key_for_ci_only_32chars
         run: |
@@ -80,10 +82,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
