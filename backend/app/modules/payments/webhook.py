@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import case, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException
@@ -108,8 +109,18 @@ class WebhookService:
             payload=sanitized_payload,
             status=WebhookEventStatus.PENDING.value,
         )
-        await self.repo.create_webhook_event(event)
-        await self.session.commit()
+        try:
+            await self.repo.create_webhook_event(event)
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            logger.info(
+                "Concurrent duplicate webhook ingestion race resolved for event '%s'",
+                event_id,
+            )
+            return WebhookIngestResponse(
+                status="ignored", event_id=event_id, reason="ALREADY_INGESTED"
+            )
 
         return WebhookIngestResponse(status="ok", event_id=event_id)
 
