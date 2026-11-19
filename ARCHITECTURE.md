@@ -1,226 +1,298 @@
 # BASKET — Technical Architecture
 
-## 1. Architecture style
+> **Architecture Style:** Modular Monolith with Event-Driven Outbox & Asynchronous Search Projections  
+> **Status:** Active System Architecture  
+> **Last Audited:** 2026-11-19T17:30:00+05:30  
+> **Base Branch:** `integration`  
 
-Use a **modular monolith** for the HTTP backend, plus independently runnable Kafka consumers/workers. Keep module boundaries explicit without introducing distributed services prematurely.
+---
+
+## 1. System Topology
+
+BASKET uses a **modular monolith** for the HTTP application layer, combined with a transactional outbox publisher and independently runnable Kafka consumers and workers. Operational complexity is minimized by avoiding distributed service boundaries prematurely, while enforcing strict module-level separation.
 
 ```text
-Customer / Retailer / Admin
-          |
-          v
-Next.js + TypeScript frontend
-          |
-      HTTPS / JSON
-          |
-          v
-FastAPI modular monolith
-  |       |         |
-  |       |         +--> External adapters (Razorpay sandbox, optional voice provider)
-  |       |
-  |       +--> Transactional outbox
-  |
-  +--> Aiven PostgreSQL (system of record)
-          |
-          +--> Outbox publisher --> Aiven Kafka --> Consumers
-          |                                      |
-          |                                      +--> OpenSearch indexer
-          |                                      +--> Notifications / analytics (if implemented)
-          |
-          +--> Inventory / orders / reservations
-
-Frontend product search --------------------------> OpenSearch
-Checkout validation ------------------------------> PostgreSQL only
+       +-----------------------------------------------------------+
+       |             Client Layer (Next.js 15 App Router)          |
+       |  +--------------------+ +-------------------+ +---------+ |
+       |  | Customer Storefront| |   Retailer Portal | |Admin GUI| |
+       |  +--------------------+ +-------------------+ +---------+ |
+       +-----------------------------------------------------------+
+                                     |
+                                HTTPS / JSON
+                                     v
+       +-----------------------------------------------------------+
+       |             FastAPI Modular Monolith Core Layer           |
+       |  +-----------------------------------------------------+  |
+       |  | API Router (/api/v1/*) & Dependency Injection       |  |
+       |  +-----------------------------------------------------+  |
+       |  | Domain Modules:                                     |  |
+       |  |  • Identity & RBAC (Argon2id, Sessions, CSRF)       |  |
+       |  |  • Catalogue & Storefront (Products, Variants, SKU) |  |
+       |  |  • Cart & Merging (Guest sessions, Cart items)      |  |
+       |  |  • Pricing & Quotes (Discounts, Tax, HMAC quotes)   |  |
+       |  |  • Inventory (All-or-nothing stock locking, leases) |  |
+       |  |  • Orders & Post-Purchase (Snapshots, Tracking, RTN)|  |
+       |  |  • Payments (Razorpay Sandbox, HMAC webhooks)       |  |
+       |  |  • Search & Circuit Breaker (OpenSearch + SQL FTS)  |  |
+       |  +-----------------------------------------------------+  |
+       |  | Security & Governance: Double-Submit CSRF, Anti-IDOR |  |
+       +-----------------------------------------------------------+
+              |                                          |
+       Atomic Transactions                    Asynchronous Projection
+              |                                          |
+              v                                          v
++-------------------------------+       +-----------------------------------+
+|      Aiven PostgreSQL 16      |       |      Aiven OpenSearch 2.x         |
+|  (Authoritative System of     |       | (Derived, Rebuildable Projection) |
+|   Record: 33 Relational       |       |  • Index: basket_products_v1      |
+|   Commerce Entities)          |       |  • Read Alias: ..._search         |
+|                               |       |  • Write Alias: ..._write         |
+|  • outbox_events              |       +-----------------------------------+
+|  • consumer_inbox             |                         ^
++-------------------------------+                         |
+       |                                                  |
+       | (SELECT ... FOR UPDATE SKIP LOCKED)              |
+       v                                                  |
++-------------------------------+                         |
+|   Outbox Publisher Daemon     |                         |
+|  (Lease-fenced background)    |                         |
++-------------------------------+                         |
+       |                                                  |
+    SASL_SSL (SCRAM-SHA-256)                              |
+       v                                                  |
++-------------------------------+                         |
+|      Aiven Apache Kafka       |                         |
+|  (Event Bus: order.events,    |                         |
+|   inventory.events, etc.)     |                         |
++-------------------------------+                         |
+       |                                                  |
+       v                                                  |
++-------------------------------+                         |
+|  Incremental Indexer Consumer |-------------------------+
+| (Strategy B: external_gte)    |
++-------------------------------+
 ```
 
-## 2. Fixed technology choices
+---
+
+## 2. Fixed Technology Choices
 
 ### Frontend
-- Next.js (App Router)
-- TypeScript with strict mode
-- Tailwind CSS
-- shadcn/ui where useful
-- Framer Motion only for purposeful interactions
-- A single typed API client and centralized error handling
+- **Framework:** Next.js 15 (App Router) on Node.js 22 LTS
+- **UI & Components:** React 19, Tailwind CSS, shadcn/ui accessible primitives
+- **Language:** TypeScript with strict mode (`strict: true`, `noImplicitAny: true`)
+- **Animation:** Framer Motion (purposeful micro-interactions only)
+- **API Client:** Centralized typed API client (`frontend/lib/api/client.ts`) with custom `ApiClientError` and Double-Submit CSRF integration
 
 ### Backend
-- Python
-- FastAPI
-- SQLAlchemy 2.x
-- Alembic migrations
-- Pydantic schemas
-- pytest
+- **Language & Framework:** Python 3.12 with FastAPI
+- **ORM & Migrations:** SQLAlchemy 2.x (asyncio) with Alembic
+- **Validation & Settings:** Pydantic v2 with Pydantic Settings
+- **ASGI Server:** Uvicorn with lifespan management
+- **Code Quality & Testing:** pytest, pytest-asyncio, Ruff (linting & formatting)
 
-### Infrastructure
-- Aiven PostgreSQL
-- Aiven Apache Kafka
-- Aiven OpenSearch
-- Razorpay Sandbox only if credentials and callback verification are configured
+### Infrastructure & External Services
+- **System of Record:** PostgreSQL 16 (local sandbox and Aiven cloud)
+- **Event Bus:** Aiven Apache Kafka with SASL_SSL and SCRAM-SHA-256
+- **Search Engine:** Aiven OpenSearch 2.x with 3-state circuit breaker and PostgreSQL SQL fallback
+- **Payment Gateway:** Razorpay Sandbox API with server-side HMAC webhook and capture verification
 
-Do not add Redis, another database, Kubernetes, or a new framework without a written architecture decision.
+---
 
-## 3. Backend module boundaries
+## 3. Backend Module Boundaries
 
-Suggested modules:
+The backend enforces strict modular monolith boundaries. Each module in `backend/app/modules/` owns its domain router, service layer, repository/data-access code, Pydantic schemas, and private database models:
 
 ```text
 backend/app/
-  api/v1/
-  core/                 # settings, security, logging, errors
-  db/                   # engine, session, base
-  modules/
-    users/
-    retailers/
-    catalogue/
-    search/
-    inventory/
-    cart/
-    checkout/
-    orders/
-    payments/
-    reservations/
-    demand/              # optional
-    negotiation/         # optional
-  events/
-    schemas/
-    outbox/
-    publisher/
-  workers/
-  tests/
+├── api/v1/                   # Unified API router aggregating all domain routers
+├── core/
+│   ├── config.py             # Pydantic Settings loading from environment
+│   ├── database.py           # SQLAlchemy async engine, session factory, test fallbacks
+│   ├── exceptions.py         # Standardized AppException hierarchy & error codes
+│   ├── logging.py            # Structured JSON logger with request_id propagation
+│   ├── metrics.py            # Thread-safe Prometheus metrics registry (/metrics)
+│   ├── search/               # OpenSearch client, IndexManager, CircuitBreaker, Consumer
+│   └── consumer/             # Kafka consumer factory, BaseConsumer, lease manager
+├── modules/
+│   ├── identity/             # Users, sessions, Argon2id passwords, customer addresses
+│   ├── catalogue/            # Products, categories, variants, retailers, stores, listings
+│   ├── cart/                 # Persistent guest/customer carts, item mutations, cart merging
+│   ├── pricing/              # Platform/retailer discounts, multi-item taxes, HMAC quotes
+│   ├── inventory/            # Store inventory, row-level locks, all-or-nothing reservations
+│   ├── orders/               # Orders, item snapshots, tracking, cancellations, returns
+│   ├── payments/             # Dual-mode Razorpay client, verification, webhooks, refunds
+│   ├── search/               # Universal search endpoint, DSL generator, suggestions
+│   └── notifications/        # In-app customer notification center
+├── events/
+│   ├── schemas.py            # Pydantic domain event envelopes & payload models
+│   ├── publisher.py          # Transactional outbox publisher with lease fencing
+│   └── outbox.py             # Outbox repository & event serialization
+└── main.py                   # FastAPI application factory, lifespan, CORS, middleware
 ```
 
-Each module owns its routes, schemas, service logic, and repository/data-access code. Avoid circular imports. Keep business rules in services, not route handlers.
+### Module Invariants:
+1. **No Circular Imports:** Dependency flows strictly from routers $\rightarrow$ services $\rightarrow$ repositories $\rightarrow$ database models.
+2. **Business Rules in Services:** Route handlers perform HTTP parsing and status dispatch only; domain invariants live in service classes.
+3. **Cross-Module Interactions:** Modules interact via service method calls within the same transaction or asynchronously via domain events emitted through the outbox.
 
-## 4. Frontend boundaries
+---
+
+## 4. Multi-Role Platform Architecture & RBAC
+
+As defined in [`FEATURE_SPECIFICATION.md`](FEATURE_SPECIFICATION.md), BASKET operates across three distinct roles:
 
 ```text
-frontend/
-  app/
-  components/
-    ui/
-    layout/
-  features/
-    catalogue/
-    search/
-    cart/
-    checkout/
-    orders/
-    admin/
-    optional-feature/
-  lib/
-    api/
-    auth/
-    config/
-    validation/
-  types/
++--------------------------------------------------------------------------------+
+|                           Role-Based Access Control                            |
++--------------------------------------------------------------------------------+
+|  Role      | Target Surface   | Scope of Authority                             |
+|:-----------|:-----------------|:-----------------------------------------------|
+| ADMIN      | Admin Panel      | Platform catalogue, category taxonomy, global  |
+|            | (/admin/*)       | deals, retailer KYC approval, commission rates,|
+|            |                  | dispute resolution, marketplace analytics.     |
+|------------+------------------+------------------------------------------------|
+| RETAILER   | Retailer Portal  | Store profile, own listings, variant prices,   |
+|            | (/retailer/*)    | own inventory, order fulfillment, returns,     |
+|            |                  | participation in Dukaan vs Dukaan & Demand.    |
+|------------+------------------+------------------------------------------------|
+| CUSTOMER   | Storefront       | Discovery, cart, checkout quotes, orders,      |
+|            | (/orders, etc.)  | tracking, returns, notifications, Mission,     |
+|            |                  | Substitute Intelligence, Community Buying.     |
++--------------------------------------------------------------------------------+
 ```
 
-Feature-specific components belong in their feature folder. Shared UI belongs in `components`. Do not create one giant page or one global component containing all feature logic.
+### RBAC Enforcement Rules:
+- **Server-Side Enforcement:** Every protected endpoint validates the caller's role (`ADMIN`, `RETAILER`, `CUSTOMER`) and resource ownership. Frontend route hiding alone is strictly prohibited.
+- **Retailer Tenant Scoping:** Retailers cannot view or mutate another retailer's listings, inventory, orders, or pricing.
+- **Anti-IDOR Protection:** Order details (`/api/v1/orders/{id}`) enforce strict customer ID ownership matching, or require a cryptographically unguessable guest access token (`gat_...`).
 
-## 5. Data authority and consistency
+---
 
-| Data | Authority | Notes |
-|---|---|---|
-| Product identity and approved attributes | PostgreSQL | Canonical record |
-| Search document | OpenSearch | Rebuildable, eventually consistent |
-| Price | PostgreSQL | Revalidate during checkout |
-| Inventory | PostgreSQL | Atomic conditional update/locking |
-| Cart | PostgreSQL | Client values are untrusted |
-| Order | PostgreSQL | Transactional state machine |
-| Reservation | PostgreSQL | Expiring, idempotent lifecycle |
-| Payment state | PostgreSQL + verified provider callback | Never trust client success redirect |
-| Domain event | Outbox row, then Kafka | Outbox is durable publication intent |
+## 5. Data Authority & Invariants
 
-## 6. Transactional outbox and Kafka
+| Data Domain | Single Authority | Secondary Projections | Consistency Model | Notes |
+|---|---|---|---|---|
+| **Product Master** | PostgreSQL | OpenSearch `basket_products_v1` | Eventual (Outbox $\rightarrow$ Kafka) | Canonical source for approved attributes. |
+| **Search Projections** | OpenSearch | PostgreSQL `tsvector` Fallback | Eventual | Derived index; never validates checkout or stock. |
+| **Product Prices** | PostgreSQL | OpenSearch documents | Transactional | Client price is untrusted; re-fetched in quote/checkout. |
+| **Store Inventory** | PostgreSQL | OpenSearch `in_stock` flag | Immediate Transactional | Locked with `SELECT ... FOR UPDATE` row locks. |
+| **Carts** | PostgreSQL | Browser localStorage (cache only)| Immediate | Guest-to-customer merging revalidates live stock. |
+| **Checkout Quotes** | PostgreSQL | Signed HMAC Client Token | 5-minute expiry | Line-item CGST/SGST/IGST tax breakdowns. |
+| **Reservations** | PostgreSQL | None | Expiring (10 minutes) | All-or-nothing stock locking across multi-item cart. |
+| **Orders** | PostgreSQL | Outbox events $\rightarrow$ Kafka | Transactional state machine | Contains immutable item and address snapshots. |
+| **Payment Facts** | PostgreSQL | Provider Dashboard | Verified Provider Webhook | Trigger-protected immutable capture ledger entries. |
+| **Domain Events** | PostgreSQL `outbox_events` | Kafka Broker | Guaranteed At-Least-Once | Published by lease-fenced outbox daemon. |
+| **Consumer Deduplication** | PostgreSQL `consumer_inbox` | None | Exactly-Once Side Effects | Scoped by `(consumer_group, event_id)`. |
 
-When a business transaction creates an order:
-1. Validate cart, price, and stock in PostgreSQL.
-2. Reserve inventory and create order/payment intent in one database transaction.
-3. Insert an outbox event in that same transaction.
-4. Commit.
-5. A publisher reads unpublished outbox rows and publishes to Kafka.
-6. Mark an outbox row published only after broker acknowledgement.
-7. Consumer processes the event idempotently and records processed event IDs.
+---
 
-If publishing fails, retry from the outbox. Do not pretend a database commit and Kafka publish are one atomic transaction.
+## 6. Transactional Outbox Pattern & Event Streaming
 
-### Event envelope
-
-Every event should carry:
-- `event_id` (UUID)
-- `event_type`
-- `event_version`
-- `occurred_at` (UTC ISO-8601)
-- `aggregate_type`
-- `aggregate_id`
-- `correlation_id`
-- `payload`
-
-Use the order ID as Kafka message key for order lifecycle events. Consumers must tolerate duplicate delivery.
-
-## 7. Inventory and checkout safety
-
-- Never trust price or stock sent by the browser.
-- Re-fetch authoritative product/listing/price/inventory data in the checkout transaction.
-- Use atomic conditional updates or row locks.
-- For a multi-item cart, reserve all items in one transaction; if any item cannot be reserved, roll back the entire reservation attempt.
-- Do not hold database locks while waiting for a payment provider.
-- Use a short reservation expiry (for example, 10 minutes; make it configurable).
-- An expiry worker releases expired reservations exactly once.
-- Use idempotency keys for checkout and payment operations.
-- Verify payment webhooks/signatures on the server.
-- Model payment success, failure, and pending states explicitly.
-
-## 8. Search indexing
-
-- Product search queries go to OpenSearch.
-- Catalogue writes go to PostgreSQL.
-- Approved catalogue changes emit an outbox event.
-- An indexer consumes events and updates OpenSearch.
-- Indexing must be idempotent and support retry/rebuild.
-- Search results can be stale. Product detail and checkout must revalidate price and availability from PostgreSQL.
-
-## 9. Product ingestion lifecycle (optional feature)
+To eliminate dual-write race conditions and distributed rollback failures, BASKET implements the Transactional Outbox pattern:
 
 ```text
-Authorized source / retailer file
-       -> source adapter
-       -> raw staging
-       -> validation and normalization
-       -> duplicate/variant resolution
-       -> human review queue
-       -> approve / reject / request correction
-       -> canonical product + retailer listing
-       -> outbox event
-       -> Kafka
-       -> OpenSearch index
+[HTTP Checkout Request]
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│               PostgreSQL ACID Transaction                   │
+│                                                             │
+│  1. Deduct Store Inventory (reserved_quantity += quantity)  │
+│  2. Create Order & Immutable OrderItem Snapshots            │
+│  3. Insert Transactional Outbox Event (outbox_events)        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+          │ (Commit)
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Outbox Publisher Background Daemon             │
+│                                                             │
+│  • SELECT ... FOR UPDATE SKIP LOCKED                        │
+│  • Acquire 30s durable lease (lease_id, lease_expires_at)   │
+│  • Publish JSON event to Kafka Broker (SASL_SSL)            │
+│  • On Broker ACK: UPDATE outbox_events SET published=True   │
+│  • On Failure: Exponential backoff & lease release          │
+└─────────────────────────────────────────────────────────────┘
+          │ (Kafka Network Dispatch)
+          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Asynchronous Consumer Group                 │
+│                                                             │
+│  • Receive Kafka Message                                    │
+│  • Check consumer_inbox for (consumer_group, event_id)      │
+│  • If present: Skip side-effect (Idempotent Deduplication)  │
+│  • If absent: Execute side-effect & INSERT consumer_inbox   │
+│  • Commit Kafka Offset                                      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Preserve source, source URL/reference, ingestion time, and relevant evidence. Do not merge variants based on name similarity alone.
+### Event Envelope Specification
+Every event emitted across Kafka follows this strict Pydantic envelope:
+```json
+{
+  "event_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "event_type": "order.created",
+  "event_version": "1.0",
+  "occurred_at": "2026-11-19T11:48:00.123456Z",
+  "aggregate_type": "order",
+  "aggregate_id": "699db156-b6cc-46f8-8a51-fbdc05919304",
+  "correlation_id": "req_88f9104b2a3d",
+  "payload": {
+    "order_number": "BSK-20261119-17B02CFD",
+    "customer_id": "689608b5-3448-465b-a378-06c0e615fcbe",
+    "total_payable_paise": 359800,
+    "currency": "INR",
+    "item_count": 2
+  }
+}
+```
 
-## 10. AI and voice boundaries
+---
 
-- Quinn is the bounded negotiation/business assistant, not the voice provider.
-- A voice provider such as Gnani is optional and must be behind an adapter.
-- Confirm provider capabilities, language support, streaming, interruption handling, and commercial terms before relying on them.
-- LLM output is an untrusted proposal. Backend services enforce price floors, quote expiry, user permissions, stock, and transaction rules.
-- Never give an LLM direct SQL access or unrestricted mutation tools.
+## 7. Inventory & Checkout Safety ("Sale Storm" Invariants)
 
-## 11. Security baseline
+1. **Client Price and Stock Are Untrusted:**
+   - The browser never dictates unit price, tax rate, or availability.
+   - Prices and taxes are calculated exclusively on the server during quote generation and re-validated at order placement.
+2. **All-or-Nothing Atomic Reservations:**
+   - Multi-item carts are evaluated atomically. If 4 items are in stock but the 5th item is unavailable, the entire reservation fails without locking partial inventory.
+3. **Sorted Row Locks:**
+   - Inventory rows are locked in sorted order (`ORDER BY listing_id ASC`) to prevent concurrent circular deadlocks across simultaneous checkouts.
+4. **Configurable Reservation Expiry:**
+   - Active reservations hold stock for 10 minutes. An automated background worker reconciles and releases expired unpurchased stock.
+5. **Idempotent Checkout Submissions:**
+   - `POST /api/v1/orders` requires an `Idempotency-Key` header. Identical keys return the cached order response without creating duplicate database rows.
 
-- Secrets only in environment variables / secret manager; never commit `.env`.
-- Validate all request bodies with Pydantic.
-- Enforce authorization on the server for every protected operation.
-- Use parameterized ORM queries.
-- Apply request size limits to uploads.
-- Validate file type and content; do not trust file extension.
-- Avoid logging passwords, tokens, payment secrets, or sensitive personal data.
-- Use HTTPS for deployed services.
-- CORS must list explicit allowed origins.
-- Rate-limit sensitive endpoints where feasible.
-- Keep audit records for privileged catalogue and price actions.
+---
 
-## 12. Deployment and local development
+## 8. Search Resilience & Circuit Breaker Architecture
 
-Use environment-based configuration. Provide `.env.example` with placeholder values only. Provide health/readiness endpoints that distinguish application health from dependency readiness.
+OpenSearch handles discovery queries, while PostgreSQL maintains data authority:
 
-Keep local development possible with documented setup instructions. Do not make the application silently fall back to fake production data when an external service is unavailable.
+1. **Blue/Green Indexing:** Versioned indices (`basket_products_v1`) are fronted by alias pointers (`basket_products_search`). Full re-indexing can run in background without query disruption.
+2. **Circuit Breaker States:**
+   - **`CLOSED`:** Normal operation. Search queries execute against OpenSearch.
+   - **`OPEN`:** OpenSearch failures reached threshold ($\ge 5$). Requests fast-fail immediately to PostgreSQL full-text search fallback.
+   - **`HALF_OPEN`:** After a 30-second recovery window, probe requests check OpenSearch health. If successful, resets to `CLOSED`.
+3. **PostgreSQL Fallback Guardrails:**
+   - The fallback query executes `tsvector` matching over canonical product attributes.
+   - Fallback protects database CPU by omitting expensive facet aggregations and capping page size to $\le 20$.
+
+---
+
+## 9. Security & Identity Invariants
+
+1. **Credential Hygiene:**
+   - Secrets are loaded exclusively from environment variables (`.env`).
+   - `.env`, certificate files (`.pem`), and private keys (`.key`) are explicitly git-ignored.
+2. **Double-Submit Cookie CSRF Protection:**
+   - Safe HTTP methods (`GET`, `HEAD`, `OPTIONS`) do not require CSRF validation.
+   - Mutating methods (`POST`, `PATCH`, `DELETE`) require the request header `X-CSRF-Token` to match the value of the `XSRF-TOKEN` cookie.
+   - Bearer token requests via `Authorization: Bearer <token>` are exempt from CSRF checks.
+3. **Immutable Financial Facts:**
+   - Payment capture records in `payment_captures` are protected by PostgreSQL database triggers that raise exceptions on `UPDATE` or `DELETE`.
+4. **Safe Error Envelopes:**
+   - Application exceptions return structured JSON: `{ "error": { "code": "...", "message": "...", "request_id": "...", "details": [] } }`.
+   - Stack traces, internal SQL strings, and sensitive credentials are never leaked in client responses.
