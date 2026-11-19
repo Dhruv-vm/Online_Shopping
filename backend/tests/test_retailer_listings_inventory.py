@@ -15,7 +15,7 @@ from app.modules.catalogue.models import (
 
 
 async def setup_retailer_account(
-    async_client: AsyncClient, suffix: str = ""
+    async_client: AsyncClient, suffix: str = "", verified: bool = True
 ) -> tuple[dict, str, dict]:
     """Helper to register a retailer user account and return tokens and retailer context."""
     unique = uuid.uuid4().hex[:8]
@@ -38,6 +38,21 @@ async def setup_retailer_account(
     auth_data = reg_resp.json()
     token = auth_data["access_token"]
     user = auth_data["user"]
+
+    if verified:
+        from sqlalchemy import update
+
+        from app.modules.catalogue.models import Retailer
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            await session.execute(
+                update(Retailer)
+                .where(Retailer.user_id == uuid.UUID(user["id"]))
+                .values(verification_status="VERIFIED")
+            )
+            await session.commit()
+
     return user, token, auth_data
 
 

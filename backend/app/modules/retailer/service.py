@@ -289,9 +289,30 @@ class RetailerService:
             offset=offset,
         )
 
+    def _assert_verified_and_active(
+        self, retailer: Retailer, action: str = "manage store listings"
+    ) -> None:
+        if retailer.verification_status != "VERIFIED":
+            raise AppException(
+                code="RETAILER_NOT_VERIFIED",
+                message=(
+                    f"Retailer account verification status is '{retailer.verification_status}'. "
+                    f"Only VERIFIED retailers can {action}."
+                ),
+                status_code=403,
+            )
+        if not retailer.is_active:
+            raise AppException(
+                code="RETAILER_SUSPENDED",
+                message="Retailer account is deactivated or suspended.",
+                status_code=403,
+            )
+
     async def create_listing(
         self, retailer: Retailer, req: RetailerListingCreateRequest
     ) -> RetailerListingResponse:
+        self._assert_verified_and_active(retailer, "create store listings")
+
         # Check variant existence
         variant_stmt = (
             select(ProductVariant)
@@ -369,6 +390,7 @@ class RetailerService:
         retailer: Retailer,
         req: RetailerListingUpdateRequest,
     ) -> RetailerListingResponse:
+        self._assert_verified_and_active(retailer, "modify store listings")
         listing = await self._get_full_listing(listing_id, retailer.id)
         if not listing:
             raise AppException(
@@ -416,6 +438,7 @@ class RetailerService:
         return self._build_listing_response(listing)
 
     async def delete_listing(self, listing_id: uuid.UUID, retailer: Retailer) -> None:
+        self._assert_verified_and_active(retailer, "delete store listings")
         listing = await self._get_full_listing(listing_id, retailer.id)
         if not listing:
             raise AppException(
@@ -566,6 +589,7 @@ class RetailerService:
         retailer: Retailer,
         req: RetailerInventoryAdjustmentRequest,
     ) -> RetailerInventoryItemResponse:
+        self._assert_verified_and_active(retailer, "adjust inventory")
         # Fetch listing with inventory row lock for update
         stmt = (
             select(StoreInventory)
@@ -626,6 +650,7 @@ class RetailerService:
         retailer: Retailer,
         req: RetailerBulkInventoryAdjustmentRequest,
     ) -> list[RetailerInventoryItemResponse]:
+        self._assert_verified_and_active(retailer, "adjust inventory")
         results: list[RetailerInventoryItemResponse] = []
         for item in req.items:
             adj_req = RetailerInventoryAdjustmentRequest(

@@ -42,6 +42,21 @@ import type {
   SuggestionsResponse,
   AdminOverview,
   AdminRetailerListItem,
+  AdminRetailerDetailResponse,
+  RetailerDocumentItem,
+  AdminCatalogueProductListItem,
+  AdminCatalogueProductDetailResponse,
+  AdminCatalogueProductCreatePayload,
+  AdminCatalogueProductUpdatePayload,
+  AdminCatalogueVariantItem,
+  AdminCatalogueVariantCreatePayload,
+  AdminCatalogueVariantUpdatePayload,
+  AdminCategoryListItem,
+  AdminCategoryCreatePayload,
+  AdminDealListItem,
+  AdminDealDetailResponse,
+  AdminDealCreatePayload,
+  AdminDealUpdatePayload,
   RetailerOverview,
   RetailerProfile,
   RetailerRegisterPayload,
@@ -698,6 +713,166 @@ class ApiClient {
       `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}/verify`,
       { status, rejection_reason: rejectionReason }
     );
+  }
+
+  public async getAdminRetailer(
+    retailerId: string
+  ): Promise<AdminRetailerDetailResponse> {
+    return this.get<AdminRetailerDetailResponse>(
+      `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}`
+    );
+  }
+
+  public async verifyAdminRetailerDocument(
+    retailerId: string,
+    documentId: string,
+    status: string,
+    rejectionReason?: string
+  ): Promise<RetailerDocumentItem> {
+    return this.post<RetailerDocumentItem>(
+      `/api/v1/admin/retailers/${encodeURIComponent(retailerId)}/documents/${encodeURIComponent(documentId)}/verify`,
+      { status, rejection_reason: rejectionReason }
+    );
+  }
+
+  // ================= Admin Catalogue Management (Phase 5C) =================
+
+  public async listAdminCatalogueProducts(params?: {
+    search?: string;
+    category_id?: string;
+    brand?: string;
+    is_active?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<AdminCatalogueProductListItem[]> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set("search", params.search);
+    if (params?.category_id) qs.set("category_id", params.category_id);
+    if (params?.brand) qs.set("brand", params.brand);
+    if (params?.is_active !== undefined) qs.set("is_active", String(params.is_active));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<AdminCatalogueProductListItem[]>(
+      `/api/v1/admin/catalogue/products${query}`
+    );
+  }
+
+  public async getAdminCatalogueProduct(
+    productId: string
+  ): Promise<AdminCatalogueProductDetailResponse> {
+    return this.get<AdminCatalogueProductDetailResponse>(
+      `/api/v1/admin/catalogue/products/${encodeURIComponent(productId)}`
+    );
+  }
+
+  public async createAdminCatalogueProduct(
+    payload: AdminCatalogueProductCreatePayload
+  ): Promise<AdminCatalogueProductDetailResponse> {
+    return this.post<AdminCatalogueProductDetailResponse>(
+      "/api/v1/admin/catalogue/products",
+      payload
+    );
+  }
+
+  public async updateAdminCatalogueProduct(
+    productId: string,
+    payload: AdminCatalogueProductUpdatePayload
+  ): Promise<AdminCatalogueProductDetailResponse> {
+    return this.put<AdminCatalogueProductDetailResponse>(
+      `/api/v1/admin/catalogue/products/${encodeURIComponent(productId)}`,
+      payload
+    );
+  }
+
+  public async deleteAdminCatalogueProduct(productId: string): Promise<void> {
+    return this.delete<void>(
+      `/api/v1/admin/catalogue/products/${encodeURIComponent(productId)}`
+    );
+  }
+
+  public async createAdminCatalogueVariant(
+    productId: string,
+    payload: AdminCatalogueVariantCreatePayload
+  ): Promise<AdminCatalogueVariantItem> {
+    return this.post<AdminCatalogueVariantItem>(
+      `/api/v1/admin/catalogue/products/${encodeURIComponent(productId)}/variants`,
+      payload
+    );
+  }
+
+  public async updateAdminCatalogueVariant(
+    variantId: string,
+    payload: AdminCatalogueVariantUpdatePayload
+  ): Promise<AdminCatalogueVariantItem> {
+    return this.put<AdminCatalogueVariantItem>(
+      `/api/v1/admin/catalogue/variants/${encodeURIComponent(variantId)}`,
+      payload
+    );
+  }
+
+  public async deleteAdminCatalogueVariant(variantId: string): Promise<void> {
+    return this.delete<void>(
+      `/api/v1/admin/catalogue/variants/${encodeURIComponent(variantId)}`
+    );
+  }
+
+  public async listAdminCatalogueCategories(): Promise<AdminCategoryListItem[]> {
+    return this.get<AdminCategoryListItem[]>("/api/v1/admin/catalogue/categories");
+  }
+
+  public async createAdminCatalogueCategory(
+    payload: AdminCategoryCreatePayload
+  ): Promise<AdminCategoryListItem> {
+    return this.post<AdminCategoryListItem>(
+      "/api/v1/admin/catalogue/categories",
+      payload
+    );
+  }
+
+  // ================= Admin Deals & Promotions (Phase 5C) =================
+
+  public async listAdminDeals(params?: {
+    status?: string;
+    scope?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AdminDealListItem[]> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.scope) qs.set("scope", params.scope);
+    if (params?.search) qs.set("search", params.search);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.get<AdminDealListItem[]>(`/api/v1/admin/deals${query}`);
+  }
+
+  public async getAdminDeal(dealId: string): Promise<AdminDealDetailResponse> {
+    return this.get<AdminDealDetailResponse>(
+      `/api/v1/admin/deals/${encodeURIComponent(dealId)}`
+    );
+  }
+
+  public async createAdminDeal(
+    payload: AdminDealCreatePayload
+  ): Promise<AdminDealDetailResponse> {
+    return this.post<AdminDealDetailResponse>("/api/v1/admin/deals", payload);
+  }
+
+  public async updateAdminDeal(
+    dealId: string,
+    payload: AdminDealUpdatePayload
+  ): Promise<AdminDealDetailResponse> {
+    return this.put<AdminDealDetailResponse>(
+      `/api/v1/admin/deals/${encodeURIComponent(dealId)}`,
+      payload
+    );
+  }
+
+  public async deleteAdminDeal(dealId: string): Promise<void> {
+    return this.delete<void>(`/api/v1/admin/deals/${encodeURIComponent(dealId)}`);
   }
 
   // ================= Retailer Listings & Inventory (Phase 5B) =================

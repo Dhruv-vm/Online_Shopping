@@ -339,7 +339,7 @@ export interface AdminRetailerListItem {
   name: string;
   slug: string;
   state: string | null;
-  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | string;
+  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | "REJECTED" | string;
   is_active: boolean;
   is_open: boolean;
   business_address: string | null;
@@ -347,7 +347,204 @@ export interface AdminRetailerListItem {
   contact_email: string | null;
   owner_name: string | null;
   owner_email: string | null;
+  documents_count?: number;
   created_at: string;
+}
+
+export interface RetailerDocumentItem {
+  id: string;
+  document_type: string;
+  document_url: string;
+  status: "PENDING" | "VERIFIED" | "REJECTED" | string;
+  rejection_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetailerVerificationHistoryItem {
+  id: string;
+  action: string;
+  from_status: string;
+  to_status: string;
+  reason?: string | null;
+  admin_id?: string | null;
+  created_at: string;
+}
+
+export interface AdminRetailerDetailResponse extends AdminRetailerListItem {
+  description?: string | null;
+  logo_url?: string | null;
+  rating: number;
+  reviewed_by_user_id?: string | null;
+  verified_at?: string | null;
+  rejection_reason?: string | null;
+  documents: RetailerDocumentItem[];
+  verification_history: RetailerVerificationHistoryItem[];
+}
+
+export interface AdminCatalogueVariantItem {
+  id: string;
+  product_id: string;
+  name: string;
+  sku: string;
+  attributes: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  listings_count: number;
+}
+
+export interface AdminCatalogueProductListItem {
+  id: string;
+  name: string;
+  slug: string;
+  brand: string;
+  category_id: string;
+  category_name?: string | null;
+  is_active: boolean;
+  variants_count: number;
+  listings_count: number;
+  primary_image_url?: string | null;
+  created_at: string;
+}
+
+export interface AdminCatalogueProductDetailResponse {
+  id: string;
+  name: string;
+  slug: string;
+  brand: string;
+  category_id: string;
+  category_name?: string | null;
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  images: Array<{
+    id: string;
+    url: string;
+    alt_text?: string | null;
+    is_primary: boolean;
+    sort_order: number;
+  }>;
+  variants: AdminCatalogueVariantItem[];
+  active_listings_count: number;
+}
+
+export interface AdminCatalogueVariantCreatePayload {
+  name: string;
+  sku: string;
+  attributes?: Record<string, unknown>;
+  is_active?: boolean;
+}
+
+export interface AdminCatalogueVariantUpdatePayload {
+  name?: string;
+  sku?: string;
+  attributes?: Record<string, unknown>;
+  is_active?: boolean;
+}
+
+export interface AdminCatalogueProductCreatePayload {
+  category_id: string;
+  name: string;
+  slug?: string;
+  brand: string;
+  description?: string;
+  is_active?: boolean;
+  image_urls?: string[];
+  variants?: AdminCatalogueVariantCreatePayload[];
+}
+
+export interface AdminCatalogueProductUpdatePayload {
+  category_id?: string;
+  name?: string;
+  slug?: string;
+  brand?: string;
+  description?: string;
+  is_active?: boolean;
+}
+
+export interface AdminCategoryCreatePayload {
+  name: string;
+  slug?: string;
+  description?: string;
+  image_url?: string;
+  icon?: string;
+  parent_id?: string | null;
+  is_active?: boolean;
+}
+
+export interface AdminCategoryListItem {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  image_url?: string | null;
+  icon?: string | null;
+  parent_id?: string | null;
+  parent_name?: string | null;
+  is_active: boolean;
+  product_count: number;
+  children: AdminCategoryListItem[];
+}
+
+export interface AdminDealListItem {
+  id: string;
+  name: string;
+  code?: string | null;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT" | string;
+  discount_value: number;
+  scope: "PLATFORM_WIDE" | "CATEGORY" | "PRODUCT" | "LISTING" | string;
+  category_id?: string | null;
+  category_name?: string | null;
+  product_id?: string | null;
+  product_name?: string | null;
+  listing_id?: string | null;
+  min_order_paise: number;
+  max_discount_paise?: number | null;
+  usage_limit?: number | null;
+  times_used: number;
+  is_active: boolean;
+  valid_from: string;
+  valid_to?: string | null;
+  status: "ACTIVE" | "SCHEDULED" | "EXPIRED" | "PAUSED" | string;
+  created_at: string;
+}
+
+export interface AdminDealDetailResponse extends AdminDealListItem {
+  description?: string | null;
+  updated_at: string;
+}
+
+export interface AdminDealCreatePayload {
+  name: string;
+  code?: string;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value: number;
+  scope?: "PLATFORM_WIDE" | "CATEGORY" | "PRODUCT" | "LISTING";
+  category_id?: string;
+  product_id?: string;
+  listing_id?: string;
+  min_order_paise?: number;
+  max_discount_paise?: number;
+  usage_limit?: number;
+  valid_from?: string;
+  valid_to?: string;
+  description?: string;
+  is_active?: boolean;
+}
+
+export interface AdminDealUpdatePayload {
+  name?: string;
+  code?: string;
+  discount_type?: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value?: number;
+  min_order_paise?: number;
+  max_discount_paise?: number;
+  usage_limit?: number;
+  valid_from?: string;
+  valid_to?: string;
+  description?: string;
+  is_active?: boolean;
 }
 
 export interface RetailerRegisterPayload {

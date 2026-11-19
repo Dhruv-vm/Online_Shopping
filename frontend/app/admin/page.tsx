@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Users,
   Store,
@@ -189,6 +190,63 @@ export default function AdminOverviewPage() {
           </div>
           <span className="text-[11px] text-muted-foreground">Verified products</span>
         </div>
+      </div>
+
+      {/* Admin Modules Quick Launch */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Link
+          href="/admin/retailers"
+          className="group p-4 rounded-xl border bg-card hover:border-purple-500/50 hover:shadow-md transition-all flex items-start gap-3.5"
+        >
+          <div className="h-10 w-10 rounded-xl bg-purple-50 dark:bg-purple-950/60 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+            <Store className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-bold text-foreground group-hover:text-purple-600 dark:group-hover:text-purple-400 flex items-center gap-1.5">
+              Retailers & Verification
+              <span className="text-xs text-muted-foreground font-normal">→</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Review onboarding documents, GSTIN compliance, audit history, and approve/suspend sellers.
+            </p>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/catalogue"
+          className="group p-4 rounded-xl border bg-card hover:border-purple-500/50 hover:shadow-md transition-all flex items-start gap-3.5"
+        >
+          <div className="h-10 w-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+            <ShoppingBag className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-bold text-foreground group-hover:text-indigo-600 dark:group-hover:text-indigo-400 flex items-center gap-1.5">
+              Platform Catalogue
+              <span className="text-xs text-muted-foreground font-normal">→</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Create and manage canonical products, variants, SKU attributes, and categories.
+            </p>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/deals"
+          className="group p-4 rounded-xl border bg-card hover:border-purple-500/50 hover:shadow-md transition-all flex items-start gap-3.5"
+        >
+          <div className="h-10 w-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
+            <TrendingUp className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <div className="text-sm font-bold text-foreground group-hover:text-emerald-600 dark:group-hover:text-emerald-400 flex items-center gap-1.5">
+              Deals & Promotions
+              <span className="text-xs text-muted-foreground font-normal">→</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Launch platform-wide discounts, schedule targeted promotions, and set usage caps.
+            </p>
+          </div>
+        </Link>
       </div>
 
       {/* Retailer Management Queue Section */}

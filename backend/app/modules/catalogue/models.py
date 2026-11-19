@@ -55,6 +55,15 @@ class Retailer(Base):
     verification_status: Mapped[str] = mapped_column(
         String(32), default="VERIFIED", index=True, nullable=False
     )
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verified_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -72,6 +81,42 @@ class Retailer(Base):
         "RetailerVerificationDocument",
         back_populates="retailer",
         cascade="all, delete-orphan",
+    )
+    verification_history: Mapped[list["RetailerVerificationHistory"]] = relationship(
+        "RetailerVerificationHistory",
+        back_populates="retailer",
+        cascade="all, delete-orphan",
+        order_by="RetailerVerificationHistory.created_at.desc()",
+    )
+
+
+class RetailerVerificationHistory(Base):
+    __tablename__ = "retailer_verification_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    retailer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("retailers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    retailer: Mapped["Retailer"] = relationship(
+        "Retailer", back_populates="verification_history"
     )
 
 

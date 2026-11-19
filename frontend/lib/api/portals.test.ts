@@ -325,4 +325,176 @@ describe("Admin and Retailer Portal API Client integration", () => {
     assert.equal(adjusted.on_hand_quantity, 50);
     assert.equal(adjusted.available_quantity, 48);
   });
+
+  it("Admin Catalogue Management, Retailer Verification & Deals Client integration", async () => {
+    let docVerifyCalled = false;
+    let createProductCalled = false;
+    let createDealCalled = false;
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      const method = init?.method || "GET";
+
+      if (url.includes("/api/v1/admin/retailers/ret-1/documents/doc-1/verify") && method === "POST") {
+        docVerifyCalled = true;
+        const body = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            id: "doc-1",
+            document_type: "GST_CERTIFICATE",
+            document_url: "https://example.com/gst.pdf",
+            status: body.status,
+            rejection_reason: body.rejection_reason || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/admin/catalogue/products") && method === "POST") {
+        createProductCalled = true;
+        const body = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            id: "prod-canon-1",
+            name: body.name,
+            slug: "canonical-smart-tv",
+            brand: body.brand,
+            category_id: body.category_id,
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            images: [],
+            variants: [
+              {
+                id: "var-canon-1",
+                product_id: "prod-canon-1",
+                name: "55 Inch OLED",
+                sku: "TV-55-OLED",
+                attributes: { size: "55 Inch" },
+                is_active: true,
+                created_at: new Date().toISOString(),
+                listings_count: 0,
+              },
+            ],
+            active_listings_count: 0,
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/admin/deals") && method === "POST") {
+        createDealCalled = true;
+        const body = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            id: "deal-festive-1",
+            name: body.name,
+            code: body.code || null,
+            discount_type: body.discount_type,
+            discount_value: body.discount_value,
+            scope: body.scope,
+            min_order_paise: body.min_order_paise || 0,
+            times_used: 0,
+            is_active: true,
+            valid_from: new Date().toISOString(),
+            status: "ACTIVE",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/admin/catalogue/products")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "prod-canon-1",
+              name: "Canonical Smart TV",
+              slug: "canonical-smart-tv",
+              brand: "VisionTech",
+              category_id: "cat-1",
+              is_active: true,
+              variants_count: 1,
+              listings_count: 0,
+              created_at: new Date().toISOString(),
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/admin/deals")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: "deal-festive-1",
+              name: "Festive Season 10% Off",
+              discount_type: "PERCENTAGE",
+              discount_value: 1000,
+              scope: "PLATFORM_WIDE",
+              min_order_paise: 0,
+              times_used: 0,
+              is_active: true,
+              valid_from: new Date().toISOString(),
+              status: "ACTIVE",
+              created_at: new Date().toISOString(),
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    // 1. Verify retailer document
+    const verifiedDoc = await apiClient.verifyAdminRetailerDocument("ret-1", "doc-1", "VERIFIED");
+    assert.equal(docVerifyCalled, true);
+    assert.equal(verifiedDoc.status, "VERIFIED");
+
+    // 2. Create catalogue product
+    const createdProduct = await apiClient.createAdminCatalogueProduct({
+      category_id: "cat-1",
+      name: "Canonical Smart TV",
+      brand: "VisionTech",
+      variants: [
+        {
+          name: "55 Inch OLED",
+          sku: "TV-55-OLED",
+          attributes: { size: "55 Inch" },
+        },
+      ],
+    });
+    assert.equal(createProductCalled, true);
+    assert.equal(createdProduct.brand, "VisionTech");
+    assert.equal(createdProduct.variants.length, 1);
+
+    // 3. List catalogue products
+    const products = await apiClient.listAdminCatalogueProducts();
+    assert.equal(products.length, 1);
+    assert.equal(products[0].name, "Canonical Smart TV");
+
+    // 4. Create platform deal
+    const createdDeal = await apiClient.createAdminDeal({
+      name: "Festive Season 10% Off",
+      code: "FESTIVE10",
+      discount_type: "PERCENTAGE",
+      discount_value: 1000,
+      scope: "PLATFORM_WIDE",
+    });
+    assert.equal(createDealCalled, true);
+    assert.equal(createdDeal.discount_value, 1000);
+    assert.equal(createdDeal.status, "ACTIVE");
+
+    // 5. List platform deals
+    const deals = await apiClient.listAdminDeals();
+    assert.equal(deals.length, 1);
+    assert.equal(deals[0].name, "Festive Season 10% Off");
+  });
 });
