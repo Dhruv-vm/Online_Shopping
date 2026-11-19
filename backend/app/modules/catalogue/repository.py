@@ -166,10 +166,7 @@ class CatalogueRepository:
         if in_stock is True:
             base_stmt = base_stmt.where(
                 (
-                    (
-                        StoreInventory.on_hand_quantity
-                        - StoreInventory.reserved_quantity
-                    )
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
                     > 0
                 )
                 & (Retailer.id.is_not(None))

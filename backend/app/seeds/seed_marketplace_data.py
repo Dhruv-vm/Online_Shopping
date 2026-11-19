@@ -329,7 +329,11 @@ AUTHENTIC_CATALOGUE = [
             {
                 "name": "16GB RAM / 512GB SSD - Space Grey",
                 "sku": "APL-MBA15-512-GRY",
-                "attributes": {"color": "Space Grey", "ram": "16GB", "storage": "512GB"},
+                "attributes": {
+                    "color": "Space Grey",
+                    "ram": "16GB",
+                    "storage": "512GB",
+                },
                 "offers": [
                     {
                         "retailer_slug": "bengaluru-tech-store",
@@ -432,7 +436,11 @@ AUTHENTIC_CATALOGUE = [
             {
                 "name": "12GB RAM / 256GB - Titanium Gray",
                 "sku": "SAM-S24U-256-GRY",
-                "attributes": {"color": "Titanium Gray", "ram": "12GB", "storage": "256GB"},
+                "attributes": {
+                    "color": "Titanium Gray",
+                    "ram": "12GB",
+                    "storage": "256GB",
+                },
                 "offers": [
                     {
                         "retailer_slug": "premium-mobile-hub",
@@ -697,7 +705,9 @@ AUTHENTIC_CATALOGUE = [
 async def seed_marketplace() -> None:
     session_factory = get_session_factory()
     async with session_factory() as session:
-        logger.info("Step 1: Soft-deactivating legacy test retailers, categories, and dummy products...")
+        logger.info(
+            "Step 1: Soft-deactivating legacy test retailers, categories, and dummy products..."
+        )
 
         # Find dev retailer user
         dev_retailer_user = (
@@ -782,7 +792,11 @@ async def seed_marketplace() -> None:
             ).scalar_one_or_none()
 
             # If this is the dev partner, ensure it is linked to retailer.dev@basket.local
-            user_id = dev_retailer_user.id if (r_data["slug"] == "basket-superstore-dev" and dev_retailer_user) else None
+            user_id = (
+                dev_retailer_user.id
+                if (r_data["slug"] == "basket-superstore-dev" and dev_retailer_user)
+                else None
+            )
 
             if existing_r:
                 existing_r.name = r_data["name"]
@@ -823,7 +837,9 @@ async def seed_marketplace() -> None:
                 ret_map[r_data["slug"]] = new_r
         await session.flush()
 
-        logger.info("Step 4: Upserting authentic products, variants, and retailer offers...")
+        logger.info(
+            "Step 4: Upserting authentic products, variants, and retailer offers..."
+        )
         seeded_listings: list[ProductListing] = []
 
         for p_data in AUTHENTIC_CATALOGUE:
@@ -958,7 +974,9 @@ async def seed_marketplace() -> None:
 
         await session.flush()
 
-        logger.info("Step 5: Seeding sample confirmed historical orders for retailer analytics...")
+        logger.info(
+            "Step 5: Seeding sample confirmed historical orders for retailer analytics..."
+        )
         # Check if we already have sample orders
         existing_order_count = (
             await session.execute(select(func.count(Order.id)))
@@ -968,10 +986,14 @@ async def seed_marketplace() -> None:
         if existing_order_count < 5 and seeded_listings:
             # Pick a customer user or dev admin
             customer_user = (
-                await session.execute(
-                    select(User).where(User.role.in_(["customer", "admin"]))
+                (
+                    await session.execute(
+                        select(User).where(User.role.in_(["customer", "admin"]))
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
 
             if customer_user:
                 for idx, listing in enumerate(seeded_listings[:6]):
@@ -1037,7 +1059,10 @@ async def seed_marketplace() -> None:
                         quantity=qty,
                         unit_original_price_paise=listing.original_price_paise,
                         unit_selling_price_paise=listing.selling_price_paise,
-                        unit_discount_paise=max(0, listing.original_price_paise - listing.selling_price_paise),
+                        unit_discount_paise=max(
+                            0,
+                            listing.original_price_paise - listing.selling_price_paise,
+                        ),
                     )
                     session.add(item)
                     await session.flush()
@@ -1048,7 +1073,9 @@ async def seed_marketplace() -> None:
     # Step 6: Synchronize OpenSearch index if configured
     if settings.has_opensearch:
         try:
-            logger.info("Step 6: Ensuring OpenSearch index and reconciling derived documents...")
+            logger.info(
+                "Step 6: Ensuring OpenSearch index and reconciling derived documents..."
+            )
             os_client = get_opensearch_client(settings)
             if await os_client.ping():
                 idx_mgr = IndexManager(client=os_client)
@@ -1057,9 +1084,14 @@ async def seed_marketplace() -> None:
                     reconciled_count = await idx_mgr.reconcile_from_database(session)
                     logger.info("OpenSearch reconciled %d products.", reconciled_count)
             else:
-                logger.warning("OpenSearch ping failed; skipping search index reconciliation.")
+                logger.warning(
+                    "OpenSearch ping failed; skipping search index reconciliation."
+                )
         except Exception as exc:
-            logger.warning("OpenSearch reconciliation failed (falling back safely to PostgreSQL): %s", exc)
+            logger.warning(
+                "OpenSearch reconciliation failed (falling back safely to PostgreSQL): %s",
+                exc,
+            )
 
 
 if __name__ == "__main__":

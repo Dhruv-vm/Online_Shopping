@@ -91,7 +91,9 @@ async def create_user_with_role(
 
 
 @pytest.mark.asyncio
-async def test_storefront_excludes_unverified_and_inactive_retailers(async_client: AsyncClient):
+async def test_storefront_excludes_unverified_and_inactive_retailers(
+    async_client: AsyncClient,
+):
     """Customer storefront only lists products and offers from VERIFIED, active retailers."""
     session_factory = get_session_factory()
     unique = uuid.uuid4().hex[:6]
@@ -409,14 +411,16 @@ async def test_inventory_atomic_deduction_and_idempotency():
             subtotal_paise=30000,
             total_payable_paise=30000,
             status=QuoteStatus.ACTIVE.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=15),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=15),
         )
         res = InventoryReservation(
             id=res_id,
             guest_token_hash="a" * 64,
             quote_id=quote_id,
             status=ReservationStatus.ACTIVE.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=10),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=10),
         )
         res_item = InventoryReservationItem(
             id=uuid.uuid4(),
@@ -473,7 +477,9 @@ async def test_inventory_atomic_deduction_and_idempotency():
 @pytest.mark.asyncio
 async def test_admin_retailer_directory_search_and_filters(async_client: AsyncClient):
     """Admin can search and filter retailers by name and registered state."""
-    admin_headers, _ = await create_user_with_role(async_client, role="admin", suffix="_dir")
+    admin_headers, _ = await create_user_with_role(
+        async_client, role="admin", suffix="_dir"
+    )
 
     # Filter by state KA
     resp_ka = await async_client.get(
@@ -497,14 +503,21 @@ async def test_admin_retailer_directory_search_and_filters(async_client: AsyncCl
     assert isinstance(data_search, list)
     assert len(data_search) > 0
     for r in data_search:
-        assert "bengaluru" in r["name"].lower() or "bengaluru" in (r.get("business_address") or "").lower()
+        assert (
+            "bengaluru" in r["name"].lower()
+            or "bengaluru" in (r.get("business_address") or "").lower()
+        )
 
 
 @pytest.mark.asyncio
 async def test_admin_retailer_sales_analytics_and_rbac(async_client: AsyncClient):
     """Admin can view store-wise sales analytics; non-admins are strictly forbidden."""
-    admin_headers, _ = await create_user_with_role(async_client, role="admin", suffix="_analyt")
-    cust_headers, cust_user = await create_user_with_role(async_client, role="customer", suffix="_analyt")
+    admin_headers, _ = await create_user_with_role(
+        async_client, role="admin", suffix="_analyt"
+    )
+    cust_headers, cust_user = await create_user_with_role(
+        async_client, role="customer", suffix="_analyt"
+    )
     session_factory = get_session_factory()
     unique = uuid.uuid4().hex[:6]
 
@@ -573,14 +586,16 @@ async def test_admin_retailer_sales_analytics_and_rbac(async_client: AsyncClient
             subtotal_paise=90000,
             total_payable_paise=90000,
             status=QuoteStatus.ACTIVE.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=15),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=15),
         )
         res = InventoryReservation(
             id=res_id,
             customer_id=uuid.UUID(cust_user["id"]),
             quote_id=quote_id,
             status=ReservationStatus.CONFIRMED.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=10),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=10),
         )
         session.add_all([cat, prod, var, listing, inv, quote, res])
         await session.flush()
@@ -604,7 +619,8 @@ async def test_admin_retailer_sales_analytics_and_rbac(async_client: AsyncClient
             total_payable_paise=90000,
             status=OrderStatus.CONFIRMED.value,
             payment_status="SUCCEEDED",
-            payment_window_expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1),
+            payment_window_expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(hours=1),
         )
         session.add(order)
         await session.flush()
@@ -733,14 +749,16 @@ async def test_inventory_release_restores_reserved_stock():
             subtotal_paise=50000,
             total_payable_paise=50000,
             status=QuoteStatus.ACTIVE.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=15),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=15),
         )
         res = InventoryReservation(
             id=res_id,
             guest_token_hash="b" * 64,
             quote_id=quote_id,
             status=ReservationStatus.ACTIVE.value,
-            expires_at=datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=10),
+            expires_at=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=10),
         )
         res_item = InventoryReservationItem(
             id=uuid.uuid4(),
@@ -773,4 +791,3 @@ async def test_inventory_release_restores_reserved_stock():
         ).scalar_one()
         assert check_inv.on_hand_quantity == 25
         assert check_inv.reserved_quantity == 0
-

@@ -331,4 +331,3 @@ class AdminRetailerSalesAnalyticsResponse(BaseModel):
     net_sales_paise: int
     currency: str = "INR"
     product_sales: list[AdminRetailerSalesProductItem] = Field(default_factory=list)
-
