@@ -193,24 +193,49 @@ def test_clean_opensearch_url_strips_credentials():
     assert s2.OPENSEARCH_URL == "https://basket-opensearch.aivencloud.com:10494"
 
 
-def test_resolve_kafka_ssl_ca_location():
-    # Resolves relative path to ca.pem if it exists in infra/aiven/certs/ca.pem
+def test_resolve_kafka_ssl_ca_location_existing_absolute(test_ca_pem_file):
+    abs_path = str(test_ca_pem_file.resolve())
     s = Settings(
         ENVIRONMENT="development",
-        KAFKA_SSL_CA_LOCATION="infra/aiven/certs/ca.pem",
+        KAFKA_SSL_CA_LOCATION=abs_path,
     )
-    assert s.KAFKA_SSL_CA_LOCATION is not None
-    assert s.KAFKA_SSL_CA_LOCATION.endswith("infra/aiven/certs/ca.pem")
-    assert s.KAFKA_SSL_CA_LOCATION.startswith("/")
+    assert s.KAFKA_SSL_CA_LOCATION == abs_path
 
-    # None or empty string returns None
+
+def test_resolve_kafka_ssl_ca_location_existing_relative(tmp_path, monkeypatch):
+    rel_cert = tmp_path / "cert_folder" / "custom_ca.pem"
+    rel_cert.parent.mkdir(parents=True, exist_ok=True)
+    rel_cert.write_text("dummy-cert-data", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_SSL_CA_LOCATION="cert_folder/custom_ca.pem",
+    )
+    assert s.KAFKA_SSL_CA_LOCATION == str(rel_cert.resolve())
+
+
+def test_resolve_kafka_ssl_ca_location_missing_path():
+    missing_path = "nonexistent/subfolder/ca.pem"
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_SSL_CA_LOCATION=missing_path,
+    )
+    # Nonexistent path returns raw configured path without crashing settings initialization
+    assert s.KAFKA_SSL_CA_LOCATION == missing_path
+
+
+def test_resolve_kafka_ssl_ca_location_empty_or_none():
     s_none = Settings(ENVIRONMENT="development", KAFKA_SSL_CA_LOCATION=None)
     assert s_none.KAFKA_SSL_CA_LOCATION is None
-    s_empty = Settings(ENVIRONMENT="development", KAFKA_SSL_CA_LOCATION="")
+
+    s_empty = Settings(ENVIRONMENT="development", KAFKA_SSL_CA_LOCATION="   ")
     assert s_empty.KAFKA_SSL_CA_LOCATION is None
 
 
-def test_kafka_auth_kwargs_sasl_ssl():
+def test_kafka_auth_kwargs_sasl_ssl(test_ca_pem_file):
+    import ssl
+
     from app.core.events.kafka import build_kafka_auth_kwargs, build_kafka_ssl_context
 
     s = Settings(
@@ -220,7 +245,7 @@ def test_kafka_auth_kwargs_sasl_ssl():
         KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
         KAFKA_SASL_USERNAME="avnadmin",
         KAFKA_SASL_PASSWORD="test_password_123",
-        KAFKA_SSL_CA_LOCATION="infra/aiven/certs/ca.pem",
+        KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
     )
 
     kwargs = build_kafka_auth_kwargs(s)
@@ -232,6 +257,7 @@ def test_kafka_auth_kwargs_sasl_ssl():
 
     ssl_ctx = build_kafka_ssl_context(s)
     assert ssl_ctx is not None
+    assert ssl_ctx.verify_mode == ssl.CERT_REQUIRED
 
 
 def test_kafka_auth_kwargs_plaintext():

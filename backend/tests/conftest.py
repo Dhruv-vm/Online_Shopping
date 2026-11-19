@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -66,3 +67,33 @@ async def async_client(app_instance) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app_instance)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
+
+
+TEST_SYNTHETIC_CA_PEM = """-----BEGIN CERTIFICATE-----
+MIIDEzCCAfugAwIBAgIUElVJjmlBvBJH686VskGx6WFzWQwwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwOQkFTS0VUIFRlc3QgQ0EwHhcNMjYxMTE5MTAyMzEzWhcN
+MzYxMTE2MTAyMzEzWjAZMRcwFQYDVQQDDA5CQVNLRVQgVGVzdCBDQTCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAMOZaUllzRC78Ds4f8pu1MoqOWWclw/j
+/tIGO2g7CPmBWux4K2FMv5K7LWZqlXxRU9er/OFmeIdBq2zf6REPGkhmIylqmMYl
+h7rgt3EsiH1z7d7lzq0DYITFKJ7cLqqIKCIK8JuIUk/xaI491azPtr3azpgZXDd1
++LSElIpa3rvvk/ZDouLYxHQU/FADHwcXzjDe6sL62TVGbp+YLQAmCnTVtkSDMEXg
+yZvWpjgnRUmj1lTD4M18CoQJ4TM0X172U6OJc2em9/IeumKNBHCTXlEoAjr9U9IG
+ObXpFyERuTxsEOH3QZN8CFjzw7boaHwSZ5kCgZ7gPBj7BL6dunqOQkcCAwEAAaNT
+MFEwHQYDVR0OBBYEFHTVJwHBftlJIGfnx/tGtg1LgMijMB8GA1UdIwQYMBaAFHTV
+JwHBftlJIGfnx/tGtg1LgMijMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEL
+BQADggEBABbkrZESKlYKzDuXUQII5H0N1pwaVgn2U5V7fUQ/GUuCum3DHNhfUX3b
+54IC0fb8ktv0lxlF8WrxadICcL4a4vUDpz6lExkhhzElX/iFfhLEyWjt/OPvd5cV
+vvV6W9q6rHc3qa3uV5wRPmb80YA/5aSn+TD0dE4HIkYJXiNS++a2Koxggm051AHw
+AeCqJwf4vX8aGkdzvWbfxA5t94hQd0hkJ4Gm991A+yjCsS9pzq8Xf0YqD5VV2xsi
+L1MEllMVAKf8o5Hfr7nztjiE05VCn74ek4czQBtKokUCoGXlB1Trt6I2MyCalzvC
+/ztK/bOea09K8DFXzMSZc3svDOc080w=
+-----END CERTIFICATE-----
+"""
+
+
+@pytest.fixture
+def test_ca_pem_file(tmp_path: Path) -> Path:
+    """Provides a syntactically valid temporary CA PEM certificate for TLS verification tests."""
+    cert_path = tmp_path / "synthetic_ca.pem"
+    cert_path.write_text(TEST_SYNTHETIC_CA_PEM, encoding="utf-8")
+    return cert_path

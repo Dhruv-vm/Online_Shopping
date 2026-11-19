@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -472,6 +474,39 @@ class TestKafkaProducer:
         )
         producer = get_kafka_producer(settings)
         assert isinstance(producer, AioKafkaEventProducer)
+
+    @pytest.mark.asyncio
+    async def test_aiokafka_producer_start_passes_sasl_auth_kwargs(
+        self, test_ca_pem_file: Path
+    ):
+        from unittest.mock import patch
+
+        sasl_settings = Settings(
+            ENVIRONMENT="development",
+            KAFKA_BOOTSTRAP_SERVERS="kafka.example.com:9092",
+            KAFKA_SECURITY_PROTOCOL="SASL_SSL",
+            KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
+            KAFKA_SASL_USERNAME="avnadmin",
+            KAFKA_SASL_PASSWORD="test_password_123",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
+        )
+        producer = AioKafkaEventProducer(sasl_settings)
+        mock_instance = AsyncMock()
+        mock_instance.start = AsyncMock()
+
+        with patch(
+            "app.core.events.kafka.AIOKafkaProducer", return_value=mock_instance
+        ) as mock_cls:
+            await producer.start()
+            assert mock_cls.called
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["security_protocol"] == "SASL_SSL"
+            assert call_kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+            assert call_kwargs["sasl_plain_username"] == "avnadmin"
+            assert call_kwargs["sasl_plain_password"] == "test_password_123"
+            assert "ssl_context" in call_kwargs
+            assert call_kwargs["ssl_context"] is not None
+            assert call_kwargs["ssl_context"].verify_mode == ssl.CERT_REQUIRED
 
     @pytest.mark.asyncio
     async def test_aiokafka_producer_send_not_started_raises(self):

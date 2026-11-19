@@ -154,7 +154,7 @@ class TestConsumerPureLogicAndSafety:
                 force_mock=True,
             )
 
-    def test_get_kafka_consumer_factory_passes_sasl_auth_kwargs(self):
+    def test_get_kafka_consumer_factory_passes_sasl_auth_kwargs(self, test_ca_pem_file):
         from unittest.mock import patch
 
         sasl_settings = Settings(
@@ -164,7 +164,7 @@ class TestConsumerPureLogicAndSafety:
             KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
             KAFKA_SASL_USERNAME="avnadmin",
             KAFKA_SASL_PASSWORD="test_password_123",
-            KAFKA_SSL_CA_LOCATION="infra/aiven/certs/ca.pem",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
         )
 
         with patch("app.core.events.consumer.AIOKafkaConsumer") as mock_aiokafka:
@@ -182,7 +182,7 @@ class TestConsumerPureLogicAndSafety:
             assert "ssl_context" in call_kwargs
             assert call_kwargs["ssl_context"] is not None
 
-    async def test_base_consumer_start_passes_sasl_auth_kwargs(self):
+    async def test_base_consumer_start_passes_sasl_auth_kwargs(self, test_ca_pem_file):
         from unittest.mock import AsyncMock, MagicMock, patch
 
         sasl_settings = Settings(
@@ -192,7 +192,7 @@ class TestConsumerPureLogicAndSafety:
             KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
             KAFKA_SASL_USERNAME="avnadmin",
             KAFKA_SASL_PASSWORD="test_password_123",
-            KAFKA_SSL_CA_LOCATION="infra/aiven/certs/ca.pem",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
         )
 
         mock_producer = AsyncMock(spec=EventProducer)
