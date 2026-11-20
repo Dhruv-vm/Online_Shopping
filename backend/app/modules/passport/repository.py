@@ -14,7 +14,12 @@ from app.modules.catalogue.models import (
     ProductVariant,
     Retailer,
 )
-from app.modules.passport.models import ListingPassport, PassportClaim, ProductPassport
+from app.modules.passport.models import (
+    ListingPassport,
+    PassportClaim,
+    PassportClaimReviewHistory,
+    ProductPassport,
+)
 
 
 class PassportRepository:
@@ -121,25 +126,45 @@ class PassportRepository:
         return result.scalar_one_or_none()
 
     async def get_claim_by_id(self, claim_id: uuid.UUID) -> PassportClaim | None:
-        """Fetch claim by ID."""
+        """Fetch claim by ID with relationships and review history."""
         query = (
             select(PassportClaim)
             .where(PassportClaim.id == claim_id)
             .options(
                 selectinload(PassportClaim.passport),
                 selectinload(PassportClaim.listing_passport),
+                selectinload(PassportClaim.review_history),
             )
         )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def create_claim(self, data: dict[str, Any]) -> PassportClaim:
-        """Create a new claim record."""
+        """Create a new claim record with initial SUBMITTED review history."""
         claim = PassportClaim(**data)
         self.session.add(claim)
         await self.session.flush()
+
+        history = PassportClaimReviewHistory(
+            claim_id=claim.id,
+            claim_scope=claim.claim_scope,
+            claim_type=claim.claim_type,
+            claim_key=claim.claim_key,
+            claim_value=claim.claim_value,
+            evidence_url=claim.evidence_url,
+            evidence_type=claim.evidence_type,
+            evidence_notes=claim.evidence_notes,
+            is_public_evidence=claim.is_public_evidence,
+            action="SUBMITTED",
+            review_status="PENDING",
+            reviewer_id=None,
+            rejection_reason=None,
+        )
+        self.session.add(history)
+        await self.session.flush()
         await self.session.refresh(claim)
-        return claim
+        self.session.expire(claim, ["review_history"])
+        return (await self.get_claim_by_id(claim.id)) or claim
 
     async def update_claim(
         self,
@@ -147,20 +172,36 @@ class PassportRepository:
         data: dict[str, Any],
         retrigger_review: bool = True,
     ) -> PassportClaim:
-        """Update claim content and reset to PENDING if previously reviewed."""
+        """Update claim content and set to PENDING while preserving previous moderation feedback."""
         for k, v in data.items():
             if v is not None:
                 setattr(claim, k, v)
 
         if retrigger_review:
+            claim.version = (claim.version or 1) + 1
             claim.review_status = "PENDING"
-            claim.rejection_reason = None
-            claim.reviewed_by_user_id = None
-            claim.reviewed_at = None
+            # We preserve claim.rejection_reason so retailer can continue to see prior feedback.
+            history = PassportClaimReviewHistory(
+                claim_id=claim.id,
+                claim_scope=claim.claim_scope,
+                claim_type=claim.claim_type,
+                claim_key=claim.claim_key,
+                claim_value=claim.claim_value,
+                evidence_url=claim.evidence_url,
+                evidence_type=claim.evidence_type,
+                evidence_notes=claim.evidence_notes,
+                is_public_evidence=claim.is_public_evidence,
+                action="REVISED",
+                review_status="PENDING",
+                reviewer_id=None,
+                rejection_reason=None,
+            )
+            self.session.add(history)
 
         await self.session.flush()
         await self.session.refresh(claim)
-        return claim
+        self.session.expire(claim, ["review_history"])
+        return (await self.get_claim_by_id(claim.id)) or claim
 
     async def delete_claim(self, claim: PassportClaim) -> None:
         """Delete claim record."""
@@ -200,8 +241,12 @@ class PassportRepository:
     async def get_claims_by_retailer(
         self, retailer_id: uuid.UUID, listing_id: uuid.UUID | None = None
     ) -> list[PassportClaim]:
-        """Fetch all claims submitted by a specific retailer."""
-        query = select(PassportClaim).where(PassportClaim.retailer_id == retailer_id)
+        """Fetch all claims submitted by a specific retailer with review history."""
+        query = (
+            select(PassportClaim)
+            .options(selectinload(PassportClaim.review_history))
+            .where(PassportClaim.retailer_id == retailer_id)
+        )
         if listing_id:
             query = query.where(PassportClaim.listing_id == listing_id)
         query = query.order_by(PassportClaim.created_at.desc())
@@ -216,7 +261,7 @@ class PassportRepository:
         page: int = 1,
         limit: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Fetch paginated claims queue for admin review with retailer and product details."""
+        """Fetch paginated claims queue for admin review with retailer, product, and review history."""
         query = (
             select(
                 PassportClaim,
@@ -224,6 +269,7 @@ class PassportRepository:
                 Product.id.label("prod_id"),
                 Product.name.label("prod_name"),
             )
+            .options(selectinload(PassportClaim.review_history))
             .outerjoin(Retailer, PassportClaim.retailer_id == Retailer.id)
             .outerjoin(ProductPassport, PassportClaim.passport_id == ProductPassport.id)
             .outerjoin(ProductListing, PassportClaim.listing_id == ProductListing.id)
@@ -279,26 +325,77 @@ class PassportRepository:
 
         return items, total
 
+    async def get_claim_review_history(
+        self, claim_id: uuid.UUID
+    ) -> list[PassportClaimReviewHistory]:
+        """Fetch audit trail of all revisions and review decisions for a claim."""
+        query = (
+            select(PassportClaimReviewHistory)
+            .where(PassportClaimReviewHistory.claim_id == claim_id)
+            .order_by(PassportClaimReviewHistory.created_at.desc())
+        )
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def verify_claim(
         self, claim: PassportClaim, admin_id: uuid.UUID
     ) -> PassportClaim:
-        """Mark claim as VERIFIED."""
+        """Mark claim as VERIFIED and record in review history."""
         claim.review_status = "VERIFIED"
         claim.reviewed_by_user_id = admin_id
         claim.reviewed_at = datetime.datetime.now(datetime.UTC)
         claim.rejection_reason = None
+
+        history = PassportClaimReviewHistory(
+            claim_id=claim.id,
+            claim_scope=claim.claim_scope,
+            claim_type=claim.claim_type,
+            claim_key=claim.claim_key,
+            claim_value=claim.claim_value,
+            evidence_url=claim.evidence_url,
+            evidence_type=claim.evidence_type,
+            evidence_notes=claim.evidence_notes,
+            is_public_evidence=claim.is_public_evidence,
+            action="VERIFIED",
+            review_status="VERIFIED",
+            reviewer_id=admin_id,
+            rejection_reason=None,
+        )
+        self.session.add(history)
         await self.session.flush()
         await self.session.refresh(claim)
-        return claim
+        self.session.expire(claim, ["review_history"])
+        return (await self.get_claim_by_id(claim.id)) or claim
 
     async def reject_claim(
         self, claim: PassportClaim, admin_id: uuid.UUID, rejection_reason: str
     ) -> PassportClaim:
-        """Mark claim as REJECTED with mandatory reason."""
+        """Mark claim as REJECTED with mandatory reason and record in review history."""
         claim.review_status = "REJECTED"
         claim.reviewed_by_user_id = admin_id
         claim.reviewed_at = datetime.datetime.now(datetime.UTC)
         claim.rejection_reason = rejection_reason
+
+        history = PassportClaimReviewHistory(
+            claim_id=claim.id,
+            claim_scope=claim.claim_scope,
+            claim_type=claim.claim_type,
+            claim_key=claim.claim_key,
+            claim_value=claim.claim_value,
+            evidence_url=claim.evidence_url,
+            evidence_type=claim.evidence_type,
+            evidence_notes=claim.evidence_notes,
+            is_public_evidence=claim.is_public_evidence,
+            action="REJECTED",
+            review_status="REJECTED",
+            reviewer_id=admin_id,
+            rejection_reason=rejection_reason,
+        )
+        self.session.add(history)
+        await self.session.flush()
+        await self.session.refresh(claim)
+        self.session.expire(claim, ["review_history"])
+        return (await self.get_claim_by_id(claim.id)) or claim
         await self.session.flush()
         await self.session.refresh(claim)
         return claim

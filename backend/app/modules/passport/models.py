@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     func,
@@ -189,6 +191,7 @@ class PassportClaim(Base):
     is_public_evidence: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     review_status: Mapped[str] = mapped_column(
         String(32), default="PENDING", index=True, nullable=False
@@ -233,6 +236,12 @@ class PassportClaim(Base):
     reviewed_by: Mapped[User | None] = relationship(
         "User", foreign_keys=[reviewed_by_user_id]
     )
+    review_history: Mapped[list[PassportClaimReviewHistory]] = relationship(
+        "PassportClaimReviewHistory",
+        back_populates="claim",
+        cascade="all, delete-orphan",
+        order_by="desc(PassportClaimReviewHistory.created_at)",
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -244,4 +253,70 @@ class PassportClaim(Base):
             name="chk_passport_claim_scope",
         ),
         Index("ix_passport_claims_status_scope", "review_status", "claim_scope"),
+    )
+
+
+class PassportClaimReviewHistory(Base):
+    """Immutable audit trail of claim submissions, revisions, and moderation decisions."""
+
+    __tablename__ = "passport_claim_review_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("passport_claims.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    claim_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    claim_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    claim_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    claim_value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    evidence_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    evidence_type: Mapped[str] = mapped_column(
+        String(64), default="DOCUMENT", nullable=False
+    )
+    evidence_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_public_evidence: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
+    action: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # SUBMITTED, REVISED, VERIFIED, REJECTED
+    review_status: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # PENDING, VERIFIED, REJECTED
+    reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.datetime.now(datetime.UTC),
+        nullable=False,
+    )
+
+    # Relationships
+    claim: Mapped[PassportClaim] = relationship(
+        "PassportClaim", back_populates="review_history"
+    )
+    reviewer: Mapped[User | None] = relationship("User", foreign_keys=[reviewer_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "review_status IN ('PENDING', 'VERIFIED', 'REJECTED')",
+            name="chk_claim_review_history_status",
+        ),
+        CheckConstraint(
+            "action IN ('SUBMITTED', 'VERIFIED', 'REJECTED', 'REVISED')",
+            name="chk_claim_review_history_action",
+        ),
+        Index("ix_claim_review_history_claim_created", "claim_id", "created_at"),
     )

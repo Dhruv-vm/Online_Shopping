@@ -13,6 +13,7 @@ from app.modules.passport.schemas import (
     AdminClaimQueueResponse,
     AdminClaimResponse,
     AdminProductPassportUpsertRequest,
+    ClaimReviewHistoryItem,
     ListingBrief,
     PublicClaimResponse,
     PublicListingPassportResponse,
@@ -49,25 +50,30 @@ class PassportService:
             )
 
         # Build available listings brief for customer comparison
+        # Follow strict catalogue marketplace visibility rules (is_active and verified active retailer)
         available_listings: list[ListingBrief] = []
         for variant in product.variants:
             for lst in variant.listings:
-                if lst.is_active:
-                    inv_available = (
-                        lst.inventory.available_quantity if lst.inventory else 0
+                retailer = getattr(lst, "retailer", None)
+                if (
+                    not lst.is_active
+                    or not retailer
+                    or not retailer.is_active
+                    or getattr(retailer, "verification_status", "VERIFIED")
+                    != "VERIFIED"
+                ):
+                    continue
+                inv_available = lst.inventory.available_quantity if lst.inventory else 0
+                available_listings.append(
+                    ListingBrief(
+                        listing_id=lst.id,
+                        retailer_id=lst.retailer_id,
+                        retailer_name=retailer.name,
+                        selling_price_paise=lst.selling_price_paise,
+                        is_in_stock=inv_available > 0,
+                        item_condition="NEW",
                     )
-                    available_listings.append(
-                        ListingBrief(
-                            listing_id=lst.id,
-                            retailer_id=lst.retailer_id,
-                            retailer_name=lst.retailer.name
-                            if lst.retailer
-                            else "Retailer",
-                            selling_price_paise=lst.selling_price_paise,
-                            is_in_stock=inv_available > 0,
-                            item_condition="NEW",
-                        )
-                    )
+                )
 
         passport = await self.repo.get_product_passport(product.id)
 
@@ -144,12 +150,17 @@ class PassportService:
     async def _resolve_public_listing_passport(
         self, listing_id: uuid.UUID, product_id: uuid.UUID
     ) -> PublicListingPassportResponse | None:
-        """Resolve listing passport ensuring it belongs to the target product."""
+        """Resolve listing passport ensuring it belongs to the target product and meets visibility rules."""
         listing = await self.repo.get_listing_by_id(listing_id)
         if (
             not listing
             or not listing.variant
             or listing.variant.product_id != product_id
+            or not listing.is_active
+            or not listing.retailer
+            or not listing.retailer.is_active
+            or getattr(listing.retailer, "verification_status", "VERIFIED")
+            != "VERIFIED"
         ):
             return None
 
@@ -414,6 +425,26 @@ class PassportService:
         )
         return [RetailerClaimResponse.model_validate(c) for c in claims]
 
+    async def get_retailer_claim_history(
+        self,
+        claim_id: uuid.UUID,
+        retailer_id: uuid.UUID,
+    ) -> list[ClaimReviewHistoryItem]:
+        """Fetch audit trail of review history for a retailer's claim."""
+        claim = await self.repo.get_claim_by_id(claim_id)
+        if not claim:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Claim {claim_id} not found",
+            )
+        if claim.retailer_id != retailer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: claim belongs to another retailer",
+            )
+        history = await self.repo.get_claim_review_history(claim_id)
+        return [ClaimReviewHistoryItem.model_validate(h) for h in history]
+
     # ================= Admin Portal Flow =================
 
     async def get_admin_claim_queue(
@@ -505,6 +536,20 @@ class PassportService:
 
         claim = await self.repo.reject_claim(claim, admin_id, rejection_reason.strip())
         return AdminClaimResponse.model_validate(claim)
+
+    async def get_admin_claim_history(
+        self,
+        claim_id: uuid.UUID,
+    ) -> list[ClaimReviewHistoryItem]:
+        """Fetch audit trail of review history for any claim (admin only)."""
+        claim = await self.repo.get_claim_by_id(claim_id)
+        if not claim:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Claim {claim_id} not found",
+            )
+        history = await self.repo.get_claim_review_history(claim_id)
+        return [ClaimReviewHistoryItem.model_validate(h) for h in history]
 
     async def upsert_canonical_passport(
         self,

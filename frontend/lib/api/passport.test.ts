@@ -221,4 +221,54 @@ test("Product Passport API Client integration", async (t) => {
     assert.equal(rejected.review_status, "REJECTED");
     assert.equal(rejected.rejection_reason, "Document expired");
   });
+
+  await t.test("getRetailerClaimHistory and getAdminClaimHistory fetch audit trails", async () => {
+    const mockHistory = [
+      {
+        id: "hist-2",
+        claim_id: "claim-q1",
+        claim_scope: "LISTING",
+        claim_type: "CERTIFICATION",
+        claim_key: "agmark",
+        claim_value: "Agmark Grade 1 Rev",
+        is_public_evidence: true,
+        evidence_type: "CERTIFICATE",
+        action: "REVISED",
+        review_status: "PENDING",
+        created_at: "2026-11-20T11:00:00Z",
+      },
+      {
+        id: "hist-1",
+        claim_id: "claim-q1",
+        claim_scope: "LISTING",
+        claim_type: "CERTIFICATION",
+        claim_key: "agmark",
+        claim_value: "Agmark Grade 1",
+        is_public_evidence: true,
+        evidence_type: "CERTIFICATE",
+        action: "REJECTED",
+        review_status: "REJECTED",
+        rejection_reason: "Document expired",
+        created_at: "2026-11-20T10:00:00Z",
+      },
+    ];
+
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/retailer/passport/claims/claim-q1/history") || url.includes("/admin/passport/claims/claim-q1/history")) {
+        return new Response(JSON.stringify(mockHistory), { status: 200 });
+      }
+      throw new Error(`Unhandled url ${url}`);
+    };
+
+    const retHist = await apiClient.getRetailerClaimHistory("claim-q1");
+    assert.equal(retHist.length, 2);
+    assert.equal(retHist[0].action, "REVISED");
+    assert.equal(retHist[1].action, "REJECTED");
+    assert.equal(retHist[1].rejection_reason, "Document expired");
+
+    const admHist = await apiClient.getAdminClaimHistory("claim-q1");
+    assert.equal(admHist.length, 2);
+    assert.equal(admHist[0].action, "REVISED");
+  });
 });

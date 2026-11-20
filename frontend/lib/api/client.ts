@@ -106,6 +106,7 @@ import type {
   PublicListingPassport,
   PublicProductPassport,
   RetailerClaim,
+  ClaimReviewHistoryItem,
   RetailerListingPassportDetail,
   RetailerListingPassportUpsertRequest,
   RetailerClaimCreateRequest,
@@ -1395,6 +1396,14 @@ class ApiClient {
     return this.get<RetailerClaim[]>(`/api/v1/retailer/passport/claims${q}`);
   }
 
+  public async getRetailerClaimHistory(
+    claimId: string
+  ): Promise<ClaimReviewHistoryItem[]> {
+    return this.get<ClaimReviewHistoryItem[]>(
+      `/api/v1/retailer/passport/claims/${encodeURIComponent(claimId)}/history`
+    );
+  }
+
   public async getAdminClaimsQueue(params?: {
     status?: string;
     scope?: string;
@@ -1426,6 +1435,14 @@ class ApiClient {
     return this.post<AdminClaim>(
       `/api/v1/admin/passport/claims/${encodeURIComponent(claimId)}/reject`,
       { rejection_reason: rejectionReason }
+    );
+  }
+
+  public async getAdminClaimHistory(
+    claimId: string
+  ): Promise<ClaimReviewHistoryItem[]> {
+    return this.get<ClaimReviewHistoryItem[]>(
+      `/api/v1/admin/passport/claims/${encodeURIComponent(claimId)}/history`
     );
   }
 

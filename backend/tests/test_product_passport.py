@@ -370,7 +370,7 @@ async def test_retailer_claim_lifecycle_and_retrigger_review(async_client: Async
         for c in my_claims
     )
 
-    # 4. Retailer edits claim -> re-triggers PENDING review status, clears rejection reason
+    # 4. Retailer edits claim -> re-triggers PENDING review status, increments version, preserves prior rejection feedback
     update_resp = await async_client.put(
         f"/api/v1/retailer/passport/claims/{claim_id}",
         json={
@@ -382,7 +382,27 @@ async def test_retailer_claim_lifecycle_and_retrigger_review(async_client: Async
     assert update_resp.status_code == 200
     updated_data = update_resp.json()
     assert updated_data["review_status"] == "PENDING"
-    assert updated_data["rejection_reason"] is None
+    assert updated_data["version"] == 2
+    # Prior rejection feedback is preserved so retailer understands what was corrected
+    assert (
+        updated_data["rejection_reason"]
+        == "Certificate number mismatch with Agmark portal"
+    )
+    assert len(updated_data["review_history"]) >= 2
+    assert updated_data["review_history"][0]["action"] == "REVISED"
+    assert updated_data["review_history"][0]["review_status"] == "PENDING"
+    assert updated_data["review_history"][1]["action"] == "REJECTED"
+    assert updated_data["review_history"][1]["review_status"] == "REJECTED"
+
+    # Retailer can inspect complete claim review history
+    ret_hist_resp = await async_client.get(
+        f"/api/v1/retailer/passport/claims/{claim_id}/history",
+        headers={"Authorization": f"Bearer {ret_token}"},
+    )
+    assert ret_hist_resp.status_code == 200
+    ret_history = ret_hist_resp.json()
+    assert len(ret_history) >= 2
+    assert ret_history[0]["action"] == "REVISED"
 
     # 5. Admin verifies the corrected claim
     verify_resp = await async_client.post(
@@ -391,6 +411,24 @@ async def test_retailer_claim_lifecycle_and_retrigger_review(async_client: Async
     )
     assert verify_resp.status_code == 200
     assert verify_resp.json()["review_status"] == "VERIFIED"
+    assert verify_resp.json()["rejection_reason"] is None
+
+    # Admin inspects complete history
+    adm_hist_resp = await async_client.get(
+        f"/api/v1/admin/passport/claims/{claim_id}/history",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert adm_hist_resp.status_code == 200
+    adm_history = adm_hist_resp.json()
+    assert len(adm_history) >= 3
+    assert adm_history[0]["action"] == "VERIFIED"
+    assert adm_history[0]["review_status"] == "VERIFIED"
+    assert adm_history[1]["action"] == "REVISED"
+    assert adm_history[2]["action"] == "REJECTED"
+    assert (
+        adm_history[2]["rejection_reason"]
+        == "Certificate number mismatch with Agmark portal"
+    )
 
     # 6. Customer can view verified claim and public evidence
     pub_resp = await async_client.get(
@@ -569,3 +607,124 @@ async def test_nonexistent_product_or_listing_404(async_client: AsyncClient):
 
     lst_resp = await async_client.get(f"/api/v1/passport/listings/{random_uuid}")
     assert lst_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_listing_passport_visibility_rules(async_client: AsyncClient):
+    """Public passport strictly enforces catalogue visibility: inactive listings and unverified/suspended retailers are hidden."""
+    session_factory = get_session_factory()
+    ret_user, _ = await create_user_with_role(role="retailer", prefix="seller_vis")
+    retailer = await create_retailer_store(ret_user, name="Visibility Store")
+    product, listing = await create_test_product_and_listing(retailer)
+
+    # 1. Active listing and verified retailer: publicly visible
+    lst_resp = await async_client.get(f"/api/v1/passport/listings/{listing.id}")
+    assert lst_resp.status_code == 200
+
+    p_resp = await async_client.get(f"/api/v1/products/{product.id}/passport")
+    assert p_resp.status_code == 200
+    assert any(
+        item["listing_id"] == str(listing.id)
+        for item in p_resp.json()["available_listings"]
+    )
+
+    # 2. Deactivate listing: must return 404 and disappear from PDP available listings
+    async with session_factory() as session:
+        await session.execute(
+            update(ProductListing)
+            .where(ProductListing.id == listing.id)
+            .values(is_active=False)
+        )
+        await session.commit()
+
+    lst_resp_inactive = await async_client.get(
+        f"/api/v1/passport/listings/{listing.id}"
+    )
+    assert lst_resp_inactive.status_code == 404
+
+    p_resp_inactive = await async_client.get(
+        f"/api/v1/products/{product.id}/passport?listing_id={listing.id}"
+    )
+    assert p_resp_inactive.status_code == 200
+    assert p_resp_inactive.json()["listing_passport"] is None
+    assert not any(
+        item["listing_id"] == str(listing.id)
+        for item in p_resp_inactive.json()["available_listings"]
+    )
+
+    # 3. Reactivate listing but set retailer verification_status to PENDING: must be hidden
+    async with session_factory() as session:
+        await session.execute(
+            update(ProductListing)
+            .where(ProductListing.id == listing.id)
+            .values(is_active=True)
+        )
+        await session.execute(
+            update(Retailer)
+            .where(Retailer.id == retailer.id)
+            .values(verification_status="PENDING")
+        )
+        await session.commit()
+
+    lst_resp_pending = await async_client.get(f"/api/v1/passport/listings/{listing.id}")
+    assert lst_resp_pending.status_code == 404
+
+    # 4. Set retailer verification_status to SUSPENDED: must also be hidden
+    async with session_factory() as session:
+        await session.execute(
+            update(Retailer)
+            .where(Retailer.id == retailer.id)
+            .values(verification_status="SUSPENDED")
+        )
+        await session.commit()
+
+    lst_resp_suspended = await async_client.get(
+        f"/api/v1/passport/listings/{listing.id}"
+    )
+    assert lst_resp_suspended.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_claim_review_history_cross_retailer_authorization(
+    async_client: AsyncClient,
+):
+    """Retailers can only view history for their own claims; cross-retailer history access is 403 Forbidden."""
+    ret1_user, ret1_token = await create_user_with_role(
+        role="retailer", prefix="hist_own"
+    )
+    ret1 = await create_retailer_store(ret1_user, name="History Owner Store")
+
+    ret2_user, ret2_token = await create_user_with_role(
+        role="retailer", prefix="hist_atk"
+    )
+    await create_retailer_store(ret2_user, name="History Attacker Store")
+
+    _, listing = await create_test_product_and_listing(ret1)
+
+    create_resp = await async_client.post(
+        f"/api/v1/retailer/passport/listings/{listing.id}/claims",
+        json={
+            "claim_scope": "LISTING",
+            "claim_type": "WARRANTY",
+            "claim_key": "extended_care",
+            "claim_value": "Includes 2-year on-site accidental protection",
+        },
+        headers={"Authorization": f"Bearer {ret1_token}"},
+    )
+    assert create_resp.status_code == 201
+    claim_id = create_resp.json()["id"]
+
+    # Retailer 2 attempts to view Retailer 1's claim history -> 403 Forbidden
+    cross_resp = await async_client.get(
+        f"/api/v1/retailer/passport/claims/{claim_id}/history",
+        headers={"Authorization": f"Bearer {ret2_token}"},
+    )
+    assert cross_resp.status_code == 403
+
+    # Retailer 1 can view own claim history
+    own_resp = await async_client.get(
+        f"/api/v1/retailer/passport/claims/{claim_id}/history",
+        headers={"Authorization": f"Bearer {ret1_token}"},
+    )
+    assert own_resp.status_code == 200
+    assert len(own_resp.json()) >= 1

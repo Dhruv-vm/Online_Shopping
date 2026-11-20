@@ -1855,6 +1855,24 @@ export type ClaimReviewStatus = "PENDING" | "VERIFIED" | "REJECTED";
 export type ClaimScope = "PRODUCT" | "LISTING";
 export type ItemCondition = "NEW" | "REFURBISHED" | "OPEN_BOX" | "PRE_OWNED";
 
+export interface ClaimReviewHistoryItem {
+  id: string;
+  claim_id: string;
+  claim_scope: string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  evidence_url?: string | null;
+  evidence_type: string;
+  evidence_notes?: string | null;
+  is_public_evidence: boolean;
+  action: "SUBMITTED" | "REVISED" | "VERIFIED" | "REJECTED" | string;
+  review_status: ClaimReviewStatus | string;
+  reviewer_id?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+}
+
 export interface PublicClaim {
   id: string;
   claim_scope: ClaimScope | string;
@@ -1931,6 +1949,8 @@ export interface RetailerClaim {
   is_public_evidence: boolean;
   review_status: ClaimReviewStatus | string;
   rejection_reason?: string | null;
+  version?: number;
+  review_history?: ClaimReviewHistoryItem[];
   submitted_by_user_id?: string | null;
   reviewed_at?: string | null;
   created_at: string;
@@ -1996,6 +2016,8 @@ export interface AdminClaim {
   is_public_evidence: boolean;
   review_status: ClaimReviewStatus | string;
   rejection_reason?: string | null;
+  version?: number;
+  review_history?: ClaimReviewHistoryItem[];
   submitted_by_user_id?: string | null;
   reviewed_by_user_id?: string | null;
   reviewed_at?: string | null;

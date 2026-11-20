@@ -41,6 +41,26 @@ def validate_http_url(url: str | None) -> str | None:
 # ================= Public Schemas =================
 
 
+class ClaimReviewHistoryItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    claim_id: uuid.UUID
+    claim_scope: str
+    claim_type: str
+    claim_key: str
+    claim_value: str
+    evidence_url: str | None = None
+    evidence_type: str = "DOCUMENT"
+    evidence_notes: str | None = None
+    is_public_evidence: bool = False
+    action: str
+    review_status: str
+    reviewer_id: uuid.UUID | None = None
+    rejection_reason: str | None = None
+    created_at: datetime.datetime
+
+
 class PublicClaimResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -166,6 +186,8 @@ class RetailerClaimResponse(BaseModel):
     is_public_evidence: bool
     review_status: str
     rejection_reason: str | None = None
+    version: int = 1
+    review_history: list[ClaimReviewHistoryItem] = Field(default_factory=list)
     submitted_by_user_id: uuid.UUID | None = None
     reviewed_at: datetime.datetime | None = None
     created_at: datetime.datetime
@@ -228,6 +250,8 @@ class AdminClaimResponse(BaseModel):
     is_public_evidence: bool
     review_status: str
     rejection_reason: str | None = None
+    version: int = 1
+    review_history: list[ClaimReviewHistoryItem] = Field(default_factory=list)
     submitted_by_user_id: uuid.UUID | None = None
     reviewed_by_user_id: uuid.UUID | None = None
     reviewed_at: datetime.datetime | None = None

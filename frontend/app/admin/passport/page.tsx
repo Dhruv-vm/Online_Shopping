@@ -5,10 +5,13 @@ import Link from "next/link";
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   ExternalLink,
   FileCheck2,
   Filter,
+  History,
   Info,
   RefreshCw,
   Search,
@@ -22,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
-import type { AdminClaim, AdminClaimQueueResponse } from "@/types";
+import type { AdminClaim, AdminClaimQueueResponse, ClaimReviewHistoryItem } from "@/types";
 
 export default function AdminPassportModerationPage() {
   const [claims, setClaims] = useState<AdminClaim[]>([]);
@@ -33,6 +36,30 @@ export default function AdminPassportModerationPage() {
   const [scopeFilter, setScopeFilter] = useState("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+
+  // Claim review history inspection state
+  const [expandedHistoryClaimId, setExpandedHistoryClaimId] = useState<string | null>(null);
+  const [claimHistoryMap, setClaimHistoryMap] = useState<Record<string, ClaimReviewHistoryItem[]>>({});
+  const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+
+  const toggleClaimHistory = async (claimId: string) => {
+    if (expandedHistoryClaimId === claimId) {
+      setExpandedHistoryClaimId(null);
+      return;
+    }
+    setExpandedHistoryClaimId(claimId);
+    if (!claimHistoryMap[claimId]) {
+      setLoadingHistoryId(claimId);
+      try {
+        const hist = await apiClient.getAdminClaimHistory(claimId);
+        setClaimHistoryMap((prev) => ({ ...prev, [claimId]: hist }));
+      } catch (err) {
+        console.error("Failed to fetch admin claim history:", err);
+      } finally {
+        setLoadingHistoryId(null);
+      }
+    }
+  };
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -301,16 +328,102 @@ export default function AdminPassportModerationPage() {
                       </div>
                     )}
 
-                    {claim.review_status === "REJECTED" && claim.rejection_reason && (
+                    {claim.rejection_reason && (
                       <div className="p-2 rounded bg-red-500/10 text-red-700 dark:text-red-400 text-[11px] border border-red-500/20">
-                        <span className="font-bold">Rejection Reason: </span>
+                        <span className="font-bold">Prior Moderation Feedback: </span>
                         {claim.rejection_reason}
+                      </div>
+                    )}
+
+                    {/* Expandable History Timeline for Admin */}
+                    {expandedHistoryClaimId === claim.id && (
+                      <div className="mt-3 p-3 rounded-xl border border-muted bg-muted/20 space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between font-bold text-foreground">
+                          <span className="flex items-center gap-1.5">
+                            <History className="h-3.5 w-3.5 text-emerald-600" />
+                            Complete Moderation & Revision Audit Trail
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            Version {claim.version || 1}
+                          </span>
+                        </div>
+
+                        {loadingHistoryId === claim.id ? (
+                          <div className="py-2 text-center text-muted-foreground flex items-center justify-center gap-1.5">
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Loading audit trail...
+                          </div>
+                        ) : (claimHistoryMap[claim.id] || claim.review_history || []).length === 0 ? (
+                          <div className="py-1 text-muted-foreground">No revision history found.</div>
+                        ) : (
+                          <div className="space-y-2 border-l-2 border-emerald-600/30 pl-3 ml-1 mt-2">
+                            {(claimHistoryMap[claim.id] || claim.review_history || []).map((h) => (
+                              <div key={h.id} className="relative pb-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] py-0 px-1 font-bold ${
+                                      h.action === "VERIFIED"
+                                        ? "text-emerald-700 border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40"
+                                        : h.action === "REJECTED"
+                                        ? "text-red-700 border-red-600/40 bg-red-50 dark:bg-red-950/40"
+                                        : h.action === "REVISED"
+                                        ? "text-amber-700 border-amber-600/40 bg-amber-50 dark:bg-amber-950/40"
+                                        : "text-blue-700 border-blue-600/40 bg-blue-50 dark:bg-blue-950/40"
+                                    }`}
+                                  >
+                                    {h.action}
+                                  </Badge>
+                                  <span className="text-muted-foreground text-[10px]">
+                                    {new Date(h.created_at).toLocaleString()}
+                                  </span>
+                                  {h.reviewer_id && (
+                                    <span className="text-[10px] text-muted-foreground">
+                                      Reviewer: {h.reviewer_id.slice(0, 8)}...
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-foreground mt-0.5">&ldquo;{h.claim_value}&rdquo;</p>
+                                {h.evidence_url && (
+                                  <a
+                                    href={h.evidence_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1"
+                                  >
+                                    Doc URL <ExternalLink className="h-2.5 w-2.5" />
+                                  </a>
+                                )}
+                                {h.rejection_reason && (
+                                  <p className="text-red-600 dark:text-red-400 font-medium">
+                                    Rejection: {h.rejection_reason}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => toggleClaimHistory(claim.id)}
+                      className="text-xs h-8 px-2 text-muted-foreground hover:text-foreground gap-1"
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      History
+                      {expandedHistoryClaimId === claim.id ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </Button>
+
                     {claim.review_status !== "VERIFIED" && (
                       <Button
                         size="sm"

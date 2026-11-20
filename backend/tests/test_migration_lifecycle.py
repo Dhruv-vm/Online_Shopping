@@ -19,7 +19,7 @@ def test_migration_chain_is_linear_and_single_head():
     # Exactly one migration head
     heads = script.get_heads()
     assert len(heads) == 1, f"Expected exactly 1 migration head, found {heads}"
-    assert heads[0] == "0019_product_passport"
+    assert heads[0] == "0020_claim_review_history"
 
     # Walk from head to base verifying linear unbroken parent links
     current = script.get_revision(heads[0])
@@ -35,6 +35,7 @@ def test_migration_chain_is_linear_and_single_head():
         current = script.get_revision(down)
 
     expected_revisions = [
+        "0020_claim_review_history",
         "0019_product_passport",
         "0018_personalization_opt_in",
         "0017_basket_intent_memory",
@@ -73,6 +74,7 @@ def test_migration_metadata_includes_all_models():
     assert "product_passports" in table_names
     assert "listing_passports" in table_names
     assert "passport_claims" in table_names
+    assert "passport_claim_review_history" in table_names
     assert "product_listings" in table_names
     assert "orders" in table_names
     assert "order_items" in table_names
@@ -140,7 +142,9 @@ async def test_database_schema_constraints_and_indices():
                     'chk_mission_item_unit_price_nonnegative',
                     'chk_listing_passport_condition',
                     'chk_passport_claim_status',
-                    'chk_passport_claim_scope'
+                    'chk_passport_claim_scope',
+                    'chk_claim_review_history_status',
+                    'chk_claim_review_history_action'
                 )
             """)
         )
@@ -153,3 +157,5 @@ async def test_database_schema_constraints_and_indices():
         assert "chk_listing_passport_condition" in constraints
         assert "chk_passport_claim_status" in constraints
         assert "chk_passport_claim_scope" in constraints
+        assert "chk_claim_review_history_status" in constraints
+        assert "chk_claim_review_history_action" in constraints

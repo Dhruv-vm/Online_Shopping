@@ -19,6 +19,7 @@ from app.modules.passport.schemas import (
     AdminClaimRejectRequest,
     AdminClaimResponse,
     AdminProductPassportUpsertRequest,
+    ClaimReviewHistoryItem,
     PublicListingPassportResponse,
     PublicProductPassportResponse,
     RetailerClaimCreateRequest,
@@ -185,6 +186,20 @@ async def list_retailer_claims(
     return await service.list_retailer_claims(retailer.id, listing_id=listing_id)
 
 
+@retailer_router.get(
+    "/claims/{claim_id}/history",
+    response_model=list[ClaimReviewHistoryItem],
+    summary="Get complete audit review and revision history for a claim",
+)
+async def get_retailer_claim_history(
+    claim_id: uuid.UUID,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ClaimReviewHistoryItem]:
+    service = PassportService(db)
+    return await service.get_retailer_claim_history(claim_id, retailer.id)
+
+
 # ================= Admin Portal Endpoints =================
 
 admin_router = APIRouter(
@@ -257,6 +272,19 @@ async def reject_claim(
         admin_id=current_admin.id,
         rejection_reason=body.rejection_reason,
     )
+
+
+@admin_router.get(
+    "/claims/{claim_id}/history",
+    response_model=list[ClaimReviewHistoryItem],
+    summary="Get complete audit review and revision history for any claim",
+)
+async def get_admin_claim_history(
+    claim_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ClaimReviewHistoryItem]:
+    service = PassportService(db)
+    return await service.get_admin_claim_history(claim_id)
 
 
 @admin_router.put(

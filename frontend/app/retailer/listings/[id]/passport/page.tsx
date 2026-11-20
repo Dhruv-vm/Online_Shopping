@@ -3,14 +3,18 @@
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
   Award,
   Box,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
   ExternalLink,
   FileCheck2,
   FileText,
+  History,
   Info,
   Plus,
   RefreshCw,
@@ -26,6 +30,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import type {
+  ClaimReviewHistoryItem,
   RetailerClaim,
   RetailerClaimCreateRequest,
   RetailerListingPassportDetail,
@@ -67,6 +72,29 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
   const [editingClaim, setEditingClaim] = useState<RetailerClaim | null>(null);
   const [editClaimValue, setEditClaimValue] = useState("");
   const [editEvidenceUrl, setEditEvidenceUrl] = useState("");
+
+  const [expandedHistoryClaimId, setExpandedHistoryClaimId] = useState<string | null>(null);
+  const [claimHistoryMap, setClaimHistoryMap] = useState<Record<string, ClaimReviewHistoryItem[]>>({});
+  const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+
+  const toggleClaimHistory = async (claimId: string) => {
+    if (expandedHistoryClaimId === claimId) {
+      setExpandedHistoryClaimId(null);
+      return;
+    }
+    setExpandedHistoryClaimId(claimId);
+    if (!claimHistoryMap[claimId]) {
+      setLoadingHistoryId(claimId);
+      try {
+        const hist = await apiClient.getRetailerClaimHistory(claimId);
+        setClaimHistoryMap((prev) => ({ ...prev, [claimId]: hist }));
+      } catch (err) {
+        console.error("Failed to fetch claim history:", err);
+      } finally {
+        setLoadingHistoryId(null);
+      }
+    }
+  };
 
   const loadPassport = useCallback(async () => {
     setIsLoading(true);
@@ -583,11 +611,74 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
                       </a>
                     )}
 
-                    {/* Rejection Reason notice */}
-                    {claim.review_status === "REJECTED" && claim.rejection_reason && (
-                      <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 text-[11px]">
-                        <span className="font-bold">Rejection Reason: </span>
-                        <span>{claim.rejection_reason}</span>
+                    {/* Moderation Feedback notice (preserved even after re-review trigger) */}
+                    {claim.rejection_reason && (
+                      <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 text-[11px] space-y-1">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          <span>
+                            {claim.review_status === "PENDING"
+                              ? "Previous Moderation Feedback (Under Re-Review):"
+                              : "Moderation Feedback:"}
+                          </span>
+                        </div>
+                        <p className="pl-5">{claim.rejection_reason}</p>
+                      </div>
+                    )}
+
+                    {/* Expandable Claim Review History */}
+                    {expandedHistoryClaimId === claim.id && (
+                      <div className="mt-3 p-3 rounded-xl border border-muted bg-muted/20 space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between font-bold text-foreground">
+                          <span className="flex items-center gap-1.5">
+                            <History className="h-3.5 w-3.5 text-emerald-600" />
+                            Claim Review & Revision History
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            Version {claim.version || 1}
+                          </span>
+                        </div>
+
+                        {loadingHistoryId === claim.id ? (
+                          <div className="py-2 text-center text-muted-foreground flex items-center justify-center gap-1.5">
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Loading audit trail...
+                          </div>
+                        ) : (claimHistoryMap[claim.id] || claim.review_history || []).length === 0 ? (
+                          <div className="py-1 text-muted-foreground">No revision history found.</div>
+                        ) : (
+                          <div className="space-y-1.5 border-l-2 border-emerald-600/30 pl-3 ml-1 mt-2">
+                            {(claimHistoryMap[claim.id] || claim.review_history || []).map((h) => (
+                              <div key={h.id} className="relative pb-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] py-0 px-1 font-bold ${
+                                      h.action === "VERIFIED"
+                                        ? "text-emerald-700 border-emerald-600/40 bg-emerald-50 dark:bg-emerald-950/40"
+                                        : h.action === "REJECTED"
+                                        ? "text-red-700 border-red-600/40 bg-red-50 dark:bg-red-950/40"
+                                        : h.action === "REVISED"
+                                        ? "text-amber-700 border-amber-600/40 bg-amber-50 dark:bg-amber-950/40"
+                                        : "text-blue-700 border-blue-600/40 bg-blue-50 dark:bg-blue-950/40"
+                                    }`}
+                                  >
+                                    {h.action}
+                                  </Badge>
+                                  <span className="text-muted-foreground text-[10px]">
+                                    {new Date(h.created_at).toLocaleString()}
+                                  </span>
+                                </div>
+                                <p className="text-foreground mt-0.5">&ldquo;{h.claim_value}&rdquo;</p>
+                                {h.rejection_reason && (
+                                  <p className="text-red-600 dark:text-red-400 font-medium">
+                                    Reason: {h.rejection_reason}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -609,6 +700,20 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
                         Rejected
                       </Badge>
                     )}
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleClaimHistory(claim.id)}
+                      className="text-xs h-8 px-2 text-muted-foreground hover:text-foreground gap-1"
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      {expandedHistoryClaimId === claim.id ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
+                    </Button>
 
                     <Button
                       variant="ghost"
