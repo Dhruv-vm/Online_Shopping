@@ -91,8 +91,19 @@ async def consume_awards_for_quote(
             order_id=order_id,
             used_at=datetime.now(UTC),
         )
+        .returning(PriceAward.id, PriceAward.source)
     )
-    return res.rowcount or 0
+    used = res.all()
+    group_award_ids = [aid for aid, source in used if source == "GROUP_BUY"]
+    if group_award_ids:
+        from app.modules.community.models import GroupBuyMember
+
+        await session.execute(
+            update(GroupBuyMember)
+            .where(GroupBuyMember.award_id.in_(group_award_ids))
+            .values(status="PURCHASED", order_id=order_id)
+        )
+    return len(used)
 
 
 async def expire_stale_awards(session: AsyncSession) -> int:

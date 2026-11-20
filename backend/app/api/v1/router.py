@@ -4,6 +4,9 @@ from app.core.config import settings
 from app.modules.admin.router import router as admin_router
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
+from app.modules.community.router import admin_router as community_admin_router
+from app.modules.community.router import retailer_router as community_retailer_router
+from app.modules.community.router import router as community_router
 from app.modules.demand.router import admin_router as demand_admin_router
 from app.modules.demand.router import retailer_router as demand_retailer_router
 from app.modules.demand.router import router as demand_router
@@ -92,6 +95,9 @@ api_router.include_router(i18n_admin_router)
 api_router.include_router(demand_router)
 api_router.include_router(demand_retailer_router)
 api_router.include_router(demand_admin_router)
+api_router.include_router(community_router)
+api_router.include_router(community_retailer_router)
+api_router.include_router(community_admin_router)
 
 
 @api_router.get("/info", tags=["System"])

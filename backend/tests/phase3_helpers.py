@@ -76,3 +76,46 @@ async def add_listing_for_retailer(
         )
         await session.commit()
         return str(listing.id)
+
+
+async def quote_cart(client, headers: dict[str, str]) -> tuple[dict, str]:
+    """Create a default address (if needed) and a quote for the customer's cart."""
+    addr = await client.post(
+        "/api/v1/addresses",
+        headers=headers,
+        json={
+            "recipient_name": "Phase Three",
+            "phone": "+919876543210",
+            "line1": "12 MG Road",
+            "city": "Bengaluru",
+            "state": "KA",
+            "postal_code": "560001",
+            "is_default": True,
+        },
+    )
+    assert addr.status_code == 201, addr.text
+    addr_id = addr.json()["id"]
+    q = await client.post(
+        "/api/v1/quotes", headers=headers, json={"delivery_address_id": addr_id}
+    )
+    assert q.status_code == 201, q.text
+    return q.json(), addr_id
+
+
+async def place_order(client, headers: dict[str, str]) -> tuple[dict, dict]:
+    quote, addr_id = await quote_cart(client, headers)
+    r = await client.post(
+        "/api/v1/reservations", headers=headers, json={"quote_id": quote["id"]}
+    )
+    assert r.status_code == 201, r.text
+    o = await client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "quote_id": quote["id"],
+            "reservation_id": r.json()["id"],
+            "delivery_address_id": addr_id,
+        },
+    )
+    assert o.status_code == 201, o.text
+    return quote, o.json()
