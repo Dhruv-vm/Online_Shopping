@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.modules.admin.router import router as admin_router
+from app.modules.assistant.router import router as assistant_router
 from app.modules.auctions.router import admin_router as auctions_admin_router
 from app.modules.auctions.router import retailer_router as auctions_retailer_router
 from app.modules.auctions.router import router as auctions_router
@@ -108,6 +109,7 @@ api_router.include_router(price_intel_router)
 api_router.include_router(price_intel_retailer_router)
 api_router.include_router(price_intel_admin_router)
 api_router.include_router(governance_router)
+api_router.include_router(assistant_router)
 api_router.include_router(sale_stream_router)
 api_router.include_router(i18n_router)
 api_router.include_router(i18n_admin_router)
