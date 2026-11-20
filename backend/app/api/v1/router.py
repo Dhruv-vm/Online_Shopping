@@ -4,6 +4,8 @@ from app.core.config import settings
 from app.modules.admin.router import router as admin_router
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
+from app.modules.i18n.router import admin_router as i18n_admin_router
+from app.modules.i18n.router import router as i18n_router
 from app.modules.identity.router import address_router, auth_router, user_router
 from app.modules.intent.router import intent_router
 from app.modules.inventory.router import internal_router as inventory_internal_router
@@ -82,6 +84,8 @@ api_router.include_router(admin_router)
 # Phase 3 marketplace features
 api_router.include_router(price_intel_router)
 api_router.include_router(sale_stream_router)
+api_router.include_router(i18n_router)
+api_router.include_router(i18n_admin_router)
 
 
 @api_router.get("/info", tags=["System"])

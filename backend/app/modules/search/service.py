@@ -89,8 +89,49 @@ class SearchService:
         Execute product search. Tries OpenSearch first; on circuit trip or engine failure,
         transparently falls back to PostgreSQL SQL query without failing the request.
         """
+        from app.modules.i18n.service import normalize_query
+
+        original_query = (q or "").strip()
+        query_str, detected_lang, translated = normalize_query(original_query)
+        result = await self._search_dispatch(
+            db_session=db_session,
+            query_str=query_str,
+            original_query=original_query,
+            category_slug=category_slug,
+            brand=brand,
+            retailer_id=retailer_id,
+            min_price_paise=min_price_paise,
+            max_price_paise=max_price_paise,
+            in_stock_only=in_stock_only,
+            sort=sort,
+            page=page,
+            page_size=page_size,
+            force_fallback=force_fallback,
+        )
+        result.original_query = original_query or None
+        result.interpreted_query = query_str or None
+        result.detected_language = detected_lang
+        result.query_translated = translated
+        return result
+
+    async def _search_dispatch(
+        self,
+        *,
+        db_session: AsyncSession,
+        query_str: str,
+        original_query: str,
+        category_slug,
+        brand,
+        retailer_id,
+        min_price_paise,
+        max_price_paise,
+        in_stock_only,
+        sort,
+        page,
+        page_size,
+        force_fallback,
+    ) -> SearchResponseSchema:
         start_time = time.monotonic()
-        query_str = (q or "").strip()
 
         # Circuit breaker / force fallback check
         if not force_fallback:
@@ -130,6 +171,7 @@ class SearchService:
             page=page,
             page_size=min(page_size, 20),  # Protect DB CPU by capping page size at 20
             start_time=start_time,
+            original_query=original_query,
         )
 
     async def get_suggestions(
@@ -441,6 +483,7 @@ class SearchService:
         page: int,
         page_size: int,
         start_time: float,
+        original_query: str = "",
     ) -> SearchResponseSchema:
         """
         Resilient PostgreSQL fallback when OpenSearch is unavailable.
@@ -490,10 +533,24 @@ class SearchService:
                             Product.description.ilike(term, escape="\\"),
                         )
                     )
+                from app.modules.i18n.models import ContentTranslation
+
+                original = (original_query or "").strip()
+                translated_match = Product.id.in_(
+                    select(ContentTranslation.entity_id).where(
+                        ContentTranslation.entity_type == "product",
+                        ContentTranslation.field == "name",
+                        ContentTranslation.value.ilike(
+                            f"%{escape_like(original or query_str.strip())}%",
+                            escape="\\",
+                        ),
+                    )
+                )
                 conditions.append(
                     or_(
                         Product.name.ilike(phrase_term, escape="\\"),
                         and_(*token_conditions),
+                        translated_match,
                     )
                 )
 
