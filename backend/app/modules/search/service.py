@@ -60,7 +60,13 @@ class SearchService:
         search_alias: str = DEFAULT_SEARCH_ALIAS,
     ) -> None:
         self.settings = config_settings or settings
-        self.client = search_client or get_opensearch_client(self.settings)
+        # Only talk to a real cluster when one is configured. Previously an empty
+        # in-memory mock index was used whenever OPENSEARCH_URL was unset, so every
+        # search in development/sandbox returned 0 results instead of falling back
+        # to PostgreSQL. Tests may still inject a mock client explicitly.
+        self.client = search_client or (
+            get_opensearch_client(self.settings) if self.settings.has_opensearch else None
+        )
         self.circuit_breaker = circuit_breaker or SearchCircuitBreaker(
             failure_threshold=self.settings.OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             recovery_seconds=self.settings.OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS,
@@ -134,7 +140,7 @@ class SearchService:
         start_time = time.monotonic()
 
         # Circuit breaker / force fallback check
-        if not force_fallback:
+        if not force_fallback and self.client is not None:
             try:
                 return await self.circuit_breaker.call(
                     self._search_opensearch,
@@ -187,7 +193,7 @@ class SearchService:
 
         # Try OpenSearch prefix / match query if circuit allows
         try:
-            if await self.circuit_breaker.allow_request():
+            if self.client is not None and await self.circuit_breaker.allow_request():
                 dsl = {
                     "query": {
                         "bool": {

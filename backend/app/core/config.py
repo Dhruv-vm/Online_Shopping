@@ -77,6 +77,10 @@ class Settings(BaseSettings):
         2  # unique customers before retailers see a pool
     )
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+    # Phase 3I OCR provider (unset = feature reports OCR_PROVIDER_UNAVAILABLE)
+    OCR_PROVIDER: str | None = None
+    OCR_PROVIDER_URL: str | None = None
+    OCR_PROVIDER_API_KEY: SecretStr | None = None
 
     # Internal Service Security (Phase 2D - background worker crons, internal tasks)
     # Must be set via environment variable. No hardcoded default is permitted in production.

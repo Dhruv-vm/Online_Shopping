@@ -45,6 +45,7 @@ from app.modules.retailer.router import router as retailer_router
 from app.modules.sale_stream.router import router as sale_stream_router
 from app.modules.search.router import router as search_router
 from app.modules.substitutes.router import router as substitutes_router
+from app.modules.vision.router import router as vision_router
 
 api_router = APIRouter()
 
@@ -116,6 +117,7 @@ api_router.include_router(negotiation_retailer_router)
 api_router.include_router(auctions_router)
 api_router.include_router(auctions_retailer_router)
 api_router.include_router(auctions_admin_router)
+api_router.include_router(vision_router)
 
 
 @api_router.get("/info", tags=["System"])
