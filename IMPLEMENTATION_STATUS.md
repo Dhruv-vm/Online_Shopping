@@ -2,11 +2,11 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-20T12:20:00+05:30  
-> **Base Branch:** `integration` (commit `8c5e212`)  
-> **Current Feature Branch:** `feature/phase-2a-basket-mission`  
-> **Head Status:** Single Alembic head `0016_basket_mission`  
-> **Test Status:** 412 Backend Tests Passed (100%), 77 Frontend Tests Passed (100%), CI Green  
+> **Last Audited:** 2026-11-20T19:30:00+05:30  
+> **Base Branch:** `integration`  
+> **Current Feature Branch:** `feature/phase-2d-product-passport` (commit `026f801`)  
+> **Head Status:** Single Alembic head `0020_claim_review_history`  
+> **Test Status:** 448 Backend Tests Passed (100%), 100 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -51,7 +51,7 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | `1a0ce91` | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
 | **#29** | `feature/phase-2b-substitute-intelligence` | Phase 2B: Basket Substitute Intelligence | `e3ccf0e` | 427 backend / 82 frontend | Intelligent substitute discovery engine, 5 explainable tiers (Closest Match, Budget Friendly, Better Value, Premium Upgrade, Available Now), spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
 | **#30** | `feature/phase-2c-intent-memory` | Phase 2C: Basket Intent Memory | `9adede6` | 437 backend / 93 frontend | Customer preference profiles, recurring intentions (no auto-orders), granular memory cards, mission & substitute personalization boosts with transparent explanations, dedicated dashboard `/account/intent`, strict opt-in consent controls. |
-| **#31** | `feature/phase-2d-product-passport` | Phase 2D: Basket Product Passport | *Current* | 446 backend / 99 frontend | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle (PENDING default, admin moderation queue, mandatory rejection reasons, edit re-triggering), customer PDP card, retailer submission portal, admin moderation portal. |
+| **#31** | `feature/phase-2d-product-passport` | Phase 2D: Basket Product Passport | `026f801` (PR #31) | 448 backend / 100 frontend | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle with non-destructive revision audit trail (`0020_claim_review_history`), public listing visibility invariant, customer PDP card, retailer submission portal, admin moderation portal. |
 
 ---
 
