@@ -362,7 +362,9 @@ async def test_opensearch_consumer_handles_product_upsert(
     doc = await mock_search_client.get_document(write_alias, str(prod.id))
     assert doc is not None
     assert doc["_source"]["name"] == prod.name
-    assert doc["_source"]["aggregate_version"] == 1
+    # Audit fix: documents are versioned by DB snapshot time (epoch microseconds),
+    # not by the triggering aggregate's own counter.
+    assert doc["_source"]["aggregate_version"] > 10**15
 
 
 @pytest.mark.asyncio
@@ -395,12 +397,15 @@ async def test_opensearch_consumer_handles_version_conflict_as_safe_noop(
         actions=[{"add": {"index": "basket_products_v1", "alias": write_alias}}]
     )
 
-    # Pre-index doc at version 5
+    # Pre-index a doc built from a *newer* snapshot than the consumer will read.
+    from app.core.search.versioning import snapshot_version
+
+    future_version = snapshot_version() + 10**12
     await mock_search_client.index_document(
         index=write_alias,
         doc_id=str(prod_id),
-        document={"name": prod.name, "aggregate_version": 5},
-        version=5,
+        document={"name": prod.name, "aggregate_version": future_version},
+        version=future_version,
         version_type="external_gte",
     )
 
@@ -425,9 +430,70 @@ async def test_opensearch_consumer_handles_version_conflict_as_safe_noop(
     # Should not raise an error
     await consumer.handle_event(stale_envelope, db_session)
 
-    # Verify OpenSearch still holds version 5
+    # Verify OpenSearch still holds the newer snapshot
     doc = await mock_search_client.get_document(write_alias, str(prod_id))
-    assert doc["_version"] == 5
+    assert doc["_version"] == future_version
+
+
+@pytest.mark.asyncio
+async def test_inventory_event_with_low_aggregate_version_is_not_dropped(
+    db_session: AsyncSession,
+    mock_search_client: MockOpenSearchClient,
+):
+    """Regression (audit): an inventory event whose own aggregate counter is lower
+    than the product's version used to be rejected with 409 and silently lost,
+    leaving stale stock/price in search."""
+    from sqlalchemy import select
+
+    session_factory = async_sessionmaker(
+        bind=db_session.bind, expire_on_commit=False, class_=AsyncSession
+    )
+    prod = (
+        await db_session.execute(
+            select(Product).where(Product.is_active.is_(True)).limit(1)
+        )
+    ).scalar_one_or_none()
+    if prod is None:
+        from tests.factories import create_test_listing
+
+        await create_test_listing(product_name="OpenSearch Inventory Regression")
+        prod = (
+            await db_session.execute(
+                select(Product).where(Product.is_active.is_(True)).limit(1)
+            )
+        ).scalar_one()
+
+    write_alias = "basket_products_write"
+    await mock_search_client.create_index("basket_products_v1")
+    await mock_search_client.update_aliases(
+        actions=[{"add": {"index": "basket_products_v1", "alias": write_alias}}]
+    )
+    # Product previously indexed under its own (high) version counter.
+    await mock_search_client.index_document(
+        index=write_alias,
+        doc_id=str(prod.id),
+        document={"name": "stale", "aggregate_version": 10},
+        version=10,
+        version_type="external_gte",
+    )
+    consumer = OpenSearchConsumer(
+        session_factory=session_factory,
+        search_client=mock_search_client,
+        index_alias=write_alias,
+    )
+    inventory_event = EventEnvelope(
+        event_id=uuid.uuid4(),
+        event_type="product.updated",
+        event_version=1,
+        occurred_at=datetime.now(UTC),
+        aggregate_type="Product",
+        aggregate_id=str(prod.id),
+        aggregate_version=1,
+        payload={"product_id": str(prod.id), "reason": "stock_committed"},
+    )
+    await consumer.handle_event(inventory_event, db_session)
+    doc = await mock_search_client.get_document(write_alias, str(prod.id))
+    assert doc["_source"]["name"] == prod.name  # refreshed, not dropped
 
 
 @pytest.mark.asyncio

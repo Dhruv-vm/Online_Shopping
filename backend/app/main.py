@@ -77,9 +77,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 exc,
             )
 
+    # Background workers: outbox publisher, reservation expiry, reconciliation.
+    supervisor = None
+    if settings.has_database and settings.BACKGROUND_WORKERS_ENABLED:
+        try:
+            from app.core.background import BackgroundWorkerSupervisor
+            from app.core.database import get_session_factory
+
+            supervisor = BackgroundWorkerSupervisor(get_session_factory())
+            await supervisor.start()
+        except Exception as exc:
+            logger.warning("Background workers failed to start: %s", exc)
+            supervisor = None
+    app.state.background_supervisor = supervisor
+
     yield
 
     # Shutdown logic
+    if supervisor is not None:
+        try:
+            await supervisor.stop()
+        except Exception as exc:
+            logger.warning("Error stopping background workers: %s", exc)
+
     if opensearch_consumer is not None:
         try:
             logger.info("Stopping OpenSearchConsumer...")
@@ -167,14 +187,43 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/ready", tags=["Health"])
-    async def readiness_check(response: Response) -> dict:
+    async def readiness_check(request: Request, response: Response) -> dict:
         """Readiness check across PostgreSQL, Kafka, and OpenSearch dependencies."""
         db_check = await check_db_readiness()
 
-        # Kafka check
-        kafka_check: dict[str, str] = {"status": "unconfigured"}
+        # Kafka check: report the real publisher state and the outbox backlog,
+        # not merely whether a bootstrap server is configured.
+        kafka_check: dict[str, object] = {"status": "unconfigured"}
+        supervisor = getattr(request.app.state, "background_supervisor", None)
+        worker = getattr(supervisor, "_outbox_worker", None) if supervisor else None
         if settings.has_kafka:
-            kafka_check = {"status": "connected"}
+            kafka_check = {
+                "status": "connected"
+                if worker is not None and worker.producer.is_connected
+                else "degraded"
+            }
+        if db_check["status"] == "connected":
+            try:
+                from sqlalchemy import func, select
+
+                from app.core.database import get_session_factory
+                from app.modules.orders.models import OutboxEvent
+
+                sf = get_session_factory()
+                if sf is not None:
+                    async with sf() as s:
+                        rows = (
+                            await s.execute(
+                                select(OutboxEvent.status, func.count())
+                                .where(OutboxEvent.status.in_(["PENDING", "FAILED"]))
+                                .group_by(OutboxEvent.status)
+                            )
+                        ).all()
+                    counts = {status_: int(n) for status_, n in rows}
+                    kafka_check["outbox_pending"] = counts.get("PENDING", 0)
+                    kafka_check["outbox_failed"] = counts.get("FAILED", 0)
+            except Exception as exc:  # readiness must never crash
+                kafka_check["outbox_error"] = type(exc).__name__
 
         # OpenSearch check
         opensearch_check: dict[str, str] = {"status": "unconfigured"}

@@ -245,6 +245,10 @@ class IndexManager:
             .order_by(Product.created_at)
         )
 
+        from app.core.search.client import OpenSearchConflictError
+        from app.core.search.versioning import snapshot_version
+
+        doc_version = snapshot_version()
         result = await session.execute(stmt)
         products = result.scalars().all()
 
@@ -255,13 +259,19 @@ class IndexManager:
                 product=prod,
                 variants=prod.variants,
                 category=prod.category,
-                aggregate_version=getattr(prod, "version", 1),
+                aggregate_version=doc_version,
             )
-            await self.client.index_document(
-                index=target,
-                doc_id=str(prod.id),
-                document=doc,
-            )
+            try:
+                await self.client.index_document(
+                    index=target,
+                    doc_id=str(prod.id),
+                    document=doc,
+                    version=doc_version,
+                    version_type="external_gte",
+                )
+            except OpenSearchConflictError:
+                # A newer real-time update already landed; keep it.
+                continue
             count += 1
 
         logger.info(
@@ -296,13 +306,20 @@ class IndexManager:
                 .selectinload(ProductListing.retailer),
             )
         )
+        from app.core.search.client import OpenSearchConflictError
+        from app.core.search.versioning import snapshot_version
+
+        doc_version = snapshot_version()
         result = await session.execute(stmt)
         prod = result.scalar_one_or_none()
 
         if not prod or not getattr(prod, "is_active", True):
             try:
                 await self.client.delete_document(
-                    index=self.write_alias, doc_id=str(product_id)
+                    index=self.write_alias,
+                    doc_id=str(product_id),
+                    version=doc_version,
+                    version_type="external_gte",
                 )
                 return True
             except Exception:
@@ -312,14 +329,19 @@ class IndexManager:
             product=prod,
             variants=prod.variants,
             category=prod.category,
-            aggregate_version=getattr(prod, "version", 1),
+            aggregate_version=doc_version,
         )
         try:
             await self.client.index_document(
                 index=self.write_alias,
                 doc_id=str(prod.id),
                 document=doc,
+                version=doc_version,
+                version_type="external_gte",
             )
+            return True
+        except OpenSearchConflictError:
+            # A document built from a newer snapshot is already indexed.
             return True
         except Exception as exc:
             logger.warning(

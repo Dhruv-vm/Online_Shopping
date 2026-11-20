@@ -419,6 +419,17 @@ async def test_d_end_to_end_purchase_flow(async_client: AsyncClient):
         ).scalar_one()
         assert inv2_check.on_hand_quantity <= 35
 
+        # Audit fix: retailers may only fulfil PAID orders. Simulate a captured
+        # payment (this test does not exercise the Razorpay flow).
+        from app.modules.orders.models import Order
+
+        paid_order = (
+            await session.execute(select(Order).where(Order.id == uuid.UUID(order_id)))
+        ).scalar_one()
+        paid_order.status = "CONFIRMED"
+        paid_order.payment_status = "SUCCEEDED"
+        await session.commit()
+
     # 9. Verify retailer order isolation: Retailer 1 sees ONLY Retailer 1 items
     ret1_order_detail = await async_client.get(
         f"/api/v1/retailer/orders/{order_id}", headers=ret1_headers

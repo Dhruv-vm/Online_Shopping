@@ -43,6 +43,9 @@ class Settings(BaseSettings):
         "insecure-csrf-secret-key-change-in-production"
     )
     ALLOWED_HOSTS: list[str] = ["*"]
+    # Number of trusted reverse proxies in front of the API. X-Forwarded-For is
+    # ignored unless this is > 0 (prevents rate-limit bypass via spoofed headers).
+    TRUSTED_PROXY_COUNT: int = 0
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Database (Aiven PostgreSQL)
@@ -60,6 +63,14 @@ class Settings(BaseSettings):
 
     # Inventory Reservation Policy (Phase 2D)
     RESERVATION_TTL_MINUTES: int = 10  # 10-minute hold for active stock reservation
+
+    # In-process background workers (outbox publisher, reservation expiry,
+    # payment reconciliation). Disable when running dedicated worker processes.
+    BACKGROUND_WORKERS_ENABLED: bool = True
+    OUTBOX_PUBLISHER_ENABLED: bool = True
+    RESERVATION_CLEANUP_INTERVAL_SECONDS: float = 60.0
+    PAYMENT_RECONCILE_INTERVAL_SECONDS: float = 120.0
+    PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS: float = 300.0
 
     # Internal Service Security (Phase 2D - background worker crons, internal tasks)
     # Must be set via environment variable. No hardcoded default is permitted in production.

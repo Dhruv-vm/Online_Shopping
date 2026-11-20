@@ -2,7 +2,9 @@ import datetime
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.core.validation import validate_media_url
 
 
 class AdminOverviewResponse(BaseModel):
@@ -166,8 +168,13 @@ class AdminCatalogueProductCreateRequest(BaseModel):
     brand: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     is_active: bool = True
-    image_urls: list[str] = Field(default_factory=list)
+    image_urls: list[str] = Field(default_factory=list, max_length=20)
     variants: list[AdminCatalogueVariantCreateRequest] = Field(default_factory=list)
+
+    @field_validator("image_urls")
+    @classmethod
+    def _validate_image_urls(cls, v: list[str]) -> list[str]:
+        return [u for u in (validate_media_url(x) for x in v) if u]
 
 
 class AdminCatalogueProductUpdateRequest(BaseModel):
@@ -187,6 +194,11 @@ class AdminCategoryCreateRequest(BaseModel):
     icon: str | None = None
     parent_id: uuid.UUID | None = None
     is_active: bool = True
+
+    @field_validator("image_url")
+    @classmethod
+    def _validate_image_url(cls, v: str | None) -> str | None:
+        return validate_media_url(v)
 
 
 class AdminCategoryListItem(BaseModel):

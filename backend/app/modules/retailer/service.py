@@ -373,6 +373,13 @@ class RetailerService:
     async def _sync_product_search(self, product_id: uuid.UUID | None) -> None:
         if not product_id:
             return
+        # Durable path: transactional outbox event -> Kafka -> OpenSearch consumer.
+        from app.core.events.catalogue_events import enqueue_product_events
+
+        await enqueue_product_events(
+            self.session, [product_id], reason="catalogue_change"
+        )
+        # Fast path: best-effort synchronous index update when OpenSearch is up.
         try:
             from app.core.config import settings
             from app.core.search.client import get_opensearch_client
@@ -1155,6 +1162,7 @@ class RetailerService:
                 selectinload(Order.status_history),
             )
             .where(Order.id == order_id)
+            .with_for_update(of=Order)
         )
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
@@ -1171,6 +1179,16 @@ class RetailerService:
                 message="Order not found or does not belong to this retailer.",
                 status_code=404,
             )
+
+        # Retailers may only fulfil orders that have actually been paid for and
+        # are still live. Unpaid orders are expired by the payment SLA job.
+        if order.status in ("PENDING_PAYMENT", "CANCELLED", "RETURNED"):
+            raise AppException(
+                code="INVALID_STATUS_TRANSITION",
+                message=f"Cannot update fulfilment for an order in status '{order.status}'.",
+                status_code=409,
+            )
+        newly_cancelled: list = []
 
         target_status = req.status.strip().upper()
         allowed_statuses = {
@@ -1219,7 +1237,14 @@ class RetailerService:
                     status_code=422,
                 )
             if target_status == "CANCELLED":
+                if curr_item_status in ("SHIPPED", "OUT_FOR_DELIVERY"):
+                    raise AppException(
+                        code="INVALID_STATUS_TRANSITION",
+                        message="Cannot cancel an item that has already been dispatched.",
+                        status_code=422,
+                    )
                 item.fulfillment_status = target_status
+                newly_cancelled.append(item)
                 continue
 
             curr_rank = rank_map.get(curr_item_status, 0)
@@ -1235,6 +1260,7 @@ class RetailerService:
         parent_derived_status = self._derive_suborder_status(order.items)
         if order.status != parent_derived_status:
             order.status = parent_derived_status
+            order.version = (order.version or 0) + 1
             if parent_derived_status == "DELIVERED" and not order.delivered_at:
                 order.delivered_at = datetime.datetime.now(datetime.UTC)
             elif parent_derived_status == "CANCELLED" and not order.cancelled_at:
@@ -1265,7 +1291,66 @@ class RetailerService:
             self.session.add(notif)
 
         await self.session.flush()
+        if newly_cancelled:
+            await self._compensate_cancelled_items(order, retailer, newly_cancelled)
         return await self.get_order_detail(order.id, retailer)
+
+    async def _compensate_cancelled_items(
+        self, order: Order, retailer: Retailer, items: list
+    ) -> None:
+        """Restock and refund items a retailer cancels after payment.
+
+        Without this, a retailer cancellation left the customer charged for goods
+        that will never ship and permanently removed the stock from inventory.
+        """
+        from app.modules.inventory.service import ReservationService
+
+        await ReservationService(self.session).restock_inventory_items(
+            [(i.listing_id, i.quantity) for i in items]
+        )
+        refund_paise = sum(
+            int(i.unit_discounted_price_paise) * int(i.quantity) for i in items
+        )
+        if order.status == "CANCELLED":
+            # Whole order cancelled: the customer is also owed the delivery fee.
+            refund_paise += int(getattr(order, "delivery_fee_paise", 0) or 0)
+        if refund_paise <= 0 or order.payment_status not in (
+            "SUCCEEDED",
+            "PARTIALLY_REFUNDED",
+        ):
+            await self.session.flush()
+            return
+        from app.modules.payments.schemas import CreateRefundRequest
+        from app.modules.payments.service import PaymentService
+
+        item_key = "-".join(sorted(str(i.id)[:8] for i in items))
+        try:
+            await PaymentService(self.session).create_refund(
+                order_id=order.id,
+                req=CreateRefundRequest(
+                    amount_paise=refund_paise,
+                    reason=f"Cancelled by retailer {retailer.name}"[:255],
+                    capture_id=order.fulfilling_capture_id,
+                ),
+                idempotency_key=f"retailer_cancel_{order.id}_{item_key}"[:128],
+                is_internal=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "Refund for retailer-cancelled items on order %s failed: %s",
+                order.id,
+                exc,
+            )
+            self.session.add(
+                OrderStatusHistory(
+                    id=uuid.uuid4(),
+                    order_id=order.id,
+                    from_status=order.status,
+                    to_status=order.status,
+                    reason=f"REFUND_PENDING: retailer cancellation refund of {refund_paise} paise needs retry",
+                )
+            )
+            await self.session.flush()
 
     # ================= Retailer Offers & Discounts =================
 

@@ -54,6 +54,9 @@ def build_product_document(
     ratings: list[float] = []
 
     for v in prod_variants:
+        if getattr(v, "is_active", True) is False:
+            # Inactive variants must not contribute prices, stock or retailers.
+            continue
         v_id = str(v.id)
         variant_ids.append(v_id)
 

@@ -70,6 +70,13 @@ class AdminService:
     async def _sync_product_search(self, product_id: uuid.UUID | None) -> None:
         if not product_id:
             return
+        # Durable path: transactional outbox event -> Kafka -> OpenSearch consumer.
+        from app.core.events.catalogue_events import enqueue_product_events
+
+        await enqueue_product_events(
+            self.session, [product_id], reason="catalogue_change"
+        )
+        # Fast path: best-effort synchronous index update when OpenSearch is up.
         try:
             from app.core.config import settings
             from app.core.search.client import get_opensearch_client

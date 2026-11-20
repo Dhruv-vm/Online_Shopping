@@ -5,7 +5,7 @@ import time
 import uuid
 from typing import Any, Literal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,8 @@ from app.modules.catalogue.models import (
     Product,
     ProductListing,
     ProductVariant,
+    Retailer,
+    StoreInventory,
 )
 from app.modules.search.schemas import (
     ProductSearchItem,
@@ -37,6 +39,11 @@ from app.modules.search.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def escape_like(term: str) -> str:
+    """Escape LIKE/ILIKE wildcards so user input is matched literally."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class SearchService:
@@ -181,8 +188,8 @@ class SearchService:
                 and_(
                     Product.is_active == True,  # noqa: E712
                     or_(
-                        Product.name.ilike(f"{clean_q}%"),
-                        Product.brand.ilike(f"{clean_q}%"),
+                        Product.name.ilike(f"{escape_like(clean_q)}%", escape="\\"),
+                        Product.brand.ilike(f"{escape_like(clean_q)}%", escape="\\"),
                     ),
                 )
             )
@@ -439,26 +446,53 @@ class SearchService:
         Resilient PostgreSQL fallback when OpenSearch is unavailable.
         Omits complex facet calculations to preserve DB CPU during degraded operation.
         """
-        # Base query with active products
+        # Per-product aggregates over *publicly visible* listings (active listing,
+        # active and verified retailer), mirroring build_product_document(). All
+        # filtering, counting, sorting and pagination happen in SQL so that
+        # `total` and page sizes are consistent with the filters applied.
+        available_expr = func.greatest(
+            func.coalesce(StoreInventory.on_hand_quantity, 0)
+            - func.coalesce(StoreInventory.reserved_quantity, 0),
+            0,
+        )
+        agg = (
+            select(
+                ProductVariant.product_id.label("product_id"),
+                func.min(ProductListing.selling_price_paise).label("min_price"),
+                func.coalesce(func.sum(available_expr), 0).label("available"),
+            )
+            .join(ProductListing, ProductListing.variant_id == ProductVariant.id)
+            .join(Retailer, Retailer.id == ProductListing.retailer_id)
+            .outerjoin(StoreInventory, StoreInventory.listing_id == ProductListing.id)
+            .where(
+                ProductListing.is_active == True,  # noqa: E712
+                Retailer.is_active == True,  # noqa: E712
+                Retailer.verification_status == "VERIFIED",
+            )
+            .group_by(ProductVariant.product_id)
+            .subquery()
+        )
+        available_col = func.coalesce(agg.c.available, 0)
+
         conditions = [Product.is_active == True]  # noqa: E712
 
         if query_str:
             tokens = [t.strip() for t in query_str.split() if t.strip()]
             if tokens:
-                phrase_term = f"%{query_str}%"
+                phrase_term = f"%{escape_like(query_str.strip())}%"
                 token_conditions = []
                 for t in tokens:
-                    term = f"%{t}%"
+                    term = f"%{escape_like(t)}%"
                     token_conditions.append(
                         or_(
-                            Product.name.ilike(term),
-                            Product.brand.ilike(term),
-                            Product.description.ilike(term),
+                            Product.name.ilike(term, escape="\\"),
+                            Product.brand.ilike(term, escape="\\"),
+                            Product.description.ilike(term, escape="\\"),
                         )
                     )
                 conditions.append(
                     or_(
-                        Product.name.ilike(phrase_term),
+                        Product.name.ilike(phrase_term, escape="\\"),
                         and_(*token_conditions),
                     )
                 )
@@ -478,6 +512,10 @@ class SearchService:
         if retailer_id:
             try:
                 ret_uuid = uuid.UUID(retailer_id)
+            except ValueError:
+                # Invalid retailer filter must yield no results, not all results.
+                conditions.append(false())
+            else:
                 conditions.append(
                     Product.id.in_(
                         select(ProductVariant.product_id)
@@ -485,52 +523,81 @@ class SearchService:
                             ProductListing,
                             ProductListing.variant_id == ProductVariant.id,
                         )
-                        .where(ProductListing.retailer_id == ret_uuid)
+                        .where(
+                            ProductListing.retailer_id == ret_uuid,
+                            ProductListing.is_active == True,  # noqa: E712
+                        )
                     )
                 )
-            except ValueError:
-                pass
 
-        # Total count
-        count_stmt = select(func.count(Product.id)).where(and_(*conditions))
+        # Same semantics as the OpenSearch query: range filter on min price.
+        # Products without any purchasable listing have no price and never match
+        # a price filter (NULL comparisons are false).
+        if min_price_paise is not None:
+            conditions.append(agg.c.min_price >= min_price_paise)
+        if max_price_paise is not None:
+            conditions.append(agg.c.min_price <= max_price_paise)
+        if in_stock_only:
+            conditions.append(available_col > 0)
+
+        base_from = select(Product.id).outerjoin(agg, agg.c.product_id == Product.id)
+
+        # Total count (with every filter applied)
+        count_stmt = select(func.count()).select_from(
+            base_from.where(and_(*conditions)).subquery()
+        )
         total = (await session.execute(count_stmt)).scalar() or 0
 
-        # Items query with eager loads
-        items_stmt = (
-            select(Product)
-            .options(
-                selectinload(Product.category),
-                selectinload(Product.images),
-                selectinload(Product.variants)
-                .selectinload(ProductVariant.listings)
-                .selectinload(ProductListing.retailer),
-                selectinload(Product.variants)
-                .selectinload(ProductVariant.listings)
-                .selectinload(ProductListing.inventory),
-            )
-            .where(and_(*conditions))
+        order_by: list[Any]
+        if sort == "price_asc":
+            order_by = [
+                agg.c.min_price.asc().nulls_last(),
+                Product.name.asc(),
+                Product.id.asc(),
+            ]
+        elif sort == "price_desc":
+            order_by = [
+                agg.c.min_price.desc().nulls_last(),
+                Product.name.asc(),
+                Product.id.asc(),
+            ]
+        elif sort == "newest":
+            order_by = [Product.created_at.desc(), Product.id.asc()]
+        else:  # relevance / rating fallback: deterministic name order
+            order_by = [Product.name.asc(), Product.id.asc()]
+
+        page_ids_stmt = (
+            base_from.where(and_(*conditions))
+            .order_by(*order_by)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
+        page_ids = list((await session.execute(page_ids_stmt)).scalars().all())
 
-        if sort == "newest":
-            items_stmt = items_stmt.order_by(Product.created_at.desc())
-        else:
-            items_stmt = items_stmt.order_by(Product.name.asc())
-
-        items_stmt = items_stmt.offset((page - 1) * page_size).limit(page_size)
-        res = await session.execute(items_stmt)
-        products = res.scalars().all()
+        products: list[Product] = []
+        if page_ids:
+            items_stmt = (
+                select(Product)
+                .options(
+                    selectinload(Product.category),
+                    selectinload(Product.images),
+                    selectinload(Product.variants)
+                    .selectinload(ProductVariant.listings)
+                    .selectinload(ProductListing.retailer),
+                    selectinload(Product.variants)
+                    .selectinload(ProductVariant.listings)
+                    .selectinload(ProductListing.inventory),
+                )
+                .where(Product.id.in_(page_ids))
+            )
+            by_id = {
+                p.id: p for p in (await session.execute(items_stmt)).scalars().all()
+            }
+            products = [by_id[pid] for pid in page_ids if pid in by_id]
 
         items: list[ProductSearchItem] = []
         for prod in products:
             doc = build_product_document(prod)
-            # Filter in_stock if requested
-            if in_stock_only and not doc["is_in_stock"]:
-                continue
-            # Filter price range if requested
-            if min_price_paise is not None and doc["min_price_paise"] < min_price_paise:
-                continue
-            if max_price_paise is not None and doc["max_price_paise"] > max_price_paise:
-                continue
 
             items.append(
                 ProductSearchItem(

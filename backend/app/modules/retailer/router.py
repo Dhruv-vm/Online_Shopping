@@ -9,6 +9,7 @@ from app.modules.catalogue.models import Retailer
 from app.modules.identity.dependencies import (
     get_current_retailer,
     require_retailer,
+    verify_csrf_token,
 )
 from app.modules.identity.schemas import MessageResponse
 from app.modules.retailer.schemas import (
@@ -38,7 +39,7 @@ from app.modules.retailer.service import RetailerService
 router = APIRouter(
     prefix="/retailer",
     tags=["Retailer Portal"],
-    dependencies=[Depends(require_retailer)],
+    dependencies=[Depends(require_retailer), Depends(verify_csrf_token)],
 )
 
 

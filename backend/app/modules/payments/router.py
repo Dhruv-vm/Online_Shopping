@@ -1,5 +1,4 @@
 import hashlib
-import hmac
 import uuid
 from typing import Annotated
 
@@ -7,11 +6,14 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.core.config import settings
 from app.core.exceptions import AppException
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     get_current_user_optional,
+)
+from app.modules.identity.dependencies import (
+    require_admin_or_internal_service,
+    verify_csrf_token,
 )
 from app.modules.identity.models import User
 from app.modules.inventory.dependencies import verify_internal_service_key
@@ -31,7 +33,7 @@ from app.modules.payments.schemas import (
 from app.modules.payments.service import PaymentService
 from app.modules.payments.webhook import WebhookService
 
-router = APIRouter(tags=["payments"])
+router = APIRouter(tags=["payments"], dependencies=[Depends(verify_csrf_token)])
 internal_router = APIRouter(prefix="/internal/payments", tags=["internal-payments"])
 
 
@@ -116,47 +118,25 @@ async def verify_payment(
     "/orders/{order_id}/refunds",
     response_model=RefundResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Issue a partial or full refund against a capture",
+    summary="Issue a partial or full refund against a capture (admin / internal only)",
 )
 async def create_refund(
     order_id: uuid.UUID,
     payload: CreateRefundRequest,
-    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _actor: Annotated[str, Depends(require_admin_or_internal_service)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> RefundResponse:
-    # Check internal auth header or customer session
-    internal_key = request.headers.get("X-Internal-Service-Key") or request.headers.get(
-        "X-Internal-Token"
-    )
-    is_internal = False
-    if internal_key and settings.INTERNAL_SERVICE_KEY:
-        if hmac.compare_digest(
-            internal_key, settings.INTERNAL_SERVICE_KEY.get_secret_value()
-        ):
-            is_internal = True
-
-    customer_id = None
-    guest_token_hash = None
-    if not is_internal:
-        user = await get_current_user_optional(request, db)
-        customer_id, guest_token_hash = _extract_ownership_identifiers(request, user)
-        if not customer_id and not guest_token_hash:
-            raise AppException(
-                code="AUTHENTICATION_REQUIRED",
-                message="Authentication or guest session is required",
-                status_code=status.HTTP_401_UNAUTHORIZED,
-            )
-
+    # SECURITY: customers must never be able to self-issue refunds (they could keep
+    # delivered goods and pull the money back). Customer-initiated refunds go through
+    # the cancellation and return workflows, which enforce order-state rules.
     effective_key = idempotency_key or str(uuid.uuid4())
     service = PaymentService(db)
     return await service.create_refund(
         order_id=order_id,
         req=payload,
         idempotency_key=effective_key,
-        customer_id=customer_id,
-        guest_token_hash=guest_token_hash,
-        is_internal=is_internal,
+        is_internal=True,
     )
 
 
