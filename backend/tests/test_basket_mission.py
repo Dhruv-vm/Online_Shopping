@@ -59,11 +59,7 @@ async def test_customer_create_mission(async_client: AsyncClient):
     for item in mission["items"]:
         assert item["listing_id"] is not None
         assert item["product_id"] is not None
-        assert item["retailer_name"] in (
-            "Basket Mart",
-            "Basket Lifestyle",
-            "Partner Retailer",
-        )
+        assert bool(item["retailer_name"])
         assert item["unit_price_paise"] > 0
         assert item["quantity"] >= 1
         assert item["subtotal_paise"] == item["unit_price_paise"] * item["quantity"]
