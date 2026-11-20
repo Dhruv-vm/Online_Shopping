@@ -7,6 +7,48 @@
 
 ---
 
+## 0. Audit Status Update — 2026-11-20 (verified against code and tests)
+
+### 0.1 Status of the original register
+
+| ID | Original status | Verified status after audit | Notes |
+| :--- | :--- | :--- | :--- |
+| DISC-01 | Open | **Open (partially mitigated)** | No upload/object-storage endpoint exists. URL inputs now restricted to absolute http(s) (`core/validation.py`). Presigned uploads need an S3/R2 decision + `boto3`; not added (no new infra dependency without approval). |
+| DISC-02 | Open | **Closed — already implemented** | `core/config.py` validators already reject `rzp_test_` keys, missing secrets and weak `INTERNAL_SERVICE_KEY` in production. Webhook signature is mandatory in all environments. |
+| DISC-03 | Open | **Closed for client components** | `lib/api/client.ts` attaches `X-CSRF-Token` to every POST/PUT/PATCH/DELETE. No Server Actions perform mutations. |
+| DISC-04 | Open | **Open (reframed)** | Root cause was that the outbox publisher never ran. It now runs; events only accumulate while Kafka is down. Pruning of `PUBLISHED` rows still not implemented (deliberately: no data deletion in this assignment). |
+| DISC-05 | Open | **Closed — different root cause fixed** | A version guard existed but compared unrelated aggregate counters and dropped valid updates. Now uses DB snapshot time. |
+| DISC-06 | Open | **Open (low)** | Service-layer isolation verified (`ProductListing.retailer_id == retailer.id` in all retailer inventory queries). DB-level composite FK not added. |
+| DISC-07 | Open | Open | Not in scope. |
+| DISC-08 | Open | **Open; endpoints now secured** | Carrier updates remain manual, but are now admin/internal-only with a state machine. No admin UI exists for shipments/returns yet. |
+| DISC-09 | Open | Unchanged | Behaviour confirmed correct. |
+| DISC-10 | Open | Open | Not added; no measured need. |
+
+### 0.2 New discrepancies found and fixed in this audit
+
+| ID | Severity | Summary | Status |
+| :--- | :---: | :--- | :--- |
+| AUD-SEC-01 | Critical | Unauthenticated shipment and return-status endpoints (refund/restock abuse) | **Fixed** + tests |
+| AUD-SEC-02 | Critical | Customer-callable refunds endpoint | **Fixed** + tests |
+| AUD-SEC-03 | High | No return/shipment state machines; failed refunds reported as `REFUNDED` | **Fixed** + tests |
+| AUD-SEC-04 | High | Retailers could fulfil unpaid orders; retailer cancellation did not restock/refund | **Fixed** + tests |
+| AUD-SEC-05 | Medium | `X-Forwarded-For` spoofing bypassed login rate limiting | **Fixed** + tests |
+| AUD-SEC-06 | Medium | Missing CSRF on several cookie-auth mutation routers; substring origin match | **Fixed** + tests |
+| AUD-SEC-07 | Low | Session owner not checked on revocation lookup | **Fixed** |
+| AUD-SEC-08 | Medium | Unsafe image URL schemes accepted | **Fixed** + tests |
+| AUD-REL-01 | High | Outbox publisher never started | **Fixed** (`core/background.py`) |
+| AUD-REL-02 | High | No catalogue/inventory events were produced; search stock went stale | **Fixed** + pipeline test |
+| AUD-REL-03 | High | Expired reservations never released automatically (stock leak) | **Fixed** + test |
+| AUD-REL-04 | High | OpenSearch writes dropped by cross-aggregate version comparison | **Fixed** + test |
+| AUD-REL-05 | Medium | Search fallback filtered after pagination; LIKE wildcards; unpriced products matched price filters | **Fixed** + tests |
+| AUD-REL-06 | Medium | `/ready` reported Kafka "connected" whenever configured | **Fixed** |
+| AUD-DB-01 | Medium | Two model indexes never migrated | **Fixed** (`0021`) |
+| AUD-DB-02 | Low | Cosmetic model/migration drift (constraint vs unique index, index names) | **Open** — documented |
+| AUD-TEST-01 | Medium | Test fixtures mutate the configured database (`store_inventory` reset) | **Open** — documented; run tests on a dedicated DB |
+| AUD-DOC-01 | Low | Docs claimed SQLite tests, Vitest, `tsvector` fallback, passing `alembic check`, 145 endpoints | **Fixed** in docs |
+| AUD-OPS-01 | Medium | Login rate limiter is in-memory per process | **Open** — needs shared store (Redis) for multi-replica |
+| AUD-OPS-02 | Medium | Guests can hold stock via repeated reservations (no per-client reservation rate limit) | **Open** — mitigated by 10-min TTL now actually enforced |
+
 ## 1. Executive Overview
 
 This register tracks architectural discrepancies, contract gaps between frontend and backend, unimplemented integrations, known performance bottlenecks, and edge case behaviours observed across the BASKET platform. Each item is classified by severity, system component, root cause, and the exact remediation action required.

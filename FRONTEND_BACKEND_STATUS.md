@@ -8,6 +8,29 @@
 
 ---
 
+## 0. Frontend ↔ Backend Verification — Stabilisation Audit 2026-11-20
+
+| Check | Result |
+| :--- | :--- |
+| `npm run type-check` (tsc --noEmit) | ✅ 0 errors |
+| `npm run lint` (`next lint`, deprecated in Next 16) | ✅ 0 errors, 2 warnings (`<img>` in `retailer/listings/new` and `retailer/listings`) |
+| `npm test` (**Node built-in test runner**, not Vitest as previously documented) | ✅ 100 / 100 |
+| `npm run build` (Next.js 15.5) | ✅ 36 app routes (30 static pages generated) |
+| Internal links (`href` / `router.push`) vs route tree | ✅ no unmatched targets |
+| CSRF header propagation (`lib/api/client.ts`) | ✅ `X-CSRF-Token` on all POST/PUT/PATCH/DELETE |
+| Razorpay success path | ✅ `components/checkout/razorpay-modal.tsx` calls `verifyPayment` (server-side signature + capture check) before `onSuccess` |
+| Browser end-to-end journeys (customer / retailer / admin) | ⚠️ **Not executed** in this audit (no running Kafka/OpenSearch stack; API contract tests cover the flows) |
+
+### 0.1 Contract impact of backend fixes on the frontend
+
+* `requestRefund()` in `lib/api/client.ts` now targets an admin/internal-only endpoint; no page calls it (documented on the method).
+* Shipment and return-status endpoints are not called by any page (tracking pages only read). No admin UI exists for them yet.
+* Retailer order status changes on unpaid orders now return `409 INVALID_STATUS_TRANSITION`; `/retailer/orders` already surfaces API errors.
+* All retailer/admin mutations now require CSRF; the shared client already sends it, so no UI change was needed.
+
+---
+
+
 ## 1. Executive Summary
 
 The BASKET frontend is built on Next.js 15 with React 19, utilizing the App Router architecture with strict TypeScript typing (`npm run type-check` passes cleanly) and Tailwind CSS v4. The application currently comprises **36 routes** across Customer Storefront, Customer Account, Retailer Operations Portal, and Super-Admin Management Portal.

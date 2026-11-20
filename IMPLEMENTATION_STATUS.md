@@ -10,6 +10,51 @@
 
 ---
 
+## 0. Stabilisation Audit Milestone — 2026-11-20
+
+**Branch:** `audit/stabilisation-and-repair` (local only) · **Base:** `feature/phase-2d-product-passport` @ `026f801` · **Phase 3:** not started (specification only, verified: no Phase 3 code in `backend/app` or `frontend/`).
+
+### 0.1 Feature quality assessment
+
+Classification: **A** production-ready & verified · **B** implemented, needs improvement · **C** partial · **D** frontend-only/mock · **E** backend-only · **F** broken · **G** missing.
+Verification: **V** verified by code review + executed tests · **PV** partially verified (tests/mocks only, or not re-audited in depth) · **UV** unverified.
+
+| Feature | Before | After | Verif. | Notes |
+| :--- | :---: | :---: | :---: | :--- |
+| Registration / login / refresh / logout | B | B | V | Argon2id, HttpOnly cookies, rotation. Rate limiter is in-memory per process. |
+| RBAC: customer / retailer / admin portals | F | B | V | Fulfilment, returns and refunds were open; fixed. |
+| CSRF | C | B | V | Now on all cookie-auth mutation routers. |
+| Addresses | A | A | PV | Tests pass; not re-audited in depth. |
+| Catalogue browse / product detail | A | A | PV | Public visibility rules verified in document builder. |
+| Search (OpenSearch path) | C | C | PV | Consumer bugs fixed; no live cluster available. |
+| Search (PostgreSQL fallback) | F | B | V | Filters/pagination/sorting/escaping fixed. |
+| Cart & guest merge | A | A | PV | Tests pass. |
+| Pricing & HMAC quotes | A | A | PV | Tests pass. |
+| Inventory reservations | F | B | V | Expired holds never released before; now scheduled. Row-locking verified. |
+| Order creation | A | A | PV | Ownership/expiry checks reviewed. |
+| Order cancellation | B | B | PV | Restock + refund path reviewed. |
+| Shipments / tracking | F | C | V | Secured + state machine; carrier integration simulated (DISC-08); no admin UI. |
+| Returns | F | B | V | Secured, state machine, honest refund status. |
+| Razorpay payment + server verification | B | B | PV | Signature + server fetch + capture verified in code/tests; live sandbox not exercised. |
+| Razorpay webhooks | A | A | V | HMAC mandatory, dedupe, leases. |
+| Refunds | F | B | V | Customer self-refund closed. |
+| Retailer listings / inventory | B | B | PV | Negative stock & below-reserved guarded. |
+| Retailer order management | F | B | V | Unpaid fulfilment blocked; cancellation restocks + refunds. |
+| Admin catalogue / retailers / deals / passport | B | B | PV | CSRF added. |
+| In-app notifications | B | B | PV | Email/SMS not implemented (G). |
+| Image / media uploads | G | G | V | URL-only (validated). No object storage (DISC-01). |
+| Kafka outbox publishing | F | C | PV | Now started + events emitted; live broker untested. |
+| Kafka consumers (inbox, DLQ) | C | C | PV | Tested with in-memory doubles. |
+| Missions, Substitutes, Intent Memory, Product Passport (Phase 2) | A | A | PV | Test-verified; not re-audited in depth. |
+| Frontend build / types / lint / unit tests | A | A | V | 36 routes build; 100/100 tests. Browser E2E not executed. |
+
+### 0.2 Phase 3 readiness
+
+Prerequisites now in place: working outbox → Kafka publishing (needed by Sale Stream, Demand Gap, Price Intelligence), catalogue/stock events (Price Intelligence, Dukaan vs Dukaan), secured back-office authorisation pattern, reliable reservation expiry (Community Buying, Dukaan vs Dukaan). Blocking before Phase 3 *production*: live Kafka/OpenSearch verification, shared rate-limit store, media storage (Handwritten List to Basket needs uploads).
+
+---
+
+
 ## 1. Executive Summary
 
 This document provides a verified, evidence-backed audit of the current BASKET repository implementation. It cross-references every subsystem against actual source code, database migrations, automated tests, Git history, and Pull Requests merged into `integration`.

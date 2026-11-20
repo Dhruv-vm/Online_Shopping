@@ -3,11 +3,29 @@
 > **Target Agent:** Claude (Principal Full-Stack Engineer & Architect)  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Workspace Path:** `/Users/dhruv/dhruv files/basket/Online_Shopping`  
-> **Current Feature Branch:** `feature/phase-2d-product-passport` (Latest Commit: `026f801`)  
+> **Current Feature Branch:** `audit/stabilisation-and-repair` (local; based on `feature/phase-2d-product-passport` @ `026f801`)  
 > **Target Base Branch:** `integration`  
 > **Handoff Date:** 2026-11-20  
 
 ---
+
+## 0. READ FIRST — Stabilisation Audit Handoff (2026-11-20)
+
+* **Current local branch:** `audit/stabilisation-and-repair` (created from `feature/phase-2d-product-passport` @ `026f801`; safety tag `pre-audit-checkpoint-026f801`). Nothing was pushed, merged or deployed.
+* **PR #31:** could not be checked live (no GitHub network access from the audit environment). As of the last local fetch, `origin/integration` is at `9adede6` (PR #30) and does **not** contain `026f801`, so PR #31 appeared unmerged.
+* **Corrections to the sections below:**
+  * Backend tests run against the PostgreSQL database in `DATABASE_URL` and **mutate inventory rows**. Use a dedicated test DB (see `BACKEND_AUDIT.md` §0.6).
+  * Frontend tests use Node's built-in runner (`npm test`), not Vitest.
+  * `alembic check` was failing before the audit; `0021` fixes the real gaps; cosmetic drift remains.
+  * The search fallback uses escaped `ILIKE`, not `tsvector`.
+  * Endpoint count: 148 operations (145 under `/api/v1`).
+* **Verified results on this branch:** backend **467 passed / 0 failed / 0 skipped** on PostgreSQL 16, ruff clean, frontend type-check / lint / 100 tests / build all green.
+* **Not verified:** live Kafka broker, live OpenSearch cluster, live Razorpay sandbox, browser E2E. Run `deploy/docker-compose.sandbox.yml` and repeat before release.
+* **Apply locally:** `cd backend && .venv/bin/alembic upgrade head` (adds two indexes; your `basket_db` is still at `0020`).
+* **New back-office rule:** shipments, return status and refunds need an admin JWT or `X-Internal-Service-Key`.
+
+---
+
 
 ## 1. Project Identity, Problem Statement & Philosophy
 
@@ -41,8 +59,8 @@ The repository has progressed through rigorous feature phases and audits. The da
 
 ### 2.2 Quality Assurance & Test Verification
 Both backend and frontend test suites are fully automated, completely isolated, and currently green:
-- **Backend Test Suite:** `448 passed` (`pytest`, SQLite async in-memory simulation, zero mutation of production records).
-- **Frontend Test Suite:** `100 passed` (`vitest`, testing React 19 App Router components).
+- **Backend Test Suite:** see §0 — runs on PostgreSQL via `DATABASE_URL` and mutates inventory rows; use a dedicated test DB. *(Pre-audit: 448 passed.)*
+- **Frontend Test Suite:** `100 passed` (Node built-in test runner via `npm test`; API-client tests).
 - **Static Analysis:** `ruff check .` (Python) and `npm run type-check` / `npm run lint` (TypeScript strict mode) pass with 0 errors.
 - **Production Build:** `npm run build` succeeds cleanly across all 36 application routes.
 
@@ -131,8 +149,8 @@ cd backend
 ../backend/.venv/bin/ruff check .
 ../backend/.venv/bin/ruff format .
 
-# Run Full Test Suite (448 tests)
-PYTHONPATH=. pytest -v
+# Run Full Test Suite against a DEDICATED test database (fixtures mutate inventory)
+DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/basket_audit_test .venv/bin/python -m pytest -q
 
 # Check Database Migration Head
 alembic current

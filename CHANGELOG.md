@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.0.1-audit] — 2026-11-20 — Stabilisation audit (local branch `audit/stabilisation-and-repair`)
+
+### Security
+- Shipment create/update and return-status endpoints now require an admin (JWT + CSRF) or the internal service key. They were previously unauthenticated.
+- `POST /api/v1/orders/{id}/refunds` is admin/internal only. Customers previously could self-refund delivered orders.
+- Return and shipment state machines; replayed restock/refund rejected with `409`.
+- CSRF enforced on orders, payments, reservations, quotes, retailer, admin and passport routers (safe methods exempt); exact localhost origin matching.
+- `X-Forwarded-For` ignored unless `TRUSTED_PROXY_COUNT > 0`.
+- Media URLs restricted to absolute http(s).
+
+### Fixed
+- Retailers can no longer fulfil unpaid orders; retailer cancellation restocks and refunds; order row locked during updates.
+- A failed refund leaves the return in `REFUND_PENDING` instead of `REFUNDED`.
+- Order is `DELIVERED` only when all its shipments are delivered; status-history `from_status` corrected.
+- OpenSearch documents versioned by DB snapshot time (stock/price updates were being dropped); delete failures retried; inactive variants excluded.
+- PostgreSQL search fallback: filters, totals, pagination and price sorts computed in SQL; LIKE wildcards escaped.
+
+### Added
+- `core/background.py`: starts the transactional outbox publisher (with Kafka reconnect backoff) and schedules reservation expiry, payment reconciliation and unpaid-order SLA escalation.
+- `core/events/catalogue_events.py`: `product.updated` outbox events for every stock and catalogue change.
+- `/ready` reports real Kafka publisher state and outbox backlog.
+- Migration `0021_audit_missing_indexes` (reversible).
+- Settings: `TRUSTED_PROXY_COUNT`, `BACKGROUND_WORKERS_ENABLED`, `OUTBOX_PUBLISHER_ENABLED`, `RESERVATION_CLEANUP_INTERVAL_SECONDS`, `PAYMENT_RECONCILE_INTERVAL_SECONDS`, `PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS`.
+- Tests: `test_audit_security_regressions.py`, `test_audit_reliability_regressions.py`, `test_audit_event_pipeline.py` (backend suite 448 → **467 passing**, 0 failed, 0 skipped).
+
+### Changed (API contract)
+- Refunds endpoint: customers now receive `403 FORBIDDEN`.
+- Shipment/return-status endpoints: anonymous → `401`, non-admin → `403`, invalid transition → `409 INVALID_RETURN_TRANSITION` / `INVALID_SHIPMENT_TRANSITION`.
+- Retailer order status on unpaid/cancelled orders → `409 INVALID_STATUS_TRANSITION`.
+- `/internal/reservations/cleanup-expired` moved to a non-CSRF internal router (same path).
+
+---
+
 ## [1.0.0-phase1] — 2026-11-19
 
 ### Added

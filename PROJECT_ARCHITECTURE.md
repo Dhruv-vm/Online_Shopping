@@ -7,6 +7,46 @@
 
 ---
 
+## 0. Runtime Architecture Changes — Stabilisation Audit 2026-11-20
+
+### 0.1 Event flow (as implemented after the audit)
+
+```mermaid
+flowchart LR
+    subgraph API["FastAPI request (one DB transaction)"]
+        A[Domain change<br/>reserve / release / confirm / restock<br/>retailer & admin catalogue edits<br/>order lifecycle] --> B[(outbox_events<br/>PENDING)]
+    end
+    B -->|SKIP LOCKED claim + lease| C[OutboxPublisherWorker<br/>core/background.py]
+    C -->|basket.events.catalogue / inventory / orders / payments| K[(Kafka)]
+    C -. Kafka down: retry with backoff, rows stay PENDING .-> B
+    K --> D[OpenSearchConsumer<br/>consumer_inbox idempotency]
+    K --> E[OrderProjectionConsumer]
+    D -->|rebuild from PostgreSQL,<br/>version = snapshot time| O[(OpenSearch<br/>basket_products_write)]
+    S[SearchService] -->|circuit breaker| O
+    S -.->|fallback, filters in SQL| P[(PostgreSQL)]
+```
+
+### 0.2 Background worker supervisor (`app/core/background.py`)
+
+Started from the FastAPI lifespan when a database is configured and `BACKGROUND_WORKERS_ENABLED=true`:
+
+* **Outbox publisher:** connects with `AioKafkaEventProducer`; if Kafka is unreachable it retries every 5 s, doubling up to 300 s. Events are never dropped.
+* **Reservation expiry** (60 s): releases `ACTIVE` reservations past TTL, one transaction each.
+* **Payment reconciliation** (120 s) and **unpaid-order SLA escalation** (300 s).
+
+All jobs are safe across multiple API replicas. For dedicated worker processes, set `BACKGROUND_WORKERS_ENABLED=false` on API pods and run a worker entry point (not yet provided; see technical debt).
+
+### 0.3 Authorisation model for back-office operations
+
+`require_admin_or_internal_service` (identity/dependencies.py) guards fulfilment (shipments), returns lifecycle and refunds: either an admin user (JWT; cookie callers must pass CSRF) or a service presenting `X-Internal-Service-Key`. Customer-facing refunds happen only through order cancellation and the returns workflow.
+
+### 0.4 Search document versioning
+
+Product documents are rebuilt from PostgreSQL on every event, so the external version is the **time the authoritative state was read** (`core/search/versioning.snapshot_version()`, epoch µs). Older snapshots lose (`409` ignored); newer ones always win regardless of which aggregate triggered them.
+
+---
+
+
 ## 1. Executive Summary & Marketplace Topology
 
 **BASKET** is an enterprise-grade, multi-retailer hyper-local e-commerce marketplace platform engineered for the Indian retail ecosystem. It bridges local neighbourhood stores (*kiranas*, specialty merchants, fashion boutiques, electronics distributors) and multi-chain retail outlets with digital consumers across four major verticals:

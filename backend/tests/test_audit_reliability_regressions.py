@@ -72,9 +72,9 @@ async def test_reservation_emits_product_outbox_event(async_client: AsyncClient)
             .scalars()
             .all()
         )
-    assert events, "reserving stock must enqueue a product.updated outbox event"
-    assert events[0].payload["reason"] == "stock_reserved"
-    assert events[0].status == "PENDING"
+    reserved = [e for e in events if e.payload.get("reason") == "stock_reserved"]
+    assert reserved, "reserving stock must enqueue a product.updated outbox event"
+    assert reserved[0].aggregate_version is not None  # required by the publisher
 
 
 @pytest.mark.asyncio

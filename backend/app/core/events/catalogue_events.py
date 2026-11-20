@@ -14,6 +14,7 @@ search index drifted from the database after every sale.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Iterable
 from typing import Any
@@ -71,6 +72,10 @@ async def enqueue_product_events(
                 payload={"product_id": str(pid), "reason": reason[:64]},
                 status=OutboxStatus.PENDING.value,
                 retry_count=0,
+                # Required by the publisher for non-order events. Epoch seconds
+                # (fits the INTEGER column); consumers version documents by DB
+                # snapshot time, so this is informational ordering only.
+                aggregate_version=int(time.time()),
             )
         )
         added += 1

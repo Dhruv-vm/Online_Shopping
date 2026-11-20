@@ -8,6 +8,98 @@
 
 ---
 
+## 0. Stabilisation Audit — 2026-11-20 (independently verified)
+
+> Branch `audit/stabilisation-and-repair` (from `feature/phase-2d-product-passport` @ `026f801`).
+> Everything below was verified against source code and executed tests. Where this
+> section conflicts with older sections of this document, **this section wins**.
+
+### 0.1 Corrections to earlier claims in this document
+
+| Earlier claim | Verified reality |
+| :--- | :--- |
+| Tests run on "SQLite async in-memory simulation, zero mutation of production records" | Tests run against whatever `DATABASE_URL` points to (PostgreSQL). The autouse fixture in `tests/conftest.py` **rewrites `store_inventory` quantities** after every test and may seed data. Always run tests against a dedicated database (see §0.6). |
+| PostgreSQL fallback uses `tsvector` full-text search | Fallback uses `ILIKE` token matching. It is now escaped and filters in SQL (§0.3). |
+| `alembic check` passes | It failed before this audit (model/migration drift). Two missing indexes fixed in `0021`; cosmetic drift remains (§0.5). |
+| "Kafka & OpenSearch operational with graceful fallbacks" | The outbox publisher was **never started** and **no catalogue/inventory events were ever produced**; search stock went stale after every sale. Fixed (§0.2). |
+| DISC-02 (no Razorpay production guard) open | Already implemented in `core/config.py` validators (live-key prefix, secrets, internal key length). Closed. |
+| Order/return/refund endpoints secured by RBAC | Shipment and return-status endpoints were **unauthenticated**; refunds were **customer-callable**. Fixed (§0.1a). |
+
+### 0.1a Security findings (all fixed, with regression tests)
+
+| ID | Severity | Finding | Fix |
+| :--- | :---: | :--- | :--- |
+| AUD-SEC-01 | Critical | `POST /orders/{id}/shipments`, `PATCH /orders/{id}/shipments/{sid}`, `PATCH /returns/{id}/status` had no authentication. Anyone could mark orders delivered, move returns to `REFUNDED` (real refund) or repeatedly to `INSPECTED` with restock (unbounded stock inflation). | `require_admin_or_internal_service` dependency (admin JWT + CSRF, or `X-Internal-Service-Key`). |
+| AUD-SEC-02 | Critical | Customers could call `POST /orders/{id}/refunds` for the full amount on any order, including delivered ones. | Endpoint is admin/internal only; customer refunds go through cancel/returns. |
+| AUD-SEC-03 | High | No state machine for returns/shipments: transitions could be skipped or replayed (double refund/restock). Failed refunds were still reported `REFUNDED`. | `RETURN_STATUS_TRANSITIONS`, `SHIPMENT_STATUS_TRANSITIONS`; failed refund ⇒ `REFUND_PENDING`; order only `DELIVERED` when all shipments delivered; history `from_status` bug fixed. |
+| AUD-SEC-04 | High | Retailers could fulfil `PENDING_PAYMENT` (unpaid) orders; retailer cancellation neither restocked nor refunded; order row not locked. | Paid-only fulfilment, `SELECT … FOR UPDATE`, restock + refund on cancel (delivery fee refunded when whole order cancelled), dispatched items cannot be cancelled. |
+| AUD-SEC-05 | Medium | `X-Forwarded-For` trusted unconditionally ⇒ login rate-limit bypass via spoofed IPs. | Honoured only when `TRUSTED_PROXY_COUNT > 0`. |
+| AUD-SEC-06 | Medium | CSRF missing on retailer/admin/passport/orders/payments/reservations/quotes mutations; origin check used substring match (`localhost.evil.com` passed). | Router-level `verify_csrf_token` (safe methods exempt), exact hostname match, localhost only outside production. Frontend already sends `X-CSRF-Token`. |
+| AUD-SEC-07 | Low | Session revocation check did not verify session owner; deleted user returned 404. | Session must belong to token subject; 401. |
+| AUD-SEC-08 | Medium | Image URLs accepted `javascript:` / `data:` / relative values. | `core/validation.validate_media_url` on admin product/category and retailer custom-product images. |
+
+### 0.2 Kafka / transactional outbox
+
+| Aspect | Status | Evidence |
+| :--- | :--- | :--- |
+| Producer config (acks, TLS/SASL, retries) | Verified by code review | `core/events/kafka.py` |
+| Outbox claim (`FOR UPDATE SKIP LOCKED`), leases, lease-expiry recovery, backoff, terminal `FAILED` | Verified (real PostgreSQL tests) | `tests/test_outbox_publisher.py` |
+| **Publisher actually running** | **Was missing → fixed** | `core/background.py` starts `OutboxPublisherWorker` from lifespan; reconnects with exponential backoff (5 s → 300 s) |
+| **Catalogue / inventory events produced** | **Was missing → fixed** | `core/events/catalogue_events.py`; emitted on reserve, release, confirm, restock, retailer/admin catalogue changes |
+| Consumer inbox idempotency, offset-after-commit, DLQ, poison messages | Verified (tests) | `tests/test_consumer.py` |
+| Duplicate delivery absorbed end-to-end | Verified (new test) | `tests/test_audit_event_pipeline.py` |
+| Kafka unavailable ⇒ events stay `PENDING` with backoff, API keeps serving | Verified (new test) | same |
+| Readiness reports real publisher state + outbox backlog | Fixed | `GET /ready` → `checks.kafka.{status,outbox_pending,outbox_failed}` |
+| **Live broker integration** | **NOT VERIFIED** | No Kafka/Docker on the audit machine. Run `deploy/docker-compose.sandbox.yml` before release. |
+
+Per-aggregate ordering: events are published in `next_attempt_at, created_at` order per batch; a retried event can be overtaken by a later one. This is safe for the product projection (documents are rebuilt from PostgreSQL and versioned by snapshot time) and for order projections (consumer enforces monotonic `aggregate_version`).
+
+### 0.3 OpenSearch
+
+| Aspect | Status |
+| :--- | :--- |
+| Index/alias management, mappings, blue/green helpers | Verified by code review + mock tests |
+| **Versioning bug** | Documents were written with the *triggering aggregate's* version and `external_gte`; inventory/listing/product counters are unrelated, so valid updates were rejected (409) and silently dropped. **Fixed:** version = DB snapshot time (`core/search/versioning.py`) in consumer, `sync_product` and `reconcile_from_database`. |
+| Delete failures | Were swallowed (stale products stayed searchable). Now re-raised for retry; 404/409 treated as done. |
+| Inactive variants | Were contributing prices/stock to documents. Now excluded. |
+| PostgreSQL fallback | Price/stock filters applied in Python after pagination (short pages, wrong `total`), price sorts ignored, `%`/`_` acted as wildcards, unpriced products matched price filters. **All fixed in SQL.** |
+| **Live cluster integration** | **NOT VERIFIED** (no cluster available). |
+
+### 0.4 Background jobs (new: `core/background.py`)
+
+| Job | Interval (setting) | Multi-replica safety |
+| :--- | :--- | :--- |
+| Outbox publisher | continuous | SKIP LOCKED + leases |
+| Expired reservation release | `RESERVATION_CLEANUP_INTERVAL_SECONDS` (60) | one txn per reservation, row locks |
+| Payment reconciliation | `PAYMENT_RECONCILE_INTERVAL_SECONDS` (120) | webhook leases |
+| 75-min unpaid SLA escalation | `PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS` (300) | existing job semantics |
+
+Disable with `BACKGROUND_WORKERS_ENABLED=false` if you run dedicated worker processes. Before this audit none of these ran, so **abandoned checkouts held `reserved_quantity` indefinitely**.
+
+### 0.5 Database
+
+* Migrations `0001→0021` apply cleanly from empty on PostgreSQL 16; `0021` verified upgrade → downgrade → upgrade.
+* `0021_audit_missing_indexes` adds `ix_inventory_reservations_idempotency_key` and `ix_webhook_created` (declared on models, never migrated).
+* Remaining `alembic check` drift is representational only: uniqueness enforced by DB constraints vs. model unique indexes (`orders.order_number`, `orders.fulfilling_capture_id`, `order_returns.return_number`, `shipments.shipment_number`, `retailers.user_id`, `uq_reservation_listing`) and 4 notification indexes named `ix_notifications_*` vs `ix_customer_notifications_*`. No behavioural impact; align models in a later cleanup.
+* Local `basket_db` was **not modified**; it is still at `0020`. Apply with `cd backend && .venv/bin/alembic upgrade head`.
+
+### 0.6 How to run the test suite safely
+
+```bash
+createdb basket_audit_test   # once
+cd backend
+DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/basket_audit_test .venv/bin/alembic upgrade head
+DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/basket_audit_test .venv/bin/python -m pytest -q
+```
+
+### 0.7 Results
+
+| Check | Before audit | After audit |
+| :--- | :--- | :--- |
+| Backend tests (PostgreSQL 16) | 448 passed | **467 passed, 0 failed, 0 skipped** (19 new audit tests) |
+| `ruff check` / `ruff format --check` | clean | clean |
+| Endpoints (route walk of the live app) | doc said 145 | **148 operations** (145 under `/api/v1` + `/health`, `/ready`, `/metrics`; 4 are `/catalogue/*` aliases) |
+
 ## 1. Executive Summary
 
 This document presents a comprehensive, module-by-module audit of the BASKET backend. The platform is implemented in Python 3.12 using FastAPI and SQLAlchemy 2.0 with asynchronous PostgreSQL drivers (`asyncpg`). The database schema is maintained across 20 linear Alembic migrations (`0001` through `0020_claim_review_history`).
