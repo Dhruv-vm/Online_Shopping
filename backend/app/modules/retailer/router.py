@@ -185,6 +185,11 @@ async def get_retailer_listing(
     response_model=RetailerListingResponse,
     summary="Update listing pricing, SKU, and status",
 )
+@router.patch(
+    "/listings/{listing_id}",
+    response_model=RetailerListingResponse,
+    summary="Update listing pricing, SKU, and status (patch)",
+)
 async def update_retailer_listing(
     listing_id: uuid.UUID,
     body: RetailerListingUpdateRequest,

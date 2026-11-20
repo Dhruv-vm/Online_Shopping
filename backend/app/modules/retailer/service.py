@@ -1,4 +1,5 @@
 import datetime
+import logging
 import re
 import uuid
 
@@ -51,6 +52,8 @@ from app.modules.retailer.schemas import (
     RetailerProfileResponse,
     RetailerProfileUpdateRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify(text: str) -> str:
@@ -367,6 +370,22 @@ class RetailerService:
                 status_code=403,
             )
 
+    async def _sync_product_search(self, product_id: uuid.UUID | None) -> None:
+        if not product_id:
+            return
+        try:
+            from app.core.config import settings
+            from app.core.search.client import get_opensearch_client
+            from app.core.search.index import IndexManager
+
+            if settings.has_opensearch:
+                os_client = get_opensearch_client(settings)
+                if await os_client.ping():
+                    idx_mgr = IndexManager(os_client)
+                    await idx_mgr.sync_product(self.session, product_id)
+        except Exception as exc:
+            logger.warning("Search sync skipped for product %s: %s", product_id, exc)
+
     async def create_listing(
         self, retailer: Retailer, req: RetailerListingCreateRequest
     ) -> RetailerListingResponse:
@@ -429,6 +448,8 @@ class RetailerService:
 
         # Load fresh relationships
         full_listing = await self._get_full_listing(listing.id, retailer.id)
+        if variant.product_id:
+            await self._sync_product_search(variant.product_id)
         return self._build_listing_response(full_listing)
 
     async def get_listing(
@@ -494,6 +515,8 @@ class RetailerService:
 
         await self.session.flush()
         await self.session.refresh(listing)
+        if listing.variant and listing.variant.product_id:
+            await self._sync_product_search(listing.variant.product_id)
         return self._build_listing_response(listing)
 
     async def delete_listing(self, listing_id: uuid.UUID, retailer: Retailer) -> None:
@@ -514,9 +537,16 @@ class RetailerService:
                 status_code=409,
             )
 
+        prod_id = (
+            listing.variant.product_id
+            if (listing.variant and listing.variant.product_id)
+            else None
+        )
         # Deactivate listing to preserve historical order snapshots
         listing.is_active = False
         await self.session.flush()
+        if prod_id:
+            await self._sync_product_search(prod_id)
 
     # ================= Retailer Inventory =================
 
@@ -702,6 +732,8 @@ class RetailerService:
 
         await self.session.flush()
         await self.session.refresh(inv)
+        if inv.listing and inv.listing.variant and inv.listing.variant.product_id:
+            await self._sync_product_search(inv.listing.variant.product_id)
         return self._build_inventory_item_response(inv)
 
     async def bulk_adjust_inventory(

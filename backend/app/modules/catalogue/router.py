@@ -24,9 +24,10 @@ router = APIRouter()
 )
 async def list_categories(
     db: Annotated[AsyncSession, Depends(get_db)],
+    top_level_only: bool = True,
 ) -> list[CategorySchema]:
     service = CatalogueService(db)
-    return await service.get_categories()
+    return await service.get_categories(top_level_only=top_level_only)
 
 
 @router.get(

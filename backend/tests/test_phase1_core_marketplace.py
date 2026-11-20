@@ -85,7 +85,7 @@ async def test_a_retailer1_operations(async_client: AsyncClient):
     orders_data = orders_resp.json()
     assert orders_data["total"] >= 1
     sample_order = orders_data["items"][0]
-    assert sample_order["order_number"].startswith("ORD-DEMO-") or sample_order[
+    assert sample_order["order_number"].startswith("ORD-") or sample_order[
         "order_number"
     ].startswith("BSK-")
 

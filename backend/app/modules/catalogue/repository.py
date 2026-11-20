@@ -27,7 +27,7 @@ class CatalogueRepository:
         self.session = session
 
     async def get_categories_with_count(
-        self, active_only: bool = True
+        self, active_only: bool = True, top_level_only: bool = True
     ) -> list[tuple[Category, int]]:
         """Return categories with active product counts."""
         query = (
@@ -44,6 +44,8 @@ class CatalogueRepository:
         )
         if active_only:
             query = query.where(Category.is_active.is_(True))
+        if top_level_only:
+            query = query.where(Category.parent_id.is_(None))
 
         result = await self.session.execute(query)
         return [(row[0], row[1]) for row in result.all()]

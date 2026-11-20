@@ -170,7 +170,7 @@ class OpenSearchClient(BaseSearchClient):
 
         timeout = httpx.Timeout(
             timeout=self._settings.OPENSEARCH_TIMEOUT_SECONDS,
-            connect=min(1.0, self._settings.OPENSEARCH_TIMEOUT_SECONDS / 2),
+            connect=min(5.0, self._settings.OPENSEARCH_TIMEOUT_SECONDS),
         )
         limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
 

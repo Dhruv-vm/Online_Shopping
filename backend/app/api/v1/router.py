@@ -22,6 +22,7 @@ api_router.include_router(address_router)
 
 # Mount Catalogue endpoints
 api_router.include_router(catalogue_router)
+api_router.include_router(catalogue_router, prefix="/catalogue")
 
 # Mount Universal Search endpoints (Phase 3E)
 api_router.include_router(search_router)
