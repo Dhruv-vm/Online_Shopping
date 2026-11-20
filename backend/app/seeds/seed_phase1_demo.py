@@ -1629,6 +1629,24 @@ async def seed_phase1_demo() -> None:
         await session.commit()
         logger.info("=== PHASE 1 DEMO SEED COMPLETED SUCCESSFULLY ===")
 
+    # Synchronize OpenSearch index with the 50 canonical demo products
+    try:
+        from app.core.config import settings
+        from app.core.search.client import get_opensearch_client
+        from app.core.search.index import IndexManager
+
+        os_client = get_opensearch_client(settings)
+        if await os_client.ping():
+            idx_mgr = IndexManager(client=os_client)
+            await idx_mgr.ensure_index_and_aliases()
+            async with session_factory() as session:
+                synced = await idx_mgr.reconcile_from_database(session)
+                logger.info("OpenSearch synchronized %d demo products.", synced)
+    except Exception as exc:
+        logger.warning(
+            "OpenSearch synchronization during seed skipped or failed: %s", exc
+        )
+
 
 if __name__ == "__main__":
     asyncio.run(seed_phase1_demo())

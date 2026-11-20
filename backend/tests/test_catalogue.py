@@ -25,7 +25,7 @@ async def test_list_retailers(async_client: AsyncClient):
     assert response.status_code == 200
     retailers = response.json()
     assert isinstance(retailers, list)
-    assert len(retailers) >= 7
+    assert len(retailers) >= 2
 
     # Validate retailer structure
     first = retailers[0]

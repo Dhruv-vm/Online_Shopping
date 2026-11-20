@@ -65,9 +65,10 @@ class RefundResponse(BaseModel):
 
 
 class ReconcilePendingRequest(BaseModel):
-    batch_size: int = Field(50, ge=1, le=500)
+    batch_size: int = Field(50, ge=1, le=2000)
     max_age_minutes: int = Field(1440, ge=1)
     pending_cutoff_minutes: int | None = Field(None, ge=0)
+    order_id: uuid.UUID | None = None
 
 
 class ReconcilePendingResponse(BaseModel):

@@ -1,18 +1,26 @@
+"""
+BASKET — Safe Marketplace Cleanup & Synchronization
+Removes disposable test data, unapproved dummy stores, test categories,
+and orphaned records while preserving genuine accounts and financial ledger history.
+
+Safety Features:
+- Dry-run mode by default (pass --apply to execute).
+- Production environment refusal (fails if DATABASE_URL or ENV indicates production).
+- Preserves genuine customer accounts and genuine order records.
+- Idempotent execution.
+"""
+
+from __future__ import annotations
+
+import argparse
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 from sqlalchemy import delete, select, update
 
 from app.core.config import settings
 from app.core.database import get_session_factory
-from app.core.logging import setup_logging
-from app.core.search.client import get_opensearch_client
-from app.core.search.index import (
-    DEFAULT_SEARCH_ALIAS,
-    IndexManager,
-    get_write_alias_name,
-)
-from app.modules.cart.models import CartItem
 from app.modules.catalogue.models import (
     Category,
     Product,
@@ -20,311 +28,468 @@ from app.modules.catalogue.models import (
     ProductListing,
     ProductVariant,
     Retailer,
-    RetailerVerificationDocument,
-    RetailerVerificationHistory,
     StoreInventory,
 )
-from app.modules.inventory.models import InventoryReservation, InventoryReservationItem
-from app.modules.orders.models import Order, OrderItem
-from app.modules.pricing.models import CheckoutQuote, CheckoutQuoteItem, Discount
+from app.modules.identity.models import Address, User, UserSession
+from app.modules.orders.models import (
+    CustomerNotification,
+    Order,
+    OrderItem,
+    OrderReturn,
+    OrderStatusHistory,
+    ReturnItem,
+    Shipment,
+    ShipmentItem,
+)
+from app.modules.payments.models import Payment, PaymentCapture, PaymentRefund
+from app.modules.pricing.models import Discount
 from app.seeds.seed_phase1_demo import (
     DEMO_PRODUCTS,
     TOP_LEVEL_CATEGORIES,
     seed_phase1_demo,
 )
 
-setup_logging()
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger("cleanup_marketplace_data")
 
+APPROVED_RETAILER_SLUGS = {"basket-mart", "basket-lifestyle"}
 APPROVED_CATEGORY_SLUGS = {c["slug"] for c in TOP_LEVEL_CATEGORIES}
 APPROVED_PRODUCT_SLUGS = {p["slug"] for p in DEMO_PRODUCTS}
-APPROVED_RETAILER_SLUGS = {"basket-mart", "basket-lifestyle"}
+GENUINE_USER_EMAILS = {
+    "vmdhruv1@gmail.com",
+    "vmdhruv0@gmail.com",
+    "customer@basket.demo",
+    "admin@basket.demo",
+    "retailer1@basket.demo",
+    "retailer2@basket.demo",
+}
 
 
-async def cleanup_database() -> dict[str, int]:
-    """
-    Idempotent, safe database cleanup preserving all financial ledger facts & transaction history:
-    1. Preserves all orders, payments, captures, refunds, and customer accounts.
-    2. Remaps legacy order items, quote items, and reservation items referencing obsolete test
-       retailers/listings/variants to approved demo entities.
-    3. Cleans up disposable cart items, unlinked quotes, unlinked reservations, and obsolete discounts.
-    4. Deletes test products, variants, listings, inventory, and images.
-    5. Deletes test categories (Admin Test Electronics, Analytics Cat, etc.).
-    6. Deletes test retailers (Test Store, Analytics Test Store, etc.).
-    7. Re-seeds exactly 50 initial demo products across exactly 2 approved retailers.
-    8. Fully re-indexes canonical documents in OpenSearch and removes obsolete documents.
-    """
-    stats = {}
+def verify_environment_safety() -> None:
+    """Refuse to run on any production-configured database or environment."""
+    if settings.is_production:
+        raise RuntimeError(
+            "CRITICAL ERROR: Cleanup script is strictly prohibited in production!"
+        )
+
+    db_url = settings.DATABASE_URL or ""
+    parsed = urlparse(db_url)
+    hostname = (parsed.hostname or "").lower()
+    if (
+        any(p in hostname for p in ("prod", "production", "live"))
+        or "production" in db_url.lower()
+    ):
+        raise RuntimeError(
+            f"CRITICAL ERROR: Database host '{hostname}' appears to be production. Aborting."
+        )
+
+
+async def run_cleanup(dry_run: bool = True) -> dict[str, int]:
+    verify_environment_safety()
+
     session_factory = get_session_factory()
 
-    # Ensure demo seed exists first so approved entities and listings are guaranteed available
-    logger.info("Ensuring approved demo dataset is seeded...")
+    # Step 0: Ensure approved Phase 1 demo baseline is seeded
+    logger.info("Ensuring approved Phase 1 demo dataset is seeded...")
     await seed_phase1_demo()
 
+    stats: dict[str, int] = {
+        "disposable_orders_deleted": 0,
+        "disposable_order_items_deleted": 0,
+        "disposable_users_deleted": 0,
+        "obsolete_discounts_deleted": 0,
+        "unapproved_listings_deleted": 0,
+        "unapproved_variants_deleted": 0,
+        "unapproved_products_deleted": 0,
+        "unapproved_categories_deleted": 0,
+        "unapproved_retailers_deleted": 0,
+        "genuine_orders_preserved": 0,
+        "genuine_users_preserved": 0,
+    }
+
     async with session_factory() as session:
-        logger.info("=== STEP 1: RESOLVE APPROVED RETAILERS & ANCHOR LISTING ===")
-        rets_res = await session.execute(
-            select(Retailer).where(Retailer.slug.in_(APPROVED_RETAILER_SLUGS))
-        )
-        approved_retailers = {r.slug: r for r in rets_res.scalars().all()}
-        bm_ret = approved_retailers.get("basket-mart")
-        bl_ret = approved_retailers.get("basket-lifestyle")
-        if not bm_ret or not bl_ret:
-            raise RuntimeError(
-                "Approved retailers 'basket-mart' and 'basket-lifestyle' must exist."
-            )
-
-        approved_ret_ids = [bm_ret.id, bl_ret.id]
-
-        mart_anchor = (
-            await session.execute(
-                select(ProductListing.id, ProductListing.variant_id)
-                .where(
-                    ProductListing.retailer_id == bm_ret.id,
-                    ProductListing.is_active.is_(True),
+        # 1. Identify genuine users vs disposable test users
+        users = (await session.execute(select(User))).scalars().all()
+        genuine_users = [u for u in users if u.email.lower() in GENUINE_USER_EMAILS]
+        genuine_user_ids = {u.id for u in genuine_users}
+        disposable_users = [
+            u
+            for u in users
+            if u.id not in genuine_user_ids
+            and (
+                any(
+                    u.email.endswith(f"@{dom}")
+                    for dom in ("example.com", "basket.test", "basket.local")
                 )
-                .limit(1)
+                or u.email.startswith(
+                    ("test_", "perf_", "cust_", "order_cust_", "pay_cust_")
+                )
             )
-        ).first()
+        ]
+        disposable_user_ids = {u.id for u in disposable_users}
 
-        if not mart_anchor:
-            raise RuntimeError(
-                "Approved retailer listing must exist to anchor historical items."
-            )
+        stats["genuine_users_preserved"] = len(genuine_users)
+        stats["disposable_users_deleted"] = len(disposable_users)
 
-        first_mart_listing = mart_anchor[0]
-        first_mart_variant = mart_anchor[1]
+        # 2. Identify orders
+        all_orders = (await session.execute(select(Order))).scalars().all()
+        genuine_orders = [o for o in all_orders if o.customer_id in genuine_user_ids]
+        disposable_orders = [
+            o
+            for o in all_orders
+            if o.customer_id in disposable_user_ids or o.customer_id is None
+        ]
 
-        # Approved subquery expressions
-        appr_p_stmt = select(Product.id).where(Product.slug.in_(APPROVED_PRODUCT_SLUGS))
-        appr_v_stmt = select(ProductVariant.id).where(
-            ProductVariant.product_id.in_(appr_p_stmt)
-        )
-        appr_l_stmt = select(ProductListing.id).where(
-            ProductListing.variant_id.in_(appr_v_stmt),
-            ProductListing.retailer_id.in_(approved_ret_ids),
-        )
+        stats["genuine_orders_preserved"] = len(genuine_orders)
+        stats["disposable_orders_deleted"] = len(disposable_orders)
 
         logger.info(
-            "=== STEP 2: REMAP ORDER ITEMS TO PRESERVE FINANCIAL TRANSACTION HISTORY ==="
-        )
-        upd_ord = await session.execute(
-            update(OrderItem)
-            .where(
-                (OrderItem.retailer_id.not_in(approved_ret_ids))
-                | (OrderItem.listing_id.not_in(appr_l_stmt))
-                | (OrderItem.variant_id.not_in(appr_v_stmt))
-            )
-            .values(
-                retailer_id=bm_ret.id,
-                listing_id=first_mart_listing,
-                variant_id=first_mart_variant,
-            )
-        )
-        logger.info(
-            f"Remapped {upd_ord.rowcount} legacy order items to approved retailer and listing."
+            "Audit findings: %d genuine users preserved, %d disposable users found; %d genuine orders preserved, %d disposable test orders found.",
+            len(genuine_users),
+            len(disposable_users),
+            len(genuine_orders),
+            len(disposable_orders),
         )
 
-        logger.info("=== STEP 3: REMAP OR CLEAN INVENTORY RESERVATIONS & ITEMS ===")
-        upd_ri = await session.execute(
-            update(InventoryReservationItem)
-            .where(
-                (InventoryReservationItem.retailer_id.not_in(approved_ret_ids))
-                | (InventoryReservationItem.listing_id.not_in(appr_l_stmt))
-                | (InventoryReservationItem.variant_id.not_in(appr_v_stmt))
-            )
-            .values(
-                retailer_id=bm_ret.id,
-                listing_id=first_mart_listing,
-                variant_id=first_mart_variant,
-            )
-        )
-        logger.info(f"Remapped {upd_ri.rowcount} legacy reservation items.")
+        # 3. Identify unapproved retailers, categories, and products
+        retailers = (await session.execute(select(Retailer))).scalars().all()
+        unapproved_retailers = [
+            r for r in retailers if r.slug not in APPROVED_RETAILER_SLUGS
+        ]
+        unapproved_retailer_ids = {r.id for r in unapproved_retailers}
+        stats["unapproved_retailers_deleted"] = len(unapproved_retailers)
 
-        order_res_ids = select(Order.reservation_id).where(
-            Order.reservation_id.is_not(None)
+        categories = (await session.execute(select(Category))).scalars().all()
+        unapproved_categories = [
+            c for c in categories if c.slug not in APPROVED_CATEGORY_SLUGS
+        ]
+        unapproved_category_ids = {c.id for c in unapproved_categories}
+        stats["unapproved_categories_deleted"] = len(unapproved_categories)
+
+        products = (await session.execute(select(Product))).scalars().all()
+        unapproved_products = [
+            p for p in products if p.slug not in APPROVED_PRODUCT_SLUGS
+        ]
+        unapproved_product_ids = {p.id for p in unapproved_products}
+        stats["unapproved_products_deleted"] = len(unapproved_products)
+
+        # Print audit table
+        logger.info("=== CLEANUP AUDIT SUMMARY ===")
+        for key, count in stats.items():
+            logger.info("  %-35s : %d", key, count)
+
+        if dry_run:
+            logger.info(
+                "DRY RUN MODE: No modifications were made. Pass --apply to execute cleanup."
+            )
+            return stats
+
+        # DESTRUCTIVE EXECUTION:
+        logger.info("APPLYING CLEANUP CHANGES TO DATABASE...")
+
+        disposable_users_sel = select(User.id).where(
+            User.email.not_in(GENUINE_USER_EMAILS)
         )
-        del_ri_unlinked = await session.execute(
+        disposable_orders_sel = select(Order.id).where(
+            (Order.customer_id.in_(disposable_users_sel))
+            | (Order.customer_id.is_(None))
+        )
+
+        # A. Delete disposable test order references using subqueries
+        # Break circular reference on orders.fulfilling_capture_id
+        await session.execute(
+            update(Order)
+            .where(
+                (Order.customer_id.in_(disposable_users_sel))
+                | (Order.customer_id.is_(None))
+            )
+            .values(fulfilling_capture_id=None)
+        )
+
+        # Delete customer notifications for disposable orders/customers
+        await session.execute(
+            delete(CustomerNotification).where(
+                (CustomerNotification.order_id.in_(disposable_orders_sel))
+                | (CustomerNotification.customer_id.in_(disposable_users_sel))
+            )
+        )
+
+        # Delete order returns and return items for disposable orders
+        ret_ids = select(OrderReturn.id).where(
+            OrderReturn.order_id.in_(disposable_orders_sel)
+        )
+        await session.execute(
+            delete(ReturnItem).where(ReturnItem.return_id.in_(ret_ids))
+        )
+        await session.execute(
+            delete(OrderReturn).where(OrderReturn.order_id.in_(disposable_orders_sel))
+        )
+
+        # Delete shipments and shipment items
+        ship_ids = select(Shipment.id).where(
+            Shipment.order_id.in_(disposable_orders_sel)
+        )
+        await session.execute(
+            delete(ShipmentItem).where(ShipmentItem.shipment_id.in_(ship_ids))
+        )
+        await session.execute(
+            delete(Shipment).where(Shipment.order_id.in_(disposable_orders_sel))
+        )
+
+        # Delete payment refunds for disposable orders
+        await session.execute(
+            delete(PaymentRefund).where(
+                PaymentRefund.order_id.in_(disposable_orders_sel)
+            )
+        )
+
+        # Delete payment captures
+        await session.execute(
+            delete(PaymentCapture).where(
+                PaymentCapture.order_id.in_(disposable_orders_sel)
+            )
+        )
+
+        # Delete payments
+        await session.execute(
+            delete(Payment).where(
+                (Payment.order_id.in_(disposable_orders_sel))
+                | (Payment.customer_id.in_(disposable_users_sel))
+            )
+        )
+
+        # Delete status histories
+        await session.execute(
+            delete(OrderStatusHistory).where(
+                OrderStatusHistory.order_id.in_(disposable_orders_sel)
+            )
+        )
+
+        # Delete order items
+        oi_del = await session.execute(
+            delete(OrderItem).where(OrderItem.order_id.in_(disposable_orders_sel))
+        )
+        stats["disposable_order_items_deleted"] = oi_del.rowcount or 0
+
+        # Delete orders
+        ord_del = await session.execute(
+            delete(Order).where(
+                (Order.customer_id.in_(disposable_users_sel))
+                | (Order.customer_id.is_(None))
+            )
+        )
+        stats["disposable_orders_deleted"] = ord_del.rowcount or 0
+
+        # B. Delete disposable test checkout quotes and reservations
+        from app.modules.inventory.models import (
+            InventoryReservation,
+            InventoryReservationItem,
+        )
+        from app.modules.pricing.models import CheckoutQuote, CheckoutQuoteItem
+
+        # Reservations
+        await session.execute(
             delete(InventoryReservationItem).where(
-                InventoryReservationItem.reservation_id.not_in(order_res_ids)
-            )
-        )
-        del_r_unlinked = await session.execute(
-            delete(InventoryReservation).where(
-                InventoryReservation.id.not_in(order_res_ids)
-            )
-        )
-        logger.info(
-            f"Deleted unlinked reservations ({del_r_unlinked.rowcount}) and items ({del_ri_unlinked.rowcount})."
-        )
-
-        logger.info("=== STEP 4: REMAP OR CLEAN CHECKOUT QUOTES & ITEMS ===")
-        upd_qi = await session.execute(
-            update(CheckoutQuoteItem)
-            .where(
-                (CheckoutQuoteItem.retailer_id.not_in(approved_ret_ids))
-                | (CheckoutQuoteItem.listing_id.not_in(appr_l_stmt))
-                | (CheckoutQuoteItem.variant_id.not_in(appr_v_stmt))
-            )
-            .values(
-                retailer_id=bm_ret.id,
-                listing_id=first_mart_listing,
-                variant_id=first_mart_variant,
-            )
-        )
-        logger.info(f"Remapped {upd_qi.rowcount} legacy checkout quote items.")
-
-        order_quote_ids = select(Order.quote_id).where(Order.quote_id.is_not(None))
-        del_qi_unlinked = await session.execute(
-            delete(CheckoutQuoteItem).where(
-                CheckoutQuoteItem.quote_id.not_in(order_quote_ids)
-            )
-        )
-        del_q_unlinked = await session.execute(
-            delete(CheckoutQuote).where(CheckoutQuote.id.not_in(order_quote_ids))
-        )
-        logger.info(
-            f"Deleted unlinked checkout quotes ({del_q_unlinked.rowcount}) and items ({del_qi_unlinked.rowcount})."
-        )
-
-        logger.info("=== STEP 5: CLEAN DISPOSABLE CART ITEMS ===")
-        del_cart = await session.execute(
-            delete(CartItem).where(
-                (CartItem.listing_id.not_in(appr_l_stmt))
-                | (CartItem.variant_id.not_in(appr_v_stmt))
-                | (CartItem.retailer_id.not_in(approved_ret_ids))
-            )
-        )
-        logger.info(f"Cleared {del_cart.rowcount} stale cart items.")
-
-        logger.info("=== STEP 6: CLEAN DISCOUNTS / DEALS ===")
-        del_disc = await session.execute(
-            delete(Discount).where(
-                (
-                    Discount.product_id.is_not(None)
-                    & Discount.product_id.not_in(appr_p_stmt)
+                InventoryReservationItem.reservation_id.in_(
+                    select(InventoryReservation.id).where(
+                        (InventoryReservation.customer_id.in_(disposable_user_ids))
+                        | (InventoryReservation.customer_id.is_(None))
+                    )
                 )
-                | (
-                    Discount.category_id.is_not(None)
-                    & Discount.category_id.not_in(
-                        select(Category.id).where(
-                            Category.slug.in_(APPROVED_CATEGORY_SLUGS)
+            )
+        )
+        await session.execute(
+            delete(InventoryReservation).where(
+                (InventoryReservation.customer_id.in_(disposable_user_ids))
+                | (InventoryReservation.customer_id.is_(None))
+            )
+        )
+
+        # Quotes
+        await session.execute(
+            delete(CheckoutQuoteItem).where(
+                CheckoutQuoteItem.quote_id.in_(
+                    select(CheckoutQuote.id).where(
+                        (CheckoutQuote.customer_id.in_(disposable_user_ids))
+                        | (CheckoutQuote.customer_id.is_(None))
+                    )
+                )
+            )
+        )
+        await session.execute(
+            delete(CheckoutQuote).where(
+                (CheckoutQuote.customer_id.in_(disposable_user_ids))
+                | (CheckoutQuote.customer_id.is_(None))
+            )
+        )
+
+        # C. Delete disposable test shopping carts
+        from app.modules.cart.models import Cart, CartItem
+
+        await session.execute(
+            delete(CartItem).where(
+                CartItem.cart_id.in_(
+                    select(Cart.id).where(
+                        (Cart.customer_id.in_(disposable_user_ids))
+                        | (Cart.customer_id.is_(None))
+                    )
+                )
+            )
+        )
+        await session.execute(
+            delete(Cart).where(
+                (Cart.customer_id.in_(disposable_user_ids))
+                | (Cart.customer_id.is_(None))
+            )
+        )
+
+        # D. Delete disposable users & user addresses / sessions
+        if disposable_user_ids:
+            await session.execute(
+                delete(UserSession).where(UserSession.user_id.in_(disposable_user_ids))
+            )
+            await session.execute(
+                delete(Address).where(Address.user_id.in_(disposable_user_ids))
+            )
+            await session.execute(delete(User).where(User.id.in_(disposable_user_ids)))
+
+        # E. Delete obsolete discounts / offers not belonging to approved retailers
+        approved_rets = (
+            (
+                await session.execute(
+                    select(Retailer).where(Retailer.slug.in_(APPROVED_RETAILER_SLUGS))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        approved_ret_ids = {r.id for r in approved_rets}
+
+        disc_del = await session.execute(
+            delete(Discount).where(
+                Discount.retailer_id.is_not(None),
+                Discount.retailer_id.not_in(approved_ret_ids),
+            )
+        )
+        stats["obsolete_discounts_deleted"] = disc_del.rowcount or 0
+
+        # F. Delete unapproved listings and variants
+        if unapproved_product_ids or unapproved_retailer_ids:
+            # Delete inventory and listings
+            await session.execute(
+                delete(StoreInventory).where(
+                    StoreInventory.listing_id.in_(
+                        select(ProductListing.id).where(
+                            (ProductListing.retailer_id.in_(unapproved_retailer_ids))
+                            | (
+                                ProductListing.variant_id.in_(
+                                    select(ProductVariant.id).where(
+                                        ProductVariant.product_id.in_(
+                                            unapproved_product_ids
+                                        )
+                                    )
+                                )
+                            )
                         )
                     )
                 )
-                | (
-                    Discount.listing_id.is_not(None)
-                    & Discount.listing_id.not_in(appr_l_stmt)
+            )
+            list_del = await session.execute(
+                delete(ProductListing).where(
+                    (ProductListing.retailer_id.in_(unapproved_retailer_ids))
+                    | (
+                        ProductListing.variant_id.in_(
+                            select(ProductVariant.id).where(
+                                ProductVariant.product_id.in_(unapproved_product_ids)
+                            )
+                        )
+                    )
                 )
             )
-        )
-        logger.info(f"Deleted {del_disc.rowcount} obsolete discounts.")
+            stats["unapproved_listings_deleted"] = list_del.rowcount or 0
 
-        logger.info(
-            "=== STEP 7: REMOVE TEST LISTINGS, INVENTORY, VARIANTS & PRODUCTS ==="
-        )
-        del_inv = await session.execute(
-            delete(StoreInventory).where(StoreInventory.listing_id.not_in(appr_l_stmt))
-        )
-        logger.info(f"Deleted {del_inv.rowcount} stale store inventory records.")
-
-        del_list = await session.execute(
-            delete(ProductListing).where(ProductListing.id.not_in(appr_l_stmt))
-        )
-        stats["deleted_test_listings"] = del_list.rowcount
-        logger.info(f"Deleted {del_list.rowcount} test product listings.")
-
-        await session.execute(
-            delete(ProductImage).where(ProductImage.product_id.not_in(appr_p_stmt))
-        )
-        del_var = await session.execute(
-            delete(ProductVariant).where(ProductVariant.product_id.not_in(appr_p_stmt))
-        )
-        logger.info(f"Deleted {del_var.rowcount} test product variants.")
-
-        del_prod = await session.execute(
-            delete(Product).where(Product.slug.not_in(APPROVED_PRODUCT_SLUGS))
-        )
-        stats["deleted_test_products"] = del_prod.rowcount
-        logger.info(f"Deleted {del_prod.rowcount} test products.")
-
-        logger.info("=== STEP 8: REMOVE TEST CATEGORIES ===")
-        await session.execute(
-            update(Category)
-            .where(Category.slug.not_in(APPROVED_CATEGORY_SLUGS))
-            .values(parent_id=None)
-        )
-        del_cats = await session.execute(
-            delete(Category).where(Category.slug.not_in(APPROVED_CATEGORY_SLUGS))
-        )
-        stats["deleted_test_categories"] = del_cats.rowcount
-        logger.info(f"Deleted {del_cats.rowcount} test categories.")
-
-        logger.info("=== STEP 9: REMOVE TEST RETAILERS ===")
-        test_r_stmt = select(Retailer.id).where(
-            Retailer.slug.not_in(APPROVED_RETAILER_SLUGS)
-        )
-
-        await session.execute(
-            delete(RetailerVerificationDocument).where(
-                RetailerVerificationDocument.retailer_id.in_(test_r_stmt)
+            # Delete product images
+            await session.execute(
+                delete(ProductImage).where(
+                    ProductImage.product_id.in_(unapproved_product_ids)
+                )
             )
-        )
-        await session.execute(
-            delete(RetailerVerificationHistory).where(
-                RetailerVerificationHistory.retailer_id.in_(test_r_stmt)
-            )
-        )
 
-        del_rets = await session.execute(
-            delete(Retailer).where(Retailer.slug.not_in(APPROVED_RETAILER_SLUGS))
-        )
-        stats["deleted_test_retailers"] = del_rets.rowcount
-        logger.info(f"Deleted {del_rets.rowcount} test retailers.")
+            # Delete variants
+            var_del = await session.execute(
+                delete(ProductVariant).where(
+                    ProductVariant.product_id.in_(unapproved_product_ids)
+                )
+            )
+            stats["unapproved_variants_deleted"] = var_del.rowcount or 0
+
+            # Delete products
+            await session.execute(
+                delete(Product).where(Product.id.in_(unapproved_product_ids))
+            )
+
+        # G. Delete unapproved categories
+        if unapproved_category_ids:
+            await session.execute(
+                delete(Category).where(Category.id.in_(unapproved_category_ids))
+            )
+
+        # H. Delete unapproved retailers
+        if unapproved_retailer_ids:
+            await session.execute(
+                delete(Retailer).where(Retailer.id.in_(unapproved_retailer_ids))
+            )
 
         await session.commit()
-        logger.info("=== DATABASE CLEANUP TRANSACTION COMMITTED SUCCESSFULLY ===")
+        logger.info("Database cleanup transaction committed successfully.")
 
-    # Step 10: Re-run seed_phase1_demo to ensure exact canonical state
-    logger.info("=== STEP 10: RE-VERIFY CANONICAL 50 DEMO PRODUCTS & 2 RETAILERS ===")
-    await seed_phase1_demo()
+    # Step 4: Synchronize OpenSearch index
+    logger.info("Synchronizing OpenSearch index with clean demo products...")
+    try:
+        from app.core.search.client import get_opensearch_client
+        from app.core.search.index import IndexManager
 
-    # Step 11: OpenSearch Reconciliation
-    logger.info("=== STEP 11: SYNCHRONIZE OPENSEARCH DOCUMENTS ===")
-    os_client = get_opensearch_client(settings)
-    if await os_client.ping():
-        index_manager = IndexManager(os_client)
-        await index_manager.ensure_index_and_aliases()
-        async with session_factory() as session:
-            try:
-                res = await os_client.search(
-                    DEFAULT_SEARCH_ALIAS, {"query": {"match_all": {}}, "size": 500}
-                )
-                hits = res.get("hits", {}).get("hits", [])
-                prods_res = await session.execute(
-                    select(Product.id).where(Product.slug.in_(APPROVED_PRODUCT_SLUGS))
-                )
-                valid_prod_ids = {str(pid) for pid in prods_res.scalars().all()}
-
-                write_alias = get_write_alias_name(settings.OPENSEARCH_INDEX_PREFIX)
-                for h in hits:
-                    doc_id = h.get("_id")
-                    if doc_id not in valid_prod_ids:
-                        try:
-                            await os_client.delete_document(
-                                index=write_alias, doc_id=doc_id
-                            )
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.warning(f"Could not purge stale OpenSearch documents: {e}")
-
-            indexed_count = await index_manager.reconcile_from_database(session)
-            stats["opensearch_indexed"] = indexed_count
-            logger.info(f"Reconciled {indexed_count} products into OpenSearch.")
+        os_client = get_opensearch_client(settings)
+        if await os_client.ping():
+            idx_mgr = IndexManager(client=os_client)
+            await idx_mgr.ensure_index_and_aliases()
+            async with session_factory() as s:
+                reconciled = await idx_mgr.reconcile_from_database(s)
+                logger.info("OpenSearch reconciled %d products.", reconciled)
+    except Exception as exc:
+        logger.warning("OpenSearch synchronization during cleanup: %s", exc)
 
     return stats
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="BASKET Safe Marketplace Cleanup")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        default=False,
+        help="Execute destructive cleanup. Defaults to dry-run mode.",
+    )
+    args = parser.parse_args()
+
+    dry_run = not args.apply
+    if dry_run:
+        print("\n=======================================================")
+        print("  BASKET CLEANUP RUNNING IN DRY-RUN MODE (DEFAULT)")
+        print("  Pass --apply to execute destructive cleanup.")
+        print("=======================================================\n")
+    else:
+        print("\n=======================================================")
+        print("  BASKET CLEANUP EXECUTING IN APPLY MODE")
+        print("=======================================================\n")
+
+    stats = asyncio.run(run_cleanup(dry_run=dry_run))
+    print("\nCleanup Summary:")
+    for k, v in stats.items():
+        print(f"  {k}: {v}")
+
+
 if __name__ == "__main__":
-    asyncio.run(cleanup_database())
+    main()

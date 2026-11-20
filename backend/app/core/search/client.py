@@ -420,6 +420,15 @@ class MockOpenSearchClient(BaseSearchClient):
         self.simulated_exception: Exception | None = None
         self._closed = False
 
+        # Pre-wire default index and aliases so mock operates out of the box in test/CI
+        default_idx = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_v1"
+        self._indices[default_idx] = {}
+        self._documents[default_idx] = {}
+        search_alias = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_search"
+        write_alias = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_write"
+        self._aliases[search_alias] = {default_idx}
+        self._aliases[write_alias] = {default_idx}
+
     def _resolve_index_names(self, target: str) -> list[str]:
         if target in self._aliases:
             return list(self._aliases[target])
@@ -663,40 +672,83 @@ class MockOpenSearchClient(BaseSearchClient):
 
         if "multi_match" in q:
             mm = q["multi_match"]
-            query_str = str(mm.get("query", "")).lower()
+            query_str = str(mm.get("query", "")).lower().strip()
             fields = mm.get("fields", ["name", "description", "brand"])
-            found = False
+            clean_fields: list[str] = []
             for f in fields:
-                f_clean = f.split("^")[0]
-                val = str(src.get(f_clean, "")).lower()
+                base_f = f.split("^")[0].split(".")[0]
+                if base_f not in clean_fields:
+                    clean_fields.append(base_f)
+
+            tokens = [t for t in query_str.split() if t]
+            if not tokens:
+                return True
+
+            # 1. Full phrase match across any clean field
+            for f in clean_fields:
+                val = str(src.get(f, "")).lower()
                 if query_str in val:
-                    found = True
+                    return True
+
+            # 2. Token match: check if every token appears in at least one field
+            all_found = True
+            for t in tokens:
+                found = any(t in str(src.get(f, "")).lower() for f in clean_fields)
+                if not found:
+                    all_found = False
                     break
-            return found
+            return all_found
 
         if "match" in q:
             for field, val in q["match"].items():
+                base_f = field.split(".")[0]
                 expected = str(val).lower()
-                actual = str(src.get(field, "")).lower()
+                actual = str(src.get(base_f, "")).lower()
                 if expected not in actual:
                     return False
             return True
 
         if "term" in q:
             for field, val in q["term"].items():
-                actual = src.get(field)
                 if isinstance(val, dict) and "value" in val:
                     val = val["value"]
-                if actual != val:
-                    # check string equivalence
-                    if str(actual).lower() != str(val).lower():
+                base_f = field.split(".")[0]
+                expected = str(val).lower()
+                # Handle nested array of dicts e.g. retailers.retailer_id
+                if "." in field and base_f in ("retailers", "variants"):
+                    sub_f = field.split(".", 1)[1]
+                    nested = src.get(base_f, [])
+                    if isinstance(nested, list):
+                        match_any = False
+                        for item in nested:
+                            if (
+                                isinstance(item, dict)
+                                and str(item.get(sub_f, "")).lower() == expected
+                            ):
+                                match_any = True
+                                break
+                        if not match_any:
+                            return False
+                    else:
+                        return False
+                else:
+                    actual = src.get(base_f)
+                    if isinstance(actual, list):
+                        if expected not in [str(x).lower() for x in actual]:
+                            return False
+                    elif str(actual).lower() != expected:
                         return False
             return True
 
         if "terms" in q:
             for field, vals in q["terms"].items():
-                actual = src.get(field)
-                if actual not in vals:
+                base_f = field.split(".")[0]
+                expected_list = [str(v).lower() for v in vals]
+                actual = src.get(base_f)
+                if isinstance(actual, list):
+                    if not any(str(x).lower() in expected_list for x in actual):
+                        return False
+                elif str(actual).lower() not in expected_list:
                     return False
             return True
 
@@ -808,6 +860,7 @@ class MockOpenSearchClient(BaseSearchClient):
 
 
 _search_client_instance: BaseSearchClient | None = None
+_mock_search_client_instance: BaseSearchClient | None = None
 
 
 def get_opensearch_client(
@@ -819,7 +872,7 @@ def get_opensearch_client(
     Factory returning OpenSearchClient (if configured) or MockOpenSearchClient.
     Safe for local development, CI, and test execution.
     """
-    global _search_client_instance
+    global _search_client_instance, _mock_search_client_instance
     active_settings = config_settings or settings
 
     if force_mock or not active_settings.has_opensearch:
@@ -827,8 +880,17 @@ def get_opensearch_client(
             raise RuntimeError(
                 "MockOpenSearchClient is strictly forbidden in production."
             )
-        return MockOpenSearchClient(active_settings)
+        if _mock_search_client_instance is None or force_mock:
+            _mock_search_client_instance = MockOpenSearchClient(active_settings)
+        return _mock_search_client_instance
 
     if _search_client_instance is None:
         _search_client_instance = OpenSearchClient(active_settings)
     return _search_client_instance
+
+
+def reset_search_clients() -> None:
+    """Reset cached search client singletons (primarily for unit testing isolation)."""
+    global _search_client_instance, _mock_search_client_instance
+    _search_client_instance = None
+    _mock_search_client_instance = None

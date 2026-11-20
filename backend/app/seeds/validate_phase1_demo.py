@@ -36,7 +36,10 @@ async def validate():
         top_cats = (
             (
                 await session.execute(
-                    select(Category).where(Category.parent_id.is_(None))
+                    select(Category).where(
+                        Category.parent_id.is_(None),
+                        Category.is_active.is_(True),
+                    )
                 )
             )
             .scalars()
@@ -149,7 +152,12 @@ async def validate():
         renderable_count = 0
 
         sem = asyncio.Semaphore(10)
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=True, headers=headers
+        ) as client:
 
             async def probe_image(url: str):
                 nonlocal valid_format_count, reachable_count, renderable_count
@@ -168,11 +176,7 @@ async def validate():
 
                 async with sem:
                     try:
-                        resp = await client.head(url)
-                        if resp.status_code == 405:
-                            resp = await client.get(
-                                url, headers={"Range": "bytes=0-1024"}
-                            )
+                        resp = await client.get(url, headers={"Range": "bytes=0-1024"})
                         if 200 <= resp.status_code < 400:
                             is_reachable = True
                             ct = resp.headers.get("content-type", "").lower()
