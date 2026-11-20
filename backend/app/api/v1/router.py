@@ -10,6 +10,9 @@ from app.modules.community.router import router as community_router
 from app.modules.demand.router import admin_router as demand_admin_router
 from app.modules.demand.router import retailer_router as demand_retailer_router
 from app.modules.demand.router import router as demand_router
+from app.modules.exchange.router import admin_router as exchange_admin_router
+from app.modules.exchange.router import retailer_router as exchange_retailer_router
+from app.modules.exchange.router import router as exchange_router
 from app.modules.i18n.router import admin_router as i18n_admin_router
 from app.modules.i18n.router import router as i18n_router
 from app.modules.identity.router import address_router, auth_router, user_router
@@ -98,6 +101,9 @@ api_router.include_router(demand_admin_router)
 api_router.include_router(community_router)
 api_router.include_router(community_retailer_router)
 api_router.include_router(community_admin_router)
+api_router.include_router(exchange_router)
+api_router.include_router(exchange_retailer_router)
+api_router.include_router(exchange_admin_router)
 
 
 @api_router.get("/info", tags=["System"])
