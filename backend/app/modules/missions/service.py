@@ -61,6 +61,7 @@ class MissionService:
             people_count=payload.people_count,
             preferences=payload.preferences,
             excluded_brands=payload.excluded_brands,
+            customer_id=customer_id,
         )
 
         # 3. Persist items
@@ -95,7 +96,11 @@ class MissionService:
             full_mission, items, custom_explanation=plan.summary_explanation
         )
 
-    async def preview_plan(self, payload: MissionCreateRequest) -> dict[str, Any]:
+    async def preview_plan(
+        self,
+        payload: MissionCreateRequest,
+        customer_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
         """Generate in-memory preview without persisting."""
         plan = await self.engine.generate_plan(
             title=payload.title,
@@ -105,6 +110,7 @@ class MissionService:
             people_count=payload.people_count,
             preferences=payload.preferences,
             excluded_brands=payload.excluded_brands,
+            customer_id=customer_id,
         )
 
         groups_map: dict[str, list[dict[str, Any]]] = {}

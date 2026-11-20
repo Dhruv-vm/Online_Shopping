@@ -193,11 +193,31 @@ class RecommendationEngine:
         people_count: int = 1,
         preferences: list[str] | None = None,
         excluded_brands: list[str] | None = None,
+        customer_id: uuid.UUID | None = None,
     ) -> PlannedMissionResult:
         intent = self.detect_intent(title, description, preferences)
         categories = await self.repo.get_all_active_categories()
         category_by_id = {c.id: c for c in categories}
         category_by_slug = {c.slug: c for c in categories}
+
+        # Load customer preference profile if personalization is enabled
+        profile = None
+        if customer_id:
+            from sqlalchemy import select
+
+            from app.modules.intent.models import CustomerPreferenceProfile
+
+            stmt_p = select(CustomerPreferenceProfile).where(
+                CustomerPreferenceProfile.customer_id == customer_id
+            )
+            res_p = await self.repo.session.execute(stmt_p)
+            profile = res_p.scalar_one_or_none()
+
+        pref_brands = (
+            [b.strip().lower() for b in (profile.preferred_brands or []) if b.strip()]
+            if profile and profile.personalization_enabled
+            else []
+        )
 
         # 1. Resolve target category IDs
         target_cat_ids: list[uuid.UUID] = []
@@ -240,6 +260,31 @@ class RecommendationEngine:
             for token in pref_tokens:
                 if token in p_text:
                     score += 50
+            # Intent Memory Personalization
+            if (
+                pref_brands
+                and product.brand
+                and product.brand.strip().lower() in pref_brands
+            ):
+                score += 60
+            if profile and profile.personalization_enabled:
+                priorities = profile.shopping_priorities or []
+                if "LOWEST_PRICE" in priorities:
+                    score += int(
+                        (
+                            1.0
+                            - min(
+                                1.0, listing.selling_price_paise / max(budget_paise, 1)
+                            )
+                        )
+                        * 30
+                    )
+                if (
+                    "QUALITY" in priorities
+                    and listing.retailer
+                    and (listing.retailer.rating or 0) >= 4.5
+                ):
+                    score += 25
             # Verified retailer boost
             if listing.retailer and listing.retailer.is_active:
                 score += 20
@@ -285,7 +330,7 @@ class RecommendationEngine:
                 if running_cost_paise + item_cost <= budget_paise or not selected_items:
                     # Select this item
                     reason = self._build_recommendation_reason(
-                        cand, group, qty, people_count, intent
+                        cand, group, qty, people_count, intent, pref_brands
                     )
                     selected_items.append(
                         PlannedItem(
@@ -317,7 +362,7 @@ class RecommendationEngine:
                     and len(selected_items) < 8
                 ):
                     reason = self._build_recommendation_reason(
-                        cand, group, qty, people_count, intent
+                        cand, group, qty, people_count, intent, pref_brands
                     )
                     selected_items.append(
                         PlannedItem(
@@ -389,6 +434,7 @@ class RecommendationEngine:
         qty: int,
         people_count: int,
         intent: str,
+        pref_brands: list[str] | None = None,
     ) -> str:
         product = listing.variant.product
         retailer = listing.retailer
@@ -402,5 +448,10 @@ class RecommendationEngine:
                 f"Quantity of {qty} recommended for a group of {people_count}."
             )
         if product.brand:
-            reason_parts.append(f"Trusted {product.brand} brand quality.")
+            if pref_brands and product.brand.strip().lower() in pref_brands:
+                reason_parts.append(
+                    f"Matches your saved preferred brand '{product.brand}'."
+                )
+            else:
+                reason_parts.append(f"Trusted {product.brand} brand quality.")
         return " ".join(reason_parts)

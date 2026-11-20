@@ -5,6 +5,7 @@ from app.modules.admin.router import router as admin_router
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
+from app.modules.intent.router import intent_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.missions.router import router as missions_router
 from app.modules.orders.router import router as orders_router
@@ -37,6 +38,9 @@ api_router.include_router(missions_router)
 
 # Mount Basket Substitute Intelligence endpoints (Phase 2B)
 api_router.include_router(substitutes_router)
+
+# Mount Basket Intent Memory endpoints (Phase 2C)
+api_router.include_router(intent_router)
 
 # Mount Pricing & Quotes endpoints
 api_router.include_router(pricing_router)

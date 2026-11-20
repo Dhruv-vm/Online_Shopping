@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
-import { User, MapPin, LogOut, ShieldCheck, Loader2, Package } from "lucide-react";
+import { User, MapPin, LogOut, ShieldCheck, Loader2, Package, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,12 @@ export function AccountNav() {
       href: "/orders",
       icon: Package,
       active: pathname === "/orders" || pathname.startsWith("/orders/"),
+    },
+    {
+      title: "Shopping Intent & Memory",
+      href: "/account/intent",
+      icon: Sparkles,
+      active: pathname === "/account/intent",
     },
     {
       title: "Saved Addresses",

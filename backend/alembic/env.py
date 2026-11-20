@@ -16,6 +16,7 @@ import app.core.events.inbox  # noqa: F401
 import app.modules.cart.models  # noqa: F401
 import app.modules.catalogue.models  # noqa: F401
 import app.modules.identity.models  # noqa: F401
+import app.modules.intent.models  # noqa: F401
 import app.modules.inventory.models  # noqa: F401
 import app.modules.missions.models  # noqa: F401
 import app.modules.orders.models  # noqa: F401

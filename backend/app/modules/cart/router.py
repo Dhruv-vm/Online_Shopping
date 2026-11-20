@@ -148,6 +148,7 @@ async def get_cart_item_substitutes(
         filter_type=type,
         limit=limit,
         in_stock_only=in_stock_only,
+        customer_id=ctx.cart.customer_id,
     )
 
 

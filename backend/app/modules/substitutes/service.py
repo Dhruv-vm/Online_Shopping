@@ -73,11 +73,23 @@ class SubstituteService:
         filter_type: SubstituteType | None = None,
         limit: int = 10,
         in_stock_only: bool = True,
+        customer_id: uuid.UUID | None = None,
     ) -> SubstituteListResponse:
         """
         Discovers, scores, and categorizes genuine substitutes for a given product listing.
         All substitutes share the same category, belong to verified retailers, and are actively listed.
+        Supports personalization from customer intent memory when customer_id is provided.
         """
+        # Load customer preference profile if personalization is enabled
+        profile = None
+        if customer_id:
+            from app.modules.intent.models import CustomerPreferenceProfile
+
+            stmt_p = select(CustomerPreferenceProfile).where(
+                CustomerPreferenceProfile.customer_id == customer_id
+            )
+            res_p = await self.session.execute(stmt_p)
+            profile = res_p.scalar_one_or_none()
         # 1. Fetch original listing with all relational details
         orig_stmt = (
             select(ProductListing)
@@ -309,6 +321,25 @@ class SubstituteService:
                 2,
             )
 
+            # Personalization boost and explanation from Intent Memory
+            personalization_tag: str | None = None
+            if profile and profile.personalization_enabled:
+                pref_brands = [
+                    b.strip().lower()
+                    for b in (profile.preferred_brands or [])
+                    if b.strip()
+                ]
+                if cand_brand and cand_brand.strip().lower() in pref_brands:
+                    similarity_score = min(1.0, round(similarity_score + 0.15, 2))
+                    personalization_tag = f"Recommended because you prefer '{cand_brand}' in your saved intent memory."
+                elif profile.preferred_price_range:
+                    min_p = profile.preferred_price_range.get("min_paise", 0)
+                    max_p = profile.preferred_price_range.get("max_paise", float("inf"))
+                    if min_p <= cand_price <= max_p:
+                        similarity_score = min(1.0, round(similarity_score + 0.05, 2))
+                        if not personalization_tag:
+                            personalization_tag = "Fits your saved budget preference."
+
             # Categorize applicable Substitute Types
             applicable_types: list[SubstituteType] = []
 
@@ -399,6 +430,8 @@ class SubstituteService:
                 if len(differing_specs) <= 1
                 else f"Compatible within {orig_category.name}. Note {len(differing_specs)} differing attributes."
             )
+            if personalization_tag:
+                compat_notes = f"{personalization_tag} • {compat_notes}"
 
             primary_img = _get_primary_image_url(cand_variant, cand_product)
 
