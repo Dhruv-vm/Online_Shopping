@@ -62,6 +62,40 @@ class RetailerService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    @staticmethod
+    def _derive_suborder_status(items: list[OrderItem]) -> str:
+        if not items:
+            return "CONFIRMED"
+        active_items = [
+            i
+            for i in items
+            if (getattr(i, "fulfillment_status", None) or "CONFIRMED") != "CANCELLED"
+        ]
+        if not active_items:
+            return "CANCELLED"
+        statuses = [
+            getattr(i, "fulfillment_status", None) or "CONFIRMED" for i in active_items
+        ]
+        if all(s == "DELIVERED" for s in statuses):
+            return "DELIVERED"
+        if all(s in ("OUT_FOR_DELIVERY", "DELIVERED") for s in statuses):
+            return "OUT_FOR_DELIVERY"
+        if all(s in ("SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED") for s in statuses):
+            return "SHIPPED"
+        if all(
+            s in ("PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED")
+            for s in statuses
+        ):
+            return "PACKED"
+        if any(
+            s in ("PROCESSING", "PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED")
+            for s in statuses
+        ):
+            return "PROCESSING"
+        if all(s == "CONFIRMED" for s in statuses):
+            return "CONFIRMED"
+        return "PENDING_PAYMENT"
+
     # ================= Profile & Overview =================
 
     async def update_profile(
@@ -956,16 +990,20 @@ class RetailerService:
                     unit_selling_price_paise=i.unit_selling_price_paise,
                     total_selling_price_paise=i.total_selling_price_paise,
                     total_tax_paise=i.total_tax_paise,
+                    fulfillment_status=getattr(i, "fulfillment_status", None)
+                    or "CONFIRMED",
                     created_at=i.created_at,
                 )
                 for i in my_items
             ]
 
+            retailer_status = self._derive_suborder_status(my_items)
+
             items.append(
                 RetailerOrderListItem(
                     id=o.id,
                     order_number=o.order_number,
-                    status=o.status,
+                    status=retailer_status,
                     payment_status=o.payment_status,
                     customer_name=cust_name,
                     delivery_city=city,
@@ -1036,6 +1074,8 @@ class RetailerService:
                 unit_selling_price_paise=i.unit_selling_price_paise,
                 total_selling_price_paise=i.total_selling_price_paise,
                 total_tax_paise=i.total_tax_paise,
+                fulfillment_status=getattr(i, "fulfillment_status", None)
+                or "CONFIRMED",
                 created_at=i.created_at,
             )
             for i in my_items
@@ -1051,10 +1091,12 @@ class RetailerService:
             for h in order.status_history
         ]
 
+        retailer_status = self._derive_suborder_status(my_items)
+
         return RetailerOrderDetailResponse(
             id=order.id,
             order_number=order.order_number,
-            status=order.status,
+            status=retailer_status,
             payment_status=order.payment_status,
             customer_name=cust_name,
             delivery_address=snap,
@@ -1115,15 +1157,67 @@ class RetailerService:
                 status_code=422,
             )
 
-        old_status = order.status
-        order.status = target_status
+        # Enforce valid transitions per item
+        rank_map = {
+            "PENDING_PAYMENT": 0,
+            "CONFIRMED": 1,
+            "PROCESSING": 2,
+            "PACKED": 3,
+            "SHIPPED": 4,
+            "OUT_FOR_DELIVERY": 5,
+            "DELIVERED": 6,
+        }
+        target_rank = rank_map.get(target_status)
+        old_retailer_status = self._derive_suborder_status(my_items)
+
+        for item in my_items:
+            curr_item_status = getattr(item, "fulfillment_status", None) or "CONFIRMED"
+            if curr_item_status == target_status:
+                continue
+            if curr_item_status == "DELIVERED":
+                raise AppException(
+                    code="INVALID_STATUS_TRANSITION",
+                    message="Cannot change status of an already delivered item.",
+                    status_code=422,
+                )
+            if curr_item_status == "CANCELLED":
+                raise AppException(
+                    code="INVALID_STATUS_TRANSITION",
+                    message="Cannot change status of a cancelled item.",
+                    status_code=422,
+                )
+            if target_status == "CANCELLED":
+                item.fulfillment_status = target_status
+                continue
+
+            curr_rank = rank_map.get(curr_item_status, 0)
+            if target_rank is not None and target_rank < curr_rank:
+                raise AppException(
+                    code="INVALID_STATUS_TRANSITION",
+                    message=f"Cannot regress status from {curr_item_status} to {target_status}.",
+                    status_code=422,
+                )
+            item.fulfillment_status = target_status
+
+        # Synchronize and derive overall parent order status across ALL items
+        parent_derived_status = self._derive_suborder_status(order.items)
+        if order.status != parent_derived_status:
+            order.status = parent_derived_status
+            if parent_derived_status == "DELIVERED" and not order.delivered_at:
+                order.delivered_at = datetime.datetime.now(datetime.UTC)
+            elif parent_derived_status == "CANCELLED" and not order.cancelled_at:
+                order.cancelled_at = datetime.datetime.now(datetime.UTC)
+                order.cancellation_reason = (
+                    req.reason or f"Cancelled by {retailer.name}"
+                )
 
         hist = OrderStatusHistory(
             id=uuid.uuid4(),
             order_id=order.id,
-            from_status=old_status,
+            from_status=old_retailer_status,
             to_status=target_status,
-            reason=req.reason or f"Status updated by {retailer.name}",
+            reason=req.reason
+            or f"Fulfillment updated to {target_status} by {retailer.name}",
         )
         self.session.add(hist)
 
@@ -1133,7 +1227,7 @@ class RetailerService:
                 customer_id=order.customer_id,
                 order_id=order.id,
                 title=f"Order {order.order_number} {target_status.replace('_', ' ').title()}",
-                message=f"Your order status has been updated to {target_status} by {retailer.name}.",
+                message=f"Items from {retailer.name} in order #{order.order_number} are now {target_status.lower().replace('_', ' ')}.",
                 event_type=f"ORDER_{target_status}",
             )
             self.session.add(notif)
@@ -1272,7 +1366,7 @@ class RetailerService:
     # ================= Retailer Analytics =================
 
     async def get_analytics(self, retailer: Retailer) -> RetailerAnalyticsResponse:
-        # Aggregated stats from OrderItem
+        # Aggregated stats from OrderItem across ALL eligible order items
         items_stmt = (
             select(
                 OrderItem.listing_id,
@@ -1285,11 +1379,15 @@ class RetailerService:
             .where(
                 OrderItem.retailer_id == retailer.id,
                 Order.status != "CANCELLED",
+                OrderItem.fulfillment_status != "CANCELLED",
             )
             .group_by(OrderItem.listing_id, OrderItem.product_title, OrderItem.sku)
             .order_by(func.sum(OrderItem.total_selling_price_paise).desc())
         )
         top_items_rows = (await self.session.execute(items_stmt)).all()
+
+        total_units = sum(int(row.units_sold or 0) for row in top_items_rows)
+        total_rev = sum(int(row.revenue_paise or 0) for row in top_items_rows)
 
         top_selling = [
             RetailerAnalyticsProductItem(
@@ -1302,9 +1400,6 @@ class RetailerService:
             for row in top_items_rows[:10]
         ]
 
-        total_units = sum(i.units_sold for i in top_selling)
-        total_rev = sum(i.revenue_paise for i in top_selling)
-
         # Distinct orders count
         orders_count_stmt = (
             select(func.count(func.distinct(OrderItem.order_id)))
@@ -1312,21 +1407,27 @@ class RetailerService:
             .where(
                 OrderItem.retailer_id == retailer.id,
                 Order.status != "CANCELLED",
+                OrderItem.fulfillment_status != "CANCELLED",
             )
         )
         total_orders = (await self.session.execute(orders_count_stmt)).scalar() or 0
 
         aov = total_rev // total_orders if total_orders > 0 else 0
 
-        # Orders by status
-        status_stmt = (
-            select(Order.status, func.count(func.distinct(Order.id)))
+        # Orders by status (computed per retailer suborder)
+        orders_stmt = (
+            select(Order)
+            .options(selectinload(Order.items))
             .join(OrderItem, Order.id == OrderItem.order_id)
             .where(OrderItem.retailer_id == retailer.id)
-            .group_by(Order.status)
+            .distinct()
         )
-        status_rows = (await self.session.execute(status_stmt)).all()
-        orders_by_status = {row[0]: int(row[1]) for row in status_rows}
+        ret_orders = (await self.session.execute(orders_stmt)).scalars().all()
+        orders_by_status: dict[str, int] = {}
+        for o in ret_orders:
+            my_items = [i for i in o.items if i.retailer_id == retailer.id]
+            st = self._derive_suborder_status(my_items)
+            orders_by_status[st] = orders_by_status.get(st, 0) + 1
 
         # Stock health from StoreInventory
         inv_stmt = (

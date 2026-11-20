@@ -101,6 +101,7 @@ class OrderItemResponse(BaseModel):
     total_tax_paise: int
     retailer_name: str
     retailer_state: str
+    fulfillment_status: str = Field(default="CONFIRMED")
 
 
 class OrderStatusHistoryResponse(BaseModel):

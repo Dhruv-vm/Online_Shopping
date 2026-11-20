@@ -90,18 +90,37 @@ async def test_a_retailer1_operations(async_client: AsyncClient):
     ].startswith("BSK-")
 
     # 5. Update order status
-    order_id = sample_order["id"]
+    target_order = next(
+        (
+            o
+            for o in orders_data["items"]
+            if o["status"] in ("CONFIRMED", "PENDING_PAYMENT")
+        ),
+        orders_data["items"][0],
+    )
+    order_id = target_order["id"]
+    curr_status = target_order["status"]
+    next_status_map = {
+        "PENDING_PAYMENT": "PROCESSING",
+        "CONFIRMED": "PROCESSING",
+        "PROCESSING": "PACKED",
+        "PACKED": "SHIPPED",
+        "SHIPPED": "DELIVERED",
+        "OUT_FOR_DELIVERY": "DELIVERED",
+    }
+    target_status = next_status_map.get(curr_status, "PROCESSING")
+
     status_resp = await async_client.patch(
         f"/api/v1/retailer/orders/{order_id}/status",
         headers=auth_headers,
         json={
-            "status": "PROCESSING",
+            "status": target_status,
             "reason": "Retailer preparing package for dispatch",
         },
     )
     assert status_resp.status_code == 200
     updated_order = status_resp.json()
-    assert updated_order["status"] == "PROCESSING"
+    assert updated_order["status"] == target_status
 
 
 @pytest.mark.asyncio
@@ -255,50 +274,85 @@ async def test_c_customer_experience(async_client: AsyncClient):
 async def test_d_end_to_end_purchase_flow(async_client: AsyncClient):
     """Test D: End-to-End Multi-Retailer Purchase Flow.
 
-    Retailer updates stock -> Customer adds to basket -> Checkout quote ->
-    Inventory reservation -> Atomic order placement -> Inventory deducted ->
-    Retailer fulfills order -> Customer tracks order.
+    Customer creates a single basket containing products from both Basket Mart and Basket Lifestyle.
+    Verify:
+    1. Both products appear in the same parent order.
+    2. Both retailers receive only their respective order items.
+    3. Inventory is correctly deducted for both retailers.
+    4. Both retailers can access their own order information with strict tenant isolation.
+    5. Neither retailer can access or modify the other retailer's items.
+    6. Retailer A cannot advance or cancel Retailer B's fulfillment status.
+    7. Customer tracks overall order progress accurately.
     """
     ret1_headers, _ = await login(async_client, "retailer1@basket.demo")
+    ret2_headers, _ = await login(async_client, "retailer2@basket.demo")
     cust_headers, _ = await login(async_client, "customer@basket.demo")
 
-    # 1. Retailer 1 inspects inventory and updates on_hand_quantity
-    inv_resp = await async_client.get(
+    # 1. Retailer 1 (Basket Mart) inspects inventory and sets stock to 40
+    inv1_resp = await async_client.get(
         "/api/v1/retailer/inventory", headers=ret1_headers
     )
-    inv_items = [i for i in inv_resp.json()["items"] if i["available_quantity"] >= 5]
-    assert len(inv_items) >= 1
-    target_inv = inv_items[0]
-    listing_id = target_inv["listing_id"]
+    assert inv1_resp.status_code == 200
+    inv1_items = [i for i in inv1_resp.json()["items"] if i["available_quantity"] >= 5]
+    assert len(inv1_items) >= 1
+    target_inv1 = inv1_items[0]
+    listing1_id = target_inv1["listing_id"]
 
-    # Update stock to 40
     await async_client.post(
-        f"/api/v1/retailer/listings/{listing_id}/inventory",
+        f"/api/v1/retailer/listings/{listing1_id}/inventory",
         headers=ret1_headers,
         json={
             "adjustment_type": "SET",
             "quantity": 40,
             "low_stock_threshold": 5,
-            "reason": "Test stock update",
+            "reason": "Test stock update Basket Mart",
         },
     )
 
-    # Get customer saved address
+    # 2. Retailer 2 (Basket Lifestyle) inspects inventory and sets stock to 35
+    inv2_resp = await async_client.get(
+        "/api/v1/retailer/inventory", headers=ret2_headers
+    )
+    assert inv2_resp.status_code == 200
+    inv2_items = [i for i in inv2_resp.json()["items"] if i["available_quantity"] >= 5]
+    assert len(inv2_items) >= 1
+    target_inv2 = inv2_items[0]
+    listing2_id = target_inv2["listing_id"]
+
+    await async_client.post(
+        f"/api/v1/retailer/listings/{listing2_id}/inventory",
+        headers=ret2_headers,
+        json={
+            "adjustment_type": "SET",
+            "quantity": 35,
+            "low_stock_threshold": 5,
+            "reason": "Test stock update Basket Lifestyle",
+        },
+    )
+
+    # 3. Customer gets delivery address
     addr_resp = await async_client.get("/api/v1/addresses", headers=cust_headers)
     addresses = addr_resp.json()
     assert len(addresses) >= 1
     address_id = addresses[0]["id"]
 
-    # 2. Customer adds item to cart
+    # 4. Customer adds items from BOTH retailers into a SINGLE basket
     await async_client.delete("/api/v1/cart", headers=cust_headers)
-    add_cart_resp = await async_client.post(
+    add1 = await async_client.post(
         "/api/v1/cart/items",
         headers=cust_headers,
-        json={"listing_id": listing_id, "quantity": 2},
+        json={"listing_id": listing1_id, "quantity": 2},
     )
-    assert add_cart_resp.status_code in (200, 201)
+    assert add1.status_code in (200, 201)
 
-    # 3. Create checkout quote
+    add2 = await async_client.post(
+        "/api/v1/cart/items",
+        headers=cust_headers,
+        json={"listing_id": listing2_id, "quantity": 1},
+    )
+    assert add2.status_code in (200, 201)
+
+    # 5. Create checkout quote containing both retailers
     quote_resp = await async_client.post(
         "/api/v1/quotes",
         headers=cust_headers,
@@ -308,8 +362,12 @@ async def test_d_end_to_end_purchase_flow(async_client: AsyncClient):
     quote = quote_resp.json()
     quote_id = quote["id"]
     assert quote["status"] == "ACTIVE"
+    quote_items = quote.get("items", [])
+    assert len(quote_items) >= 2
+    quote_retailers = {i["retailer_name"] for i in quote_items}
+    assert len(quote_retailers) >= 2
 
-    # 4. Create inventory reservation
+    # 6. Create inventory reservation
     res_resp = await async_client.post(
         "/api/v1/reservations",
         headers=cust_headers,
@@ -320,7 +378,7 @@ async def test_d_end_to_end_purchase_flow(async_client: AsyncClient):
     reservation_id = res_data["id"]
     assert res_data["status"] == "ACTIVE"
 
-    # 5. Place order atomically
+    # 7. Place multi-retailer order atomically
     order_resp = await async_client.post(
         "/api/v1/orders",
         headers=cust_headers,
@@ -334,45 +392,116 @@ async def test_d_end_to_end_purchase_flow(async_client: AsyncClient):
     order_data = order_resp.json()
     order_id = order_data["id"]
     assert order_data["status"] in ("PENDING_PAYMENT", "CONFIRMED")
-    assert len(order_data["items"]) >= 1
+    order_items = order_data["items"]
+    assert len(order_items) >= 2
+    order_listing_ids = {i["listing_id"] for i in order_items}
+    assert listing1_id in order_listing_ids
+    assert listing2_id in order_listing_ids
 
-    # 6. Verify inventory was deducted in database
+    # 8. Verify inventory deducted for BOTH retailers in database
     session_factory = get_session_factory()
     async with session_factory() as session:
-        inv_check = (
+        inv1_check = (
             await session.execute(
                 select(StoreInventory).where(
-                    StoreInventory.listing_id == uuid.UUID(listing_id)
+                    StoreInventory.listing_id == uuid.UUID(listing1_id)
                 )
             )
         ).scalar_one()
-        # available_quantity should be on_hand (40) - reserved
-        assert inv_check.on_hand_quantity <= 40
+        assert inv1_check.on_hand_quantity <= 40
 
-    # 7. Retailer 1 views the order and updates fulfillment status
-    ret1_orders_resp = await async_client.get(
-        "/api/v1/retailer/orders", headers=ret1_headers
+        inv2_check = (
+            await session.execute(
+                select(StoreInventory).where(
+                    StoreInventory.listing_id == uuid.UUID(listing2_id)
+                )
+            )
+        ).scalar_one()
+        assert inv2_check.on_hand_quantity <= 35
+
+    # 9. Verify retailer order isolation: Retailer 1 sees ONLY Retailer 1 items
+    ret1_order_detail = await async_client.get(
+        f"/api/v1/retailer/orders/{order_id}", headers=ret1_headers
     )
-    assert ret1_orders_resp.status_code == 200
-    ret1_orders = ret1_orders_resp.json()["items"]
-    matching = [o for o in ret1_orders if o["id"] == order_id]
-    assert len(matching) == 1
+    assert ret1_order_detail.status_code == 200
+    ret1_detail_data = ret1_order_detail.json()
+    ret1_item_listings = [i["listing_id"] for i in ret1_detail_data["items"]]
+    assert listing1_id in ret1_item_listings
+    assert listing2_id not in ret1_item_listings
 
-    update_status_resp = await async_client.patch(
+    # Verify retailer order isolation: Retailer 2 sees ONLY Retailer 2 items
+    ret2_order_detail = await async_client.get(
+        f"/api/v1/retailer/orders/{order_id}", headers=ret2_headers
+    )
+    assert ret2_order_detail.status_code == 200
+    ret2_detail_data = ret2_order_detail.json()
+    ret2_item_listings = [i["listing_id"] for i in ret2_detail_data["items"]]
+    assert listing2_id in ret2_item_listings
+    assert listing1_id not in ret2_item_listings
+
+    # 10. Verify order status isolation: Retailer 1 updates fulfillment status to PROCESSING
+    update_ret1_resp = await async_client.patch(
         f"/api/v1/retailer/orders/{order_id}/status",
         headers=ret1_headers,
-        json={"status": "PROCESSING", "reason": "Order packed and ready for dispatch"},
+        json={"status": "PROCESSING", "reason": "Packed and ready by Basket Mart"},
     )
-    assert update_status_resp.status_code == 200
-    assert update_status_resp.json()["status"] == "PROCESSING"
+    assert update_ret1_resp.status_code == 200
+    assert update_ret1_resp.json()["status"] == "PROCESSING"
 
-    # 8. Customer tracks order
+    # Verify Retailer 2's fulfillment progress is NOT overwritten or advanced
+    ret2_check = await async_client.get(
+        f"/api/v1/retailer/orders/{order_id}", headers=ret2_headers
+    )
+    assert ret2_check.status_code == 200
+    assert ret2_check.json()["status"] != "PROCESSING"
+
+    # Retailer 1 advances to SHIPPED
+    update_ret1_shipped = await async_client.patch(
+        f"/api/v1/retailer/orders/{order_id}/status",
+        headers=ret1_headers,
+        json={"status": "SHIPPED", "reason": "Dispatched via courier"},
+    )
+    assert update_ret1_shipped.status_code == 200
+    assert update_ret1_shipped.json()["status"] == "SHIPPED"
+
+    # Retailer 2 STILL remains untouched
+    ret2_check2 = await async_client.get(
+        f"/api/v1/retailer/orders/{order_id}", headers=ret2_headers
+    )
+    assert ret2_check2.json()["status"] != "SHIPPED"
+
+    # 11. Negative tests:
+    # A. Retailer 1 cannot regress status from SHIPPED to PROCESSING
+    regress_resp = await async_client.patch(
+        f"/api/v1/retailer/orders/{order_id}/status",
+        headers=ret1_headers,
+        json={"status": "PROCESSING", "reason": "Attempt regression"},
+    )
+    assert regress_resp.status_code == 422
+    assert regress_resp.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
+
+    # B. Retailer 2 now updates their own items independently to PACKED
+    ret2_update = await async_client.patch(
+        f"/api/v1/retailer/orders/{order_id}/status",
+        headers=ret2_headers,
+        json={"status": "PACKED", "reason": "Packed by Basket Lifestyle"},
+    )
+    assert ret2_update.status_code == 200
+    assert ret2_update.json()["status"] == "PACKED"
+
+    # Retailer 1 status remains SHIPPED
+    ret1_check_after = await async_client.get(
+        f"/api/v1/retailer/orders/{order_id}", headers=ret1_headers
+    )
+    assert ret1_check_after.json()["status"] == "SHIPPED"
+
+    # 12. Customer tracks order
     track_resp = await async_client.get(
         f"/api/v1/orders/{order_id}/tracking", headers=cust_headers
     )
     assert track_resp.status_code == 200
     track_data = track_resp.json()
-    assert track_data["order_status"] == "PROCESSING"
+    assert track_data["order_status"] in ("PROCESSING", "PACKED", "SHIPPED")
     assert len(track_data["timeline"]) >= 1
 
 
@@ -425,3 +554,114 @@ async def test_e_admin_integration(async_client: AsyncClient):
     assert "total_retailers" in overview_data
     assert overview_data["total_retailers"] >= 2
     assert overview_data["active_products"] >= 50
+
+
+@pytest.mark.asyncio
+async def test_f_retailer_tenant_isolation_and_analytics_accuracy(
+    async_client: AsyncClient,
+):
+    """Test F: Tenant Isolation and Analytics Accuracy.
+
+    Verify:
+    1. Foreign order access returns 404 for unauthorized retailer.
+    2. Retailer A cannot advance or cancel an order belonging exclusively to Retailer B.
+    3. Independent analytics calculation:
+       - Aggregate totals computed across all eligible order items (not truncated to 10).
+       - Top selling products list capped at 10.
+       - Independent metrics for Basket Mart vs Basket Lifestyle.
+    """
+    ret1_headers, _ = await login(async_client, "retailer1@basket.demo")
+    ret2_headers, _ = await login(async_client, "retailer2@basket.demo")
+    cust_headers, _ = await login(async_client, "customer@basket.demo")
+
+    # 1. Create an order with ONLY Retailer 2's item
+    inv2_resp = await async_client.get(
+        "/api/v1/retailer/inventory", headers=ret2_headers
+    )
+    inv2_items = [i for i in inv2_resp.json()["items"] if i["available_quantity"] >= 2]
+    assert len(inv2_items) >= 1
+    r2_listing_id = inv2_items[0]["listing_id"]
+
+    addr_resp = await async_client.get("/api/v1/addresses", headers=cust_headers)
+    address_id = addr_resp.json()[0]["id"]
+
+    await async_client.delete("/api/v1/cart", headers=cust_headers)
+    await async_client.post(
+        "/api/v1/cart/items",
+        headers=cust_headers,
+        json={"listing_id": r2_listing_id, "quantity": 1},
+    )
+
+    quote_resp = await async_client.post(
+        "/api/v1/quotes",
+        headers=cust_headers,
+        json={"delivery_address_id": address_id},
+    )
+    quote_id = quote_resp.json()["id"]
+
+    res_resp = await async_client.post(
+        "/api/v1/reservations",
+        headers=cust_headers,
+        json={"quote_id": quote_id},
+    )
+    res_id = res_resp.json()["id"]
+
+    order_resp = await async_client.post(
+        "/api/v1/orders",
+        headers=cust_headers,
+        json={
+            "reservation_id": res_id,
+            "quote_id": quote_id,
+            "delivery_address_id": address_id,
+        },
+    )
+    r2_only_order_id = order_resp.json()["id"]
+
+    # Negative test 1: Retailer 1 CANNOT view Retailer 2's order
+    foreign_get = await async_client.get(
+        f"/api/v1/retailer/orders/{r2_only_order_id}", headers=ret1_headers
+    )
+    assert foreign_get.status_code == 404
+    assert foreign_get.json()["error"]["code"] == "ORDER_NOT_FOUND"
+
+    # Negative test 2: Retailer 1 CANNOT update or advance Retailer 2's order
+    foreign_patch = await async_client.patch(
+        f"/api/v1/retailer/orders/{r2_only_order_id}/status",
+        headers=ret1_headers,
+        json={"status": "PROCESSING", "reason": "Illegitimate modification"},
+    )
+    assert foreign_patch.status_code == 404
+    assert foreign_patch.json()["error"]["code"] == "ORDER_NOT_FOUND"
+
+    # 2. Analytics accuracy: Verify both retailers receive independent, accurate analytics
+    ret1_analytics = await async_client.get(
+        "/api/v1/retailer/analytics", headers=ret1_headers
+    )
+    assert ret1_analytics.status_code == 200
+    a1 = ret1_analytics.json()
+    assert "total_revenue_paise" in a1
+    assert "total_units_sold" in a1
+    assert "average_order_value_paise" in a1
+    assert len(a1["top_selling_products"]) <= 10
+    assert a1["total_units_sold"] >= sum(
+        p["units_sold"] for p in a1["top_selling_products"]
+    )
+    assert a1["total_revenue_paise"] >= sum(
+        p["revenue_paise"] for p in a1["top_selling_products"]
+    )
+
+    ret2_analytics = await async_client.get(
+        "/api/v1/retailer/analytics", headers=ret2_headers
+    )
+    assert ret2_analytics.status_code == 200
+    a2 = ret2_analytics.json()
+    assert "total_revenue_paise" in a2
+    assert "total_units_sold" in a2
+    assert "average_order_value_paise" in a2
+    assert len(a2["top_selling_products"]) <= 10
+    assert a2["total_units_sold"] >= sum(
+        p["units_sold"] for p in a2["top_selling_products"]
+    )
+    assert a2["total_revenue_paise"] >= sum(
+        p["revenue_paise"] for p in a2["top_selling_products"]
+    )
