@@ -28,13 +28,13 @@ from app.modules.admin.schemas import (
     RetailerVerifyRequest,
 )
 from app.modules.admin.service import AdminService
-from app.modules.identity.dependencies import require_admin
+from app.modules.identity.dependencies import require_admin, verify_csrf_token
 from app.modules.identity.models import User
 
 router = APIRouter(
     prefix="/admin",
     tags=["Admin Portal"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_admin), Depends(verify_csrf_token)],
 )
 
 

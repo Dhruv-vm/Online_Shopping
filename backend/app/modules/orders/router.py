@@ -11,6 +11,10 @@ from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     get_current_user_optional,
 )
+from app.modules.identity.dependencies import (
+    require_admin_or_internal_service,
+    verify_csrf_token,
+)
 from app.modules.identity.models import User
 from app.modules.orders.models import PaymentStatus
 from app.modules.orders.schemas import (
@@ -31,7 +35,7 @@ from app.modules.orders.schemas import (
 )
 from app.modules.orders.service import OrderService
 
-router = APIRouter(tags=["orders"])
+router = APIRouter(tags=["orders"], dependencies=[Depends(verify_csrf_token)])
 
 
 def _extract_ownership_identifiers(
@@ -231,12 +235,13 @@ async def get_order_tracking(
     "/orders/{order_id}/shipments",
     response_model=ShipmentResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create shipment for order (fulfillment/admin)",
+    summary="Create shipment for order (admin / internal fulfilment only)",
 )
 async def create_shipment(
     order_id: uuid.UUID,
     payload: CreateShipmentRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _actor: Annotated[str, Depends(require_admin_or_internal_service)],
 ) -> ShipmentResponse:
     service = OrderService(db)
     shipment = await service.create_shipment(
@@ -249,13 +254,14 @@ async def create_shipment(
 @router.patch(
     "/orders/{order_id}/shipments/{shipment_id}",
     response_model=ShipmentResponse,
-    summary="Update shipment status and tracking details",
+    summary="Update shipment status and tracking details (admin / internal only)",
 )
 async def update_shipment_status(
     order_id: uuid.UUID,
     shipment_id: uuid.UUID,
     payload: UpdateShipmentStatusRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _actor: Annotated[str, Depends(require_admin_or_internal_service)],
 ) -> ShipmentResponse:
     service = OrderService(db)
     shipment = await service.update_shipment_status(
@@ -328,17 +334,19 @@ async def list_order_returns(
 @router.patch(
     "/returns/{return_id}/status",
     response_model=ReturnResponse,
-    summary="Update return lifecycle status (inspection, restocking, refunding)",
+    summary="Update return lifecycle status (admin / internal only)",
 )
 async def update_return_status(
     return_id: uuid.UUID,
     payload: ReturnStatusUpdateRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[str, Depends(require_admin_or_internal_service)],
 ) -> ReturnResponse:
     service = OrderService(db)
     ret = await service.update_return_status(
         return_id=return_id,
         req=payload,
+        actor=actor,
     )
     return ReturnResponse.model_validate(ret)
 

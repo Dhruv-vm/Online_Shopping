@@ -14,6 +14,7 @@ from app.modules.catalogue.models import (
     ProductVariant,
 )
 from app.modules.identity.models import Address
+from app.modules.pricing.awards import best_award_for_line
 from app.modules.pricing.discount_service import DiscountService
 from app.modules.pricing.models import (
     CheckoutQuote,
@@ -209,6 +210,20 @@ class QuoteService:
                     unit_selling_price, discounts
                 )
             )
+
+            # Phase 3: customer-specific price awards (negotiation, group buy,
+            # RFQ, reverse auction). Applied only when better than the public
+            # price and when the award covers the whole line quantity.
+            award = await best_award_for_line(
+                self.session,
+                customer_id=cart.customer_id,
+                listing_id=listing.id,
+                quantity=item.quantity,
+            )
+            if award is not None and award.unit_price_paise < unit_discounted_price:
+                unit_discounted_price = int(award.unit_price_paise)
+                unit_discount = unit_selling_price - unit_discounted_price
+                award.quote_id = quote_id
 
             line_selling_total = unit_discounted_price * item.quantity
             line_discount_total = unit_discount * item.quantity

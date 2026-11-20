@@ -1472,7 +1472,7 @@ async def test_partial_and_full_refund_flow(
         r_resp1 = await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
             json={"amount_paise": half_amount, "reason": "Customer return item 1"},
-            headers={"Idempotency-Key": ref1_key},
+            headers={**get_internal_auth_headers(), "Idempotency-Key": ref1_key},
         )
         assert r_resp1.status_code == 201
         assert r_resp1.json()["amount_paise"] == half_amount
@@ -1502,7 +1502,7 @@ async def test_partial_and_full_refund_flow(
         r_resp2 = await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
             json={"amount_paise": rem_amount, "reason": "Customer return item 2"},
-            headers={"Idempotency-Key": ref2_key},
+            headers={**get_internal_auth_headers(), "Idempotency-Key": ref2_key},
         )
         assert r_resp2.status_code == 201
         assert r_resp2.json()["amount_paise"] == rem_amount
@@ -1580,6 +1580,7 @@ async def test_refund_exceeding_captured_amount_rejected(
 
         resp = await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
+            headers=get_internal_auth_headers(),
             json={"amount_paise": amount + 5000},
         )
         assert resp.status_code == 409
@@ -1811,6 +1812,7 @@ async def test_refund_lifecycle_pending_timeout_and_processed_with_processed_at(
         ref_resp = await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
             headers={
+                **get_internal_auth_headers(),
                 "Authorization": f"Bearer {token}",
                 "Idempotency-Key": f"idemp-rfnd-pend-{uuid.uuid4().hex[:8]}",
             },
@@ -1852,6 +1854,7 @@ async def test_refund_lifecycle_pending_timeout_and_processed_with_processed_at(
         timeout_resp = await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
             headers={
+                **get_internal_auth_headers(),
                 "Authorization": f"Bearer {token}",
                 "Idempotency-Key": f"idemp-rfnd-tout-{uuid.uuid4().hex[:8]}",
             },
@@ -1976,6 +1979,7 @@ async def test_reconciliation_reconciles_pending_refund_to_processed(
         await async_client.post(
             f"/api/v1/orders/{order_id}/refunds",
             headers={
+                **get_internal_auth_headers(),
                 "Authorization": f"Bearer {token}",
                 "Idempotency-Key": f"idemp-rfnd-rec-{uuid.uuid4().hex[:8]}",
             },

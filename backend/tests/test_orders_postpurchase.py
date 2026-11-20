@@ -17,6 +17,7 @@ from app.modules.orders.models import (
 from app.modules.payments.client import RazorpayClient
 from tests.test_orders import (
     generate_payment_signature,
+    get_internal_auth_headers,
     get_test_listing,
     setup_customer_and_order,
 )
@@ -198,6 +199,7 @@ async def test_order_fulfillment_shipment_and_tracking(async_client: AsyncClient
     # 1. Create shipment
     ship_resp = await async_client.post(
         f"/api/v1/orders/{order_id}/shipments",
+        headers=get_internal_auth_headers(),
         json={
             "carrier_name": "Delhivery",
             "carrier_code": "DELHIVERY",
@@ -228,6 +230,7 @@ async def test_order_fulfillment_shipment_and_tracking(async_client: AsyncClient
     # 3. Update shipment status to OUT_FOR_DELIVERY then DELIVERED
     update_resp1 = await async_client.patch(
         f"/api/v1/orders/{order_id}/shipments/{shipment_id}",
+        headers=get_internal_auth_headers(),
         json={"status": ShipmentStatus.OUT_FOR_DELIVERY.value, "location": "Local Hub"},
     )
     assert update_resp1.status_code == 200
@@ -235,6 +238,7 @@ async def test_order_fulfillment_shipment_and_tracking(async_client: AsyncClient
 
     update_resp2 = await async_client.patch(
         f"/api/v1/orders/{order_id}/shipments/{shipment_id}",
+        headers=get_internal_auth_headers(),
         json={
             "status": ShipmentStatus.DELIVERED.value,
             "location": "Customer Doorstep",
@@ -281,9 +285,18 @@ async def test_order_return_lifecycle(async_client: AsyncClient):
     assert ret_data["status"] == ReturnStatus.REQUESTED.value
     return_id = ret_data["id"]
 
-    # 2. Inspect return and approve restock
+    # 2. Walk the legitimate lifecycle: APPROVED -> RECEIVED -> INSPECTED
+    for step in (ReturnStatus.APPROVED.value, ReturnStatus.RECEIVED.value):
+        step_resp = await async_client.patch(
+            f"/api/v1/returns/{return_id}/status",
+            headers=get_internal_auth_headers(),
+            json={"status": step},
+        )
+        assert step_resp.status_code == 200, step_resp.text
+
     inspect_resp = await async_client.patch(
         f"/api/v1/returns/{return_id}/status",
+        headers=get_internal_auth_headers(),
         json={
             "status": ReturnStatus.INSPECTED.value,
             "restock_approved": True,
@@ -293,19 +306,22 @@ async def test_order_return_lifecycle(async_client: AsyncClient):
     assert inspect_resp.status_code == 200
     assert inspect_resp.json()["status"] == ReturnStatus.INSPECTED.value
 
-    # 3. Process refund
+    # 3. Process refund. The order in this test has no real Razorpay capture, so
+    # the payment layer is mocked; before the audit a failing refund was silently
+    # reported as REFUNDED, which is how this test used to pass.
+    from types import SimpleNamespace
+
+    from app.modules.payments.service import PaymentService
+
     with patch.object(
-        RazorpayClient,
+        PaymentService,
         "create_refund",
         new_callable=AsyncMock,
-        return_value={
-            "id": f"rfnd_{uuid.uuid4().hex[:8]}",
-            "amount": ret_data["refund_amount_paise"],
-            "status": "processed",
-        },
+        return_value=SimpleNamespace(refund_id=None),
     ):
         refund_resp = await async_client.patch(
             f"/api/v1/returns/{return_id}/status",
+            headers=get_internal_auth_headers(),
             json={
                 "status": ReturnStatus.REFUNDED.value,
                 "admin_notes": "Refund authorized",

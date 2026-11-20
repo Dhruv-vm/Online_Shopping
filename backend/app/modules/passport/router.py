@@ -12,6 +12,7 @@ from app.modules.identity.dependencies import (
     get_current_retailer,
     require_admin,
     require_retailer,
+    verify_csrf_token,
 )
 from app.modules.identity.models import User
 from app.modules.passport.schemas import (
@@ -93,7 +94,7 @@ async def get_public_listing_passport(
 retailer_router = APIRouter(
     prefix="/retailer/passport",
     tags=["Retailer Passport Portal"],
-    dependencies=[Depends(require_retailer)],
+    dependencies=[Depends(require_retailer), Depends(verify_csrf_token)],
 )
 
 
@@ -205,7 +206,7 @@ async def get_retailer_claim_history(
 admin_router = APIRouter(
     prefix="/admin/passport",
     tags=["Admin Passport Portal"],
-    dependencies=[Depends(require_admin)],
+    dependencies=[Depends(require_admin), Depends(verify_csrf_token)],
 )
 
 

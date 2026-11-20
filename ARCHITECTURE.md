@@ -367,19 +367,35 @@ The architecture enforces strict separation between **canonical product-level fa
   - Associated 1:1 with `product_listings.id`.
   - Captures seller-specific details: Item condition (`NEW`, `REFURBISHED`, `OPEN_BOX`, `PRE_OWNED`), Seller warranty terms, Packaging notes, and Fulfillment/dispatch notes.
   - Retailer mutations are strictly scoped to listings owned by the authenticated retailer (`retailer_id == current_retailer.id`). One retailer can never overwrite canonical product facts or another retailer's listing details.
-- **Traceable Claims & Evidence (`passport_claims`):**
+- **Traceable Claims & Evidence (`passport_claims` & `passport_claim_review_histories`):**
   - Stores granular assertions (e.g. FSSAI license, BIS certification, Agmark grade, organic compliance).
   - Tracks complete audit provenance: `submitted_by_user_id`, `review_status` (`PENDING`, `VERIFIED`, `REJECTED`), `reviewed_by_user_id`, `reviewed_at`, `rejection_reason`, `evidence_url`, `evidence_type`, and `is_public_evidence`.
+  - Auditable claim review history (`passport_claim_review_histories`) maintains an append-only ledger of every administrative verification and rejection, preserving previous rejection reasons, timestamps, reviewer IDs, and revision snapshots across claim edits.
 
 ### 12.2 Verification Lifecycle & Trust Rules
 1. **Unconditional `PENDING` Default:** All claims submitted by retailers start as `PENDING`. Retailers cannot approve their own claims.
 2. **Mandatory Admin Rejection Reason:** Admins can reject invalid claims with a required non-empty `rejection_reason`, which is visible to the submitting retailer to explain required corrections.
-3. **Re-Review Trigger on Edit:** Updating any previously verified or rejected claim immediately resets `review_status` to `PENDING` and clears the prior reviewer and rejection reason.
+3. **Audit-Preserving Re-Review Trigger on Edit:** Updating any previously verified or rejected claim transitions the active claim state back to `PENDING`. Crucially, previous review decisions, rejection reasons, reviewer notes, and historical timestamps are never destroyed or overwritten; they are preserved in `passport_claim_review_histories` (migration `0020_claim_review_history`).
 4. **Customer Privacy & Redaction:**
    - Public customer responses (`GET /api/v1/products/{id}/passport`) only expose `evidence_url` if `is_public_evidence` is `True` **AND** `review_status` is `VERIFIED`.
    - Internal admin notes, reviewer IDs, submitter IDs, and rejection reasons are strictly stripped from all customer-facing payloads.
    - Customers never see pending or rejected claims represented as verified facts.
 5. **Safe Empty Fallback:** Products without an active passport return a safe empty schema containing product metadata and available seller offers without throwing 404 or breaking catalogue browsing.
+6. **Public Listing Visibility Invariant:** Public listing passports are only returned if the parent product is active, the retailer is verified and active, and the listing itself is active.
+
+---
+
+## 13. System Audit & Master Documentation Index
+
+Comprehensive audit reports and developer handoff specifications are maintained across dedicated documentation modules:
+- [PROJECT_ARCHITECTURE.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/PROJECT_ARCHITECTURE.md): Complete architecture, security, concurrency, and data models.
+- [BACKEND_AUDIT.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/BACKEND_AUDIT.md): Module-by-module audit of all 13 backend modules, models, and test verification.
+- [API_INVENTORY.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/API_INVENTORY.md): Comprehensive catalogue of all 145 API endpoints under `/api/v1`.
+- [DISCREPANCY_REGISTER.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/DISCREPANCY_REGISTER.md): Register of known discrepancies, edge cases, and technical debt.
+- [PHASE_3_FEATURE_TRACKER.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/PHASE_3_FEATURE_TRACKER.md): Approved Phase 3 feature specifications and implementation roadmap.
+- [FRONTEND_BACKEND_STATUS.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/FRONTEND_BACKEND_STATUS.md): Page-by-page audit of all 36 Next.js routes and integration status.
+- [CLAUDE_DEVELOPER_HANDOFF.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/CLAUDE_DEVELOPER_HANDOFF.md): Master developer handoff guide and execution checklist for Claude.
+
 
 
 

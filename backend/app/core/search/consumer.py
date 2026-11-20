@@ -15,9 +15,11 @@ from app.core.events.kafka import EventProducer
 from app.core.search.client import (
     BaseSearchClient,
     OpenSearchConflictError,
+    OpenSearchResponseError,
     get_opensearch_client,
 )
 from app.core.search.document import build_product_document
+from app.core.search.versioning import snapshot_version
 from app.modules.catalogue.models import (
     Product,
     ProductListing,
@@ -94,9 +96,13 @@ class OpenSearchConsumer(BaseKafkaConsumer):
             )
             return
 
+        # Version = moment authoritative state is read (see versioning.py). The
+        # triggering aggregate's own counter is NOT comparable across aggregates.
+        doc_version = snapshot_version()
+
         # Check for deletion event
         if envelope.event_type in ("product.deleted", "product.deactivated"):
-            await self._delete_from_index(product_id, envelope.aggregate_version)
+            await self._delete_from_index(product_id, doc_version)
             return
 
         # Query authoritative PostgreSQL state with all child associations
@@ -119,25 +125,23 @@ class OpenSearchConsumer(BaseKafkaConsumer):
 
         if product is None or not product.is_active:
             # Entity deactivated or missing from DB -> remove from search index
-            await self._delete_from_index(product_id, envelope.aggregate_version)
+            await self._delete_from_index(product_id, doc_version)
             return
 
-        doc = build_product_document(
-            product, aggregate_version=envelope.aggregate_version
-        )
+        doc = build_product_document(product, aggregate_version=doc_version)
 
         try:
             await self._search_client.index_document(
                 index=self._index_alias,
                 doc_id=str(product_id),
                 document=doc,
-                version=envelope.aggregate_version,
+                version=doc_version,
                 version_type="external_gte",
             )
             logger.info(
                 "OpenSearch synced product %s v%d for event %s",
                 product_id,
-                envelope.aggregate_version,
+                doc_version,
                 envelope.event_id,
             )
         except OpenSearchConflictError as exc:
@@ -146,7 +150,7 @@ class OpenSearchConsumer(BaseKafkaConsumer):
             logger.info(
                 "OpenSearch version conflict for product %s v%d (stale event discarded): %s",
                 product_id,
-                envelope.aggregate_version,
+                doc_version,
                 exc,
             )
 
@@ -249,10 +253,14 @@ class OpenSearchConsumer(BaseKafkaConsumer):
                 version,
                 exc,
             )
-        except Exception as exc:
-            logger.warning(
-                "OpenSearch delete failed for product %s v%d: %s",
-                product_id,
-                version,
-                exc,
-            )
+        except OpenSearchResponseError as exc:
+            if exc.status_code == 409:
+                logger.info(
+                    "OpenSearch delete conflict for product %s v%d (ignored)",
+                    product_id,
+                    version,
+                )
+                return
+            # Re-raise so the base consumer retries / dead-letters the event
+            # instead of acknowledging it and leaving a stale product searchable.
+            raise

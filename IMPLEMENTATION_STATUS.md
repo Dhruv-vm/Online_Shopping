@@ -2,13 +2,77 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-20T12:20:00+05:30  
-> **Base Branch:** `integration` (commit `8c5e212`)  
-> **Current Feature Branch:** `feature/phase-2a-basket-mission`  
-> **Head Status:** Single Alembic head `0016_basket_mission`  
-> **Test Status:** 412 Backend Tests Passed (100%), 77 Frontend Tests Passed (100%), CI Green  
+> **Last Audited:** 2026-11-20T19:30:00+05:30  
+> **Base Branch:** `integration`  
+> **Current Feature Branch:** `feature/phase-2d-product-passport` (commit `026f801`)  
+> **Head Status:** Single Alembic head `0020_claim_review_history`  
+> **Test Status:** 448 Backend Tests Passed (100%), 100 Frontend Tests Passed (100%), CI Green  
 
 ---
+
+## P3. Phase 3 Milestone — Implemented & Verified (2026-11-20)
+
+| Feature | Status | Verification | Remaining |
+| :--- | :--- | :--- | :--- |
+| 3A Demand Gap | ✅ Complete | 7 tests, API + UI | retailer push notifications |
+| 3B Community Buying | ✅ Complete (no card pre-auth) | 3 tests incl. order | pre-auth & customer-created groups (product decision) |
+| 3C Community Exchange | ✅ Complete | 3 tests incl. order | — |
+| 3D AI Negotiator | ✅ Complete (rule engine) | 5 tests incl. order | LLM phrasing optional; more language templates |
+| 3E Dukaan vs Dukaan | ✅ Complete | 2 tests incl. order + SSE | — |
+| 3F Price Intelligence | ✅ Complete | 4 tests | history accrues from go-live |
+| 3G Sale Stream (no Rewind) | ✅ Complete | 3 tests | — |
+| 3H Bharat Multilingual | ✅ Foundation complete | 6 tests + UI | native review, voice search |
+| 3I List to Basket (optional) | ✅ Architecture + text path | 5 tests | configure OCR provider |
+
+Backend 513 passed / 0 failed; frontend 112/112, build 48 routes. Live: OpenSearch ✅, Kafka unavailable (DNS). See TEST_REPORT.md.
+
+---
+
+
+## 0. Stabilisation Audit Milestone — 2026-11-20
+
+**Branch:** `audit/stabilisation-and-repair` (local only) · **Base:** `feature/phase-2d-product-passport` @ `026f801` · **Phase 3:** not started (specification only, verified: no Phase 3 code in `backend/app` or `frontend/`).
+
+### 0.1 Feature quality assessment
+
+Classification: **A** production-ready & verified · **B** implemented, needs improvement · **C** partial · **D** frontend-only/mock · **E** backend-only · **F** broken · **G** missing.
+Verification: **V** verified by code review + executed tests · **PV** partially verified (tests/mocks only, or not re-audited in depth) · **UV** unverified.
+
+| Feature | Before | After | Verif. | Notes |
+| :--- | :---: | :---: | :---: | :--- |
+| Registration / login / refresh / logout | B | B | V | Argon2id, HttpOnly cookies, rotation. Rate limiter is in-memory per process. |
+| RBAC: customer / retailer / admin portals | F | B | V | Fulfilment, returns and refunds were open; fixed. |
+| CSRF | C | B | V | Now on all cookie-auth mutation routers. |
+| Addresses | A | A | PV | Tests pass; not re-audited in depth. |
+| Catalogue browse / product detail | A | A | PV | Public visibility rules verified in document builder. |
+| Search (OpenSearch path) | C | C | PV | Consumer bugs fixed; no live cluster available. |
+| Search (PostgreSQL fallback) | F | B | V | Filters/pagination/sorting/escaping fixed. |
+| Cart & guest merge | A | A | PV | Tests pass. |
+| Pricing & HMAC quotes | A | A | PV | Tests pass. |
+| Inventory reservations | F | B | V | Expired holds never released before; now scheduled. Row-locking verified. |
+| Order creation | A | A | PV | Ownership/expiry checks reviewed. |
+| Order cancellation | B | B | PV | Restock + refund path reviewed. |
+| Shipments / tracking | F | C | V | Secured + state machine; carrier integration simulated (DISC-08); no admin UI. |
+| Returns | F | B | V | Secured, state machine, honest refund status. |
+| Razorpay payment + server verification | B | B | PV | Signature + server fetch + capture verified in code/tests; live sandbox not exercised. |
+| Razorpay webhooks | A | A | V | HMAC mandatory, dedupe, leases. |
+| Refunds | F | B | V | Customer self-refund closed. |
+| Retailer listings / inventory | B | B | PV | Negative stock & below-reserved guarded. |
+| Retailer order management | F | B | V | Unpaid fulfilment blocked; cancellation restocks + refunds. |
+| Admin catalogue / retailers / deals / passport | B | B | PV | CSRF added. |
+| In-app notifications | B | B | PV | Email/SMS not implemented (G). |
+| Image / media uploads | G | G | V | URL-only (validated). No object storage (DISC-01). |
+| Kafka outbox publishing | F | C | PV | Now started + events emitted; live broker untested. |
+| Kafka consumers (inbox, DLQ) | C | C | PV | Tested with in-memory doubles. |
+| Missions, Substitutes, Intent Memory, Product Passport (Phase 2) | A | A | PV | Test-verified; not re-audited in depth. |
+| Frontend build / types / lint / unit tests | A | A | V | 36 routes build; 100/100 tests. Browser E2E not executed. |
+
+### 0.2 Phase 3 readiness
+
+Prerequisites now in place: working outbox → Kafka publishing (needed by Sale Stream, Demand Gap, Price Intelligence), catalogue/stock events (Price Intelligence, Dukaan vs Dukaan), secured back-office authorisation pattern, reliable reservation expiry (Community Buying, Dukaan vs Dukaan). Blocking before Phase 3 *production*: live Kafka/OpenSearch verification, shared rate-limit store, media storage (Handwritten List to Basket needs uploads).
+
+---
+
 
 ## 1. Executive Summary
 
@@ -51,7 +115,7 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | `1a0ce91` | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
 | **#29** | `feature/phase-2b-substitute-intelligence` | Phase 2B: Basket Substitute Intelligence | `e3ccf0e` | 427 backend / 82 frontend | Intelligent substitute discovery engine, 5 explainable tiers (Closest Match, Budget Friendly, Better Value, Premium Upgrade, Available Now), spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
 | **#30** | `feature/phase-2c-intent-memory` | Phase 2C: Basket Intent Memory | `9adede6` | 437 backend / 93 frontend | Customer preference profiles, recurring intentions (no auto-orders), granular memory cards, mission & substitute personalization boosts with transparent explanations, dedicated dashboard `/account/intent`, strict opt-in consent controls. |
-| **#31** | `feature/phase-2d-product-passport` | Phase 2D: Basket Product Passport | *Current* | 446 backend / 99 frontend | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle (PENDING default, admin moderation queue, mandatory rejection reasons, edit re-triggering), customer PDP card, retailer submission portal, admin moderation portal. |
+| **#31** | `feature/phase-2d-product-passport` | Phase 2D: Basket Product Passport | `026f801` (PR #31) | 448 backend / 100 frontend | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle with non-destructive revision audit trail (`0020_claim_review_history`), public listing visibility invariant, customer PDP card, retailer submission portal, admin moderation portal. |
 
 ---
 

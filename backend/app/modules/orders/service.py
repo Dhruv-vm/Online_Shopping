@@ -51,6 +51,46 @@ from app.modules.pricing.models import QuoteStatus
 
 logger = logging.getLogger(__name__)
 
+# Allowed post-purchase lifecycle transitions. Anything not listed is rejected so
+# that privileged callers cannot replay side effects (refunds, restocking) or
+# jump an order/return into an arbitrary state.
+RETURN_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "REQUESTED": frozenset({"APPROVED", "REJECTED", "CANCELLED"}),
+    "APPROVED": frozenset({"PICKUP_PENDING", "RECEIVED", "CANCELLED"}),
+    "PICKUP_PENDING": frozenset({"RECEIVED", "CANCELLED"}),
+    "RECEIVED": frozenset({"INSPECTED"}),
+    "INSPECTED": frozenset({"REFUND_PENDING", "REFUNDED", "REJECTED"}),
+    "REFUND_PENDING": frozenset({"REFUNDED"}),
+    "REFUNDED": frozenset(),
+    "REJECTED": frozenset(),
+    "CANCELLED": frozenset(),
+}
+
+SHIPMENT_STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
+    "LABEL_CREATED": frozenset(
+        {
+            "PICKED_UP",
+            "IN_TRANSIT",
+            "OUT_FOR_DELIVERY",
+            "DELIVERED",
+            "EXCEPTION",
+            "CANCELLED",
+        }
+    ),
+    "PICKED_UP": frozenset(
+        {"IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "EXCEPTION"}
+    ),
+    "IN_TRANSIT": frozenset({"OUT_FOR_DELIVERY", "DELIVERED", "EXCEPTION"}),
+    "OUT_FOR_DELIVERY": frozenset({"DELIVERED", "EXCEPTION"}),
+    "EXCEPTION": frozenset(
+        {"IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"}
+    ),
+    "DELIVERED": frozenset(),
+    "CANCELLED": frozenset(),
+}
+
+_SHIPMENT_FROZEN_ORDER_STATES = frozenset({"CANCELLED", "RETURNED", "PENDING_PAYMENT"})
+
 
 def compute_canonical_request_hash(
     req: CreateOrderRequest | None = None,
@@ -541,6 +581,13 @@ class OrderService:
         quote.is_consumed = True
         quote.status = QuoteStatus.CONSUMED.value
         quote.consumed_at = now
+
+        # Phase 3: special prices applied to this quote are single-use.
+        from app.modules.pricing.awards import consume_awards_for_quote
+
+        await consume_awards_for_quote(
+            self.session, quote_id=quote.id, order_id=order_id
+        )
 
         # 9. Selective Cart Reconciliation
         if quote.cart_id:
@@ -1165,6 +1212,7 @@ class OrderService:
 
         now = datetime.now(UTC)
         prev_status = shipment.status
+        prev_order_status = order.status
         target_status = req.status.strip().upper()
 
         if target_status not in [s.value for s in ShipmentStatus]:
@@ -1172,6 +1220,25 @@ class OrderService:
                 code="INVALID_SHIPMENT_STATUS",
                 message=f"Status '{target_status}' is not a valid shipment status.",
                 status_code=400,
+            )
+
+        if order.status in _SHIPMENT_FROZEN_ORDER_STATES:
+            raise AppException(
+                code="INVALID_ORDER_STATE",
+                message=f"Cannot update shipments for an order in status '{order.status}'.",
+                status_code=409,
+            )
+
+        if target_status == prev_status:
+            # Idempotent no-op: do not duplicate history, notifications or events.
+            return shipment
+        if target_status not in SHIPMENT_STATUS_TRANSITIONS.get(
+            prev_status, frozenset()
+        ):
+            raise AppException(
+                code="INVALID_SHIPMENT_TRANSITION",
+                message=f"Shipment cannot move from '{prev_status}' to '{target_status}'.",
+                status_code=409,
             )
 
         shipment.status = target_status
@@ -1197,7 +1264,7 @@ class OrderService:
                 self.session.add(
                     OrderStatusHistory(
                         order_id=order.id,
-                        from_status=prev_status,
+                        from_status=prev_order_status,
                         to_status=OrderStatus.OUT_FOR_DELIVERY.value,
                         reason="Out for delivery",
                     )
@@ -1219,13 +1286,35 @@ class OrderService:
 
         elif target_status == ShipmentStatus.DELIVERED.value:
             shipment.delivered_at = now
+            # Partial fulfilment: the order is only DELIVERED once every
+            # non-cancelled shipment of the order has been delivered.
+            from sqlalchemy import select as _select
+
+            sibling_statuses = (
+                (
+                    await self.session.execute(
+                        _select(Shipment.status).where(
+                            Shipment.order_id == order.id, Shipment.id != shipment.id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if any(
+                s
+                not in (ShipmentStatus.DELIVERED.value, ShipmentStatus.CANCELLED.value)
+                for s in sibling_statuses
+            ):
+                await self.session.flush()
+                return shipment
             order.status = OrderStatus.DELIVERED.value
             order.delivered_at = now
             order.version += 1
             self.session.add(
                 OrderStatusHistory(
                     order_id=order.id,
-                    from_status=prev_status,
+                    from_status=prev_order_status,
                     to_status=OrderStatus.DELIVERED.value,
                     reason="Package delivered",
                 )
@@ -1544,8 +1633,13 @@ class OrderService:
         self,
         return_id: uuid.UUID,
         req: ReturnStatusUpdateRequest,
+        actor: str = "ADMIN",
     ) -> OrderReturn:
-        """Updates return lifecycle, optionally approving restock and issuing refund."""
+        """Updates return lifecycle, optionally approving restock and issuing refund.
+
+        Transitions are validated against RETURN_STATUS_TRANSITIONS so restocking and
+        refunds can only ever happen once per return.
+        """
         ret = await self.repo.get_return_by_id_for_update(return_id)
         if not ret:
             raise AppException(
@@ -1571,6 +1665,12 @@ class OrderService:
             )
 
         from_status = ret.status
+        if target_status not in RETURN_STATUS_TRANSITIONS.get(from_status, frozenset()):
+            raise AppException(
+                code="INVALID_RETURN_TRANSITION",
+                message=f"Return cannot move from '{from_status}' to '{target_status}'.",
+                status_code=409,
+            )
         ret.status = target_status
         now = datetime.now(UTC)
 
@@ -1611,9 +1711,14 @@ class OrderService:
                     )
                     ret.payment_refund_id = refund_resp.refund_id
                 except Exception as e:
+                    # Never report a refund that did not happen: park the return in
+                    # REFUND_PENDING so operators / automation can retry it.
                     logger.warning(
                         "Refund processing failed for return %s: %s", ret.id, e
                     )
+                    target_status = ReturnStatus.REFUND_PENDING.value
+                    ret.status = target_status
+                    ret.resolved_at = None
 
         # Append return history
         history = ReturnStatusHistory(
@@ -1622,7 +1727,7 @@ class OrderService:
             from_status=from_status,
             to_status=target_status,
             reason=req.admin_notes or f"Return transitioned to {target_status}",
-            actor="ADMIN",
+            actor=actor[:64],
         )
         self.session.add(history)
 

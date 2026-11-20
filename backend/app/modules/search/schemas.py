@@ -56,6 +56,11 @@ class SearchResponseSchema(BaseModel):
     engine: Literal["opensearch", "postgres_fallback"] = "opensearch"
     facets: SearchFacets | None = None
     took_ms: float = 0.0
+    # Phase 3H Bharat Multilingual: how the query was interpreted.
+    original_query: str | None = None
+    interpreted_query: str | None = None
+    detected_language: str = "en"
+    query_translated: bool = False
 
 
 class SuggestionItem(BaseModel):

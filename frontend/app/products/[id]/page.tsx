@@ -29,6 +29,7 @@ import { useCart } from "@/lib/cart/cart-context";
 import { useCompare } from "@/lib/compare/compare-context";
 import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 import { ProductPassportSection } from "@/components/passport/ProductPassportSection";
+import { PriceIntelligencePanel } from "@/components/phase3/price-intelligence";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -656,6 +657,11 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Basket Price Intelligence (Phase 3F) */}
+      <div className="mt-8">
+        <PriceIntelligencePanel listingId={currentListing?.id} />
       </div>
 
       {/* Product Passport Section (Phase 2D) */}

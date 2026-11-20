@@ -13,10 +13,22 @@ from app.modules.identity.security import decode_access_token
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP handling reverse proxy headers."""
+    """Extract the client IP address.
+
+    X-Forwarded-For is client-controlled, so it is only honoured when the app is
+    explicitly configured to sit behind a known number of trusted reverse proxies
+    (TRUSTED_PROXY_COUNT > 0). In that case the address appended by the outermost
+    trusted proxy is used. Otherwise the direct peer address is used, which stops
+    attackers from rotating spoofed IPs to bypass the login rate limiter.
+    """
+    from app.core.config import settings
+
+    trusted_hops = int(getattr(settings, "TRUSTED_PROXY_COUNT", 0) or 0)
     forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+    if trusted_hops > 0 and forwarded_for:
+        hops = [h.strip() for h in forwarded_for.split(",") if h.strip()]
+        if hops:
+            return hops[-trusted_hops] if len(hops) >= trusted_hops else hops[0]
     if request.client:
         return request.client.host
     return "127.0.0.1"
@@ -71,7 +83,11 @@ async def get_current_user(
         try:
             session_id = uuid.UUID(sid_str)
             session = await repo.get_session_by_id(session_id)
-            if not session or session.is_revoked:
+            if (
+                not session
+                or session.is_revoked
+                or getattr(session, "user_id", user_id) != user_id
+            ):
                 raise AppException(
                     code="SESSION_REVOKED",
                     message="Session has been revoked or logged out.",
@@ -89,7 +105,7 @@ async def get_current_user(
         raise AppException(
             code="USER_NOT_FOUND",
             message="User account no longer exists.",
-            status_code=404,
+            status_code=401,
         )
 
     if not user.is_active:
@@ -154,11 +170,31 @@ async def get_current_retailer(
     return retailer
 
 
+_CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def _is_local_dev_origin(origin: str) -> bool:
+    """Exact hostname match for localhost origins (never a substring match)."""
+    from urllib.parse import urlsplit
+
+    try:
+        host = (urlsplit(origin).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
 async def verify_csrf_token(
     request: Request,
     x_csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
 ) -> None:
-    """Verify CSRF token and origin for cookie-based state-mutating requests."""
+    """Verify CSRF token and origin for cookie-based state-mutating requests.
+
+    Safe (read-only) methods are exempt so this dependency can be attached at
+    router level without breaking GET requests.
+    """
+    if request.method.upper() in _CSRF_SAFE_METHODS:
+        return
     # If the request authenticates via explicit Authorization header, ambient CSRF is not applicable
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -182,7 +218,9 @@ async def verify_csrf_token(
         is_allowed = any(
             origin_base == allowed.rstrip("/") for allowed in allowed_origins
         )
-        if not is_allowed and not any(h in origin for h in ["localhost", "127.0.0.1"]):
+        if not is_allowed and (
+            settings.is_production or not _is_local_dev_origin(origin_base)
+        ):
             raise AppException(
                 code="CSRF_ORIGIN_INVALID",
                 message="Cross-origin request forbidden.",
@@ -204,3 +242,35 @@ async def verify_csrf_token(
             message="CSRF token validation failed.",
             status_code=403,
         )
+
+
+async def require_admin_or_internal_service(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> str:
+    """Authorise privileged operational endpoints (fulfilment, returns, refunds).
+
+    Accepts either a valid internal service key (X-Internal-Service-Key /
+    X-Internal-Token) for back-office automation, or an authenticated ADMIN user.
+    Cookie-authenticated admins must also pass CSRF validation.
+    Returns an actor label for audit history.
+    """
+    from app.core.config import settings
+
+    internal_key = request.headers.get("X-Internal-Service-Key") or request.headers.get(
+        "X-Internal-Token"
+    )
+    if internal_key and settings.INTERNAL_SERVICE_KEY:
+        configured = settings.INTERNAL_SERVICE_KEY.get_secret_value()
+        if configured and hmac.compare_digest(internal_key, configured):
+            return "INTERNAL_SERVICE"
+
+    user = await get_current_user(request, db)
+    if user.role != "admin":
+        raise AppException(
+            code="FORBIDDEN",
+            message="Insufficient permissions. Required role: admin.",
+            status_code=403,
+        )
+    await verify_csrf_token(request, request.headers.get("X-CSRF-Token"))
+    return f"ADMIN:{user.id}"

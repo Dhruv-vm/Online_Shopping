@@ -11,6 +11,7 @@ from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     get_current_user_optional,
 )
+from app.modules.identity.dependencies import verify_csrf_token
 from app.modules.identity.models import User
 from app.modules.inventory.dependencies import verify_internal_service_key
 from app.modules.inventory.schemas import (
@@ -21,7 +22,12 @@ from app.modules.inventory.schemas import (
 )
 from app.modules.inventory.service import ReservationService
 
-router = APIRouter(tags=["inventory-reservations"])
+router = APIRouter(
+    tags=["inventory-reservations"], dependencies=[Depends(verify_csrf_token)]
+)
+# Service-to-service endpoints authenticate with X-Internal-Service-Key, never
+# with browser cookies, so they are kept off the CSRF-protected router.
+internal_router = APIRouter(tags=["inventory-reservations-internal"])
 
 
 def _extract_ownership_identifiers(
@@ -116,7 +122,7 @@ async def release_reservation(
     )
 
 
-@router.post(
+@internal_router.post(
     "/internal/reservations/cleanup-expired",
     response_model=ReservationCleanupResponse,
     summary="Internal cleanup endpoint to expire reservations past TTL and restore stock",

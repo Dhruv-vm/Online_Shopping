@@ -28,6 +28,10 @@ class User(Base):
     )
     phone: Mapped[str | None] = mapped_column(String(15), index=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Phase 3H: preferred UI / assistant language (ISO 639-1, see i18n.lexicon)
+    preferred_language: Mapped[str] = mapped_column(
+        String(8), default="en", server_default="en", nullable=False
+    )
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, index=True, nullable=False

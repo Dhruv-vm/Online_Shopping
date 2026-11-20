@@ -1,3 +1,12 @@
+import os
+
+# Safety guard: the repository .env may point at live (Aiven) Kafka/OpenSearch.
+# Unit/integration tests must never write to shared infrastructure, so these are
+# blanked unless a live-infrastructure run is explicitly requested.
+if os.environ.get("BASKET_LIVE_INFRA_TESTS") != "1":
+    os.environ["OPENSEARCH_URL"] = ""
+    os.environ["KAFKA_BOOTSTRAP_SERVERS"] = ""
+
 from collections.abc import AsyncGenerator
 from pathlib import Path
 

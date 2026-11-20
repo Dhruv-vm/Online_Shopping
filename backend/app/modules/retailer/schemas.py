@@ -2,7 +2,9 @@ import datetime
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.core.validation import validate_media_url
 
 # ================= Profile & Overview Schemas =================
 
@@ -240,6 +242,12 @@ class RetailerProductCreateRequest(BaseModel):
     description: str | None = Field(None, max_length=2000)
     image_url: str | None = Field(None, max_length=1000)
     variant_name: str = Field("Standard", min_length=1, max_length=100)
+
+    @field_validator("image_url")
+    @classmethod
+    def _validate_image_url(cls, v: str | None) -> str | None:
+        return validate_media_url(v)
+
     sku: str = Field(..., min_length=3, max_length=100)
     seller_sku: str | None = Field(None, max_length=100)
     original_price_paise: int = Field(..., gt=0)

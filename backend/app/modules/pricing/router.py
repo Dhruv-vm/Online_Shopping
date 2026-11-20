@@ -12,7 +12,7 @@ from app.modules.cart.dependencies import (
     get_cart_context,
     get_current_user_optional,
 )
-from app.modules.identity.dependencies import get_current_user
+from app.modules.identity.dependencies import get_current_user, verify_csrf_token
 from app.modules.identity.models import User
 from app.modules.pricing.quote_service import QuoteService
 from app.modules.pricing.schemas import (
@@ -21,7 +21,7 @@ from app.modules.pricing.schemas import (
     QuoteValidationResponse,
 )
 
-router = APIRouter(tags=["pricing-quotes"])
+router = APIRouter(tags=["pricing-quotes"], dependencies=[Depends(verify_csrf_token)])
 
 
 def _extract_ownership_identifiers(

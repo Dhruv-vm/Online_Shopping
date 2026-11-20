@@ -276,6 +276,30 @@ export default function RetailerLayout({
                 </Link>
 
                 <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
+                  Marketplace
+                </div>
+                {[
+                  ["/retailer/demand-gaps", "Demand Gaps"],
+                  ["/retailer/exchange", "RFQ Bids"],
+                  ["/retailer/auctions", "Dukaan vs Dukaan"],
+                  ["/retailer/community-buying", "Group Buys"],
+                  ["/retailer/negotiation", "Negotiator Rules"],
+                ].map(([href, label]) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                      pathname.startsWith(href)
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 font-semibold"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                    {pathname.startsWith(href) && <ChevronRight className="h-4 w-4 text-blue-400" />}
+                  </Link>
+                ))}
+
+                <div className="pt-2 pb-1 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
                   Store Management
                 </div>
 

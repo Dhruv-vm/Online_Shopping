@@ -726,6 +726,11 @@ class ApiClient {
     );
   }
 
+  /**
+   * Issue a refund against an order capture.
+   * ADMIN / INTERNAL ONLY since the 2026-11 audit: customers receive 403. Customer
+   * refunds flow through order cancellation and the returns workflow instead.
+   */
   public async requestRefund(
     orderId: string,
     payload: PaymentRefundRequest,
