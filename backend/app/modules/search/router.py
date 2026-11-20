@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -11,6 +12,7 @@ from app.modules.search.schemas import SearchResponseSchema, SuggestionsResponse
 from app.modules.search.service import SearchService
 
 router = APIRouter(prefix="/search", tags=["Search"])
+logger = logging.getLogger(__name__)
 
 _search_service = SearchService()
 
@@ -21,6 +23,7 @@ def get_search_service() -> SearchService:
 
 @router.get("", response_model=SearchResponseSchema)
 async def search_products(
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db_session)],
     service: Annotated[SearchService, Depends(get_search_service)],
     q: Annotated[str | None, Query(description="Free-text search query")] = None,
@@ -53,7 +56,9 @@ async def search_products(
     Universal multi-category, multi-retailer product search API.
     Guaranteed high availability via circuit breaker with transparent SQL fallback.
     """
-    return await service.search(
+    from app.core.config import settings
+
+    result = await service.search(
         db_session=db,
         q=q,
         category_slug=category,
@@ -65,8 +70,34 @@ async def search_products(
         sort=sort,
         page=page,
         page_size=page_size,
-        force_fallback=force_fallback,
+        # Diagnostic switch only; in production it would let any caller bypass
+        # OpenSearch and push load onto PostgreSQL.
+        force_fallback=force_fallback and not settings.is_production,
     )
+    if result.total == 0 and q and len(q.strip()) >= 2 and page == 1:
+        await _record_zero_search(request, db, q.strip(), category)
+    return result
+
+
+async def _record_zero_search(
+    request: Request, db: AsyncSession, q: str, category_slug: str | None
+) -> None:
+    """Phase 3A: a search with no results is an unmet-demand signal."""
+    try:
+        from app.modules.cart.dependencies import get_current_user_optional
+        from app.modules.demand.service import DemandService, caller_identity
+
+        user = await get_current_user_optional(request, db)
+        uid, guest = caller_identity(request, user)
+        async with db.begin_nested():
+            await DemandService(db).record_signal(
+                signal_type="ZERO_SEARCH",
+                query_text=q[:200],
+                user_id=uid,
+                guest_token_hash=guest,
+            )
+    except Exception as exc:  # demand capture must never break search
+        logger.warning("Zero-result demand capture skipped: %s", exc)
 
 
 @router.get("/suggestions", response_model=SuggestionsResponse)

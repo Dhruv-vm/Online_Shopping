@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import app.core.events.inbox  # noqa: F401
 import app.modules.cart.models  # noqa: F401
 import app.modules.catalogue.models  # noqa: F401
+import app.modules.demand.models  # noqa: F401
 import app.modules.i18n.models  # noqa: F401
 import app.modules.identity.models  # noqa: F401
 import app.modules.intent.models  # noqa: F401

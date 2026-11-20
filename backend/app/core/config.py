@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     PAYMENT_RECONCILE_INTERVAL_SECONDS: float = 120.0
     PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS: float = 300.0
 
+    # Phase 3 marketplace policy defaults
+    DEMAND_POOL_DEFAULT_THRESHOLD: int = (
+        2  # unique customers before retailers see a pool
+    )
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
+
     # Internal Service Security (Phase 2D - background worker crons, internal tasks)
     # Must be set via environment variable. No hardcoded default is permitted in production.
     INTERNAL_SERVICE_KEY: SecretStr | None = None
