@@ -52,6 +52,10 @@ class Retailer(Base):
     business_hours: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     policies: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Phase 3: PIN codes this store delivers to. Empty list = not restricted.
+    service_pincodes: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
     verification_status: Mapped[str] = mapped_column(
         String(32), default="VERIFIED", index=True, nullable=False
     )

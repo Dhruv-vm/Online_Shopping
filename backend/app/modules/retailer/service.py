@@ -455,6 +455,7 @@ class RetailerService:
 
         # Load fresh relationships
         full_listing = await self._get_full_listing(listing.id, retailer.id)
+        await self._after_price_change(full_listing, None)
         if variant.product_id:
             await self._sync_product_search(variant.product_id)
         return self._build_listing_response(full_listing)
@@ -503,6 +504,8 @@ class RetailerService:
                 message=f"Selling price ({new_selling} paise) cannot exceed MRP ({new_orig} paise).",
                 status_code=400,
             )
+        previous_selling = int(listing.selling_price_paise)
+        previous_mrp = int(listing.original_price_paise)
 
         if req.seller_sku is not None:
             listing.seller_sku = req.seller_sku.strip() or None
@@ -522,9 +525,49 @@ class RetailerService:
 
         await self.session.flush()
         await self.session.refresh(listing)
+        if (
+            int(listing.selling_price_paise) != previous_selling
+            or int(listing.original_price_paise) != previous_mrp
+        ):
+            await self._after_price_change(listing, previous_selling)
         if listing.variant and listing.variant.product_id:
             await self._sync_product_search(listing.variant.product_id)
         return self._build_listing_response(listing)
+
+    async def _after_price_change(
+        self, listing: ProductListing, previous_selling: int | None
+    ) -> None:
+        """Phase 3: record price history and publish price-change signals."""
+        from app.core.events.marketplace_events import enqueue_marketplace_event
+        from app.modules.price_intel.service import record_price_tick
+
+        await record_price_tick(
+            self.session,
+            listing_id=listing.id,
+            selling_price_paise=listing.selling_price_paise,
+            mrp_paise=listing.original_price_paise,
+        )
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="price.changed",
+            aggregate_type="listing",
+            aggregate_id=listing.id,
+            payload={
+                "listing_id": listing.id,
+                "previous_price_paise": previous_selling,
+                "price_paise": int(listing.selling_price_paise),
+                "mrp_paise": int(listing.original_price_paise),
+            },
+        )
+        if (
+            previous_selling is not None
+            and listing.selling_price_paise < previous_selling
+        ):
+            from app.modules.sale_stream.service import record_price_drop
+
+            await record_price_drop(
+                self.session, listing=listing, previous_price_paise=previous_selling
+            )
 
     async def delete_listing(self, listing_id: uuid.UUID, retailer: Retailer) -> None:
         self._assert_verified_and_active(retailer, "delete store listings")
@@ -955,6 +998,7 @@ class RetailerService:
         await self.session.flush()
 
         full_listing = await self._get_full_listing(listing.id, retailer.id)
+        await self._after_price_change(full_listing, None)
         return self._build_listing_response(full_listing)
 
     # ================= Retailer Orders =================
@@ -1423,6 +1467,9 @@ class RetailerService:
         )
         self.session.add(discount)
         await self.session.flush()
+        from app.modules.sale_stream.service import record_flash_deal
+
+        await record_flash_deal(self.session, discount=discount)
         return RetailerOfferItem.model_validate(discount)
 
     async def update_offer(

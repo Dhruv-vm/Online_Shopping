@@ -21,8 +21,10 @@ from app.modules.passport.router import (
 )
 from app.modules.payments.router import internal_router as internal_payments_router
 from app.modules.payments.router import router as payments_router
+from app.modules.price_intel.router import router as price_intel_router
 from app.modules.pricing.router import router as pricing_router
 from app.modules.retailer.router import router as retailer_router
+from app.modules.sale_stream.router import router as sale_stream_router
 from app.modules.search.router import router as search_router
 from app.modules.substitutes.router import router as substitutes_router
 
@@ -76,6 +78,10 @@ api_router.include_router(retailer_router)
 
 # Mount Admin Portal endpoints (Phase 5A)
 api_router.include_router(admin_router)
+
+# Phase 3 marketplace features
+api_router.include_router(price_intel_router)
+api_router.include_router(sale_stream_router)
 
 
 @api_router.get("/info", tags=["System"])

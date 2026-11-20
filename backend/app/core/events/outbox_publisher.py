@@ -84,6 +84,10 @@ def get_topic_for_event(event_type: str) -> str:
         return "basket.events.catalogue"
     if any(etype.startswith(prefix) for prefix in ("inventory.", "store_inventory.")):
         return "basket.events.inventory"
+    from app.core.events.marketplace_events import MARKETPLACE_EVENT_PREFIXES
+
+    if etype.startswith(MARKETPLACE_EVENT_PREFIXES):
+        return "basket.events.marketplace"
     raise ValueError(f"No canonical Kafka topic mapping for event_type '{event_type}'")
 
 

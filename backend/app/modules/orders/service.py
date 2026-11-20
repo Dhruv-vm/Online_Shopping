@@ -582,6 +582,13 @@ class OrderService:
         quote.status = QuoteStatus.CONSUMED.value
         quote.consumed_at = now
 
+        # Phase 3: special prices applied to this quote are single-use.
+        from app.modules.pricing.awards import consume_awards_for_quote
+
+        await consume_awards_for_quote(
+            self.session, quote_id=quote.id, order_id=order_id
+        )
+
         # 9. Selective Cart Reconciliation
         if quote.cart_id:
             cart_items = await self.repo.get_cart_items_for_update(quote.cart_id)

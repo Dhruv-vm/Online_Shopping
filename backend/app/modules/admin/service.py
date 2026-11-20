@@ -1221,6 +1221,9 @@ class AdminService:
         )
         self.session.add(deal)
         await self.session.flush()
+        from app.modules.sale_stream.service import record_flash_deal
+
+        await record_flash_deal(self.session, discount=deal)
 
         return await self.get_deal(deal.id)
 

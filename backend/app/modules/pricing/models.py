@@ -284,3 +284,69 @@ class CheckoutQuoteItem(Base):
             name="chk_quote_item_taxable_base_positive",
         ),
     )
+
+
+class PriceAwardSource(enum.StrEnum):
+    NEGOTIATION = "NEGOTIATION"
+    GROUP_BUY = "GROUP_BUY"
+    EXCHANGE = "EXCHANGE"
+    AUCTION = "AUCTION"
+
+
+class PriceAwardStatus(enum.StrEnum):
+    ACTIVE = "ACTIVE"
+    USED = "USED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+class PriceAward(Base):
+    """A customer-specific, time-limited, single-use unit price for one listing.
+
+    Phase 3 features that settle on a special price (AI Negotiator, Community
+    Buying, Community Exchange RFQs, Dukaan vs Dukaan) issue awards instead of
+    building their own checkout. The quote service applies the best ACTIVE award
+    when it prices the customer's cart, so the negotiated price flows through the
+    existing HMAC quote -> reservation -> order -> Razorpay pipeline. The award is
+    marked USED when an order consumes the quote it was applied to.
+    """
+
+    __tablename__ = "price_awards"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("product_listings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    unit_price_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=PriceAwardStatus.ACTIVE.value, nullable=False
+    )
+    expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    quote_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    used_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("unit_price_paise > 0", name="chk_price_award_price_positive"),
+        CheckConstraint("max_quantity > 0", name="chk_price_award_qty_positive"),
+        Index("ix_price_awards_lookup", "customer_id", "listing_id", "status"),
+        Index("ix_price_awards_source", "source", "source_id"),
+        Index("ix_price_awards_quote", "quote_id"),
+    )
