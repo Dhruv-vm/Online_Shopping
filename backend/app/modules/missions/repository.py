@@ -184,6 +184,7 @@ class MissionRepository:
                 Category.is_active.is_(True),
                 Retailer.is_active.is_(True),
                 Retailer.verification_status == "VERIFIED",
+                ProductListing.hsn_code.isnot(None),
                 (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
                 > 0,
             )
@@ -251,6 +252,7 @@ class MissionRepository:
                 Product.is_active.is_(True),
                 Retailer.is_active.is_(True),
                 Retailer.verification_status == "VERIFIED",
+                ProductListing.hsn_code.isnot(None),
                 (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
                 > 0,
             )
@@ -293,6 +295,7 @@ class MissionRepository:
                 Product.is_active.is_(True),
                 Retailer.is_active.is_(True),
                 Retailer.verification_status == "VERIFIED",
+                ProductListing.hsn_code.isnot(None),
                 (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
                 > 0,
             )

@@ -48,7 +48,8 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#23** | `feature/phase5c1-authentic-marketplace` | Phase 5C.1 Authentic Marketplace | `615a4c5` | 390 backend / 68 frontend | Multi-seller storefront offers, atomic inventory hold/deduction, sales analytics. |
 | **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | `321b0dc` | 396 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, 3-tier image validation (50/50), multi-retailer single basket checkout, retailer order status isolation (migration 0015), accurate sales analytics, product comparison (`/compare`), E2E flow. |
 | **#26** | `fix/marketplace-data-and-live-sync` | Final Marketplace Cleanup & Live Sync | `8c5e212` | 403 backend / 68 frontend | Clean demo marketplace environment (2 verified demo retailers: Basket Mart & Basket Lifestyle, 10 categories, 50 products), zero dummy/orphaned listings, strict financial transaction protection. |
-| **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | *Current* | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
+| **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | `1a0ce91` | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
+| **#29** | `feature/phase-2b-substitute-intelligence` | Phase 2B: Basket Substitute Intelligence | *Current* | 427 backend / 82 frontend | Intelligent substitute discovery engine, 5 explainable tiers (Closest Match, Budget Friendly, Better Value, Premium Upgrade, Available Now), spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
 
 ---
 
@@ -259,12 +260,38 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - 9/9 dedicated frontend API client tests passing (`missions.test.ts`).
   - Strict customer tenant isolation: Customer A cannot view, update, delete, or modify items of Customer B's mission (enforced via 404/403).
 
+### 3.13 Basket Substitute Intelligence (Phase 2B Explainable Substitution & Basket Swaps)
+- **Source Files:**
+  - Backend: `backend/app/modules/substitutes/` (`schemas.py`, `service.py`, `router.py`), `backend/app/modules/cart/service.py`, `backend/app/modules/cart/router.py`, `backend/tests/test_substitute_intelligence.py`.
+  - Frontend: `frontend/components/substitutes/SubstituteModal.tsx`, `frontend/lib/api/substitutes.test.ts`, `frontend/lib/api/client.ts`, `frontend/types/index.ts`, `frontend/app/cart/page.tsx`, `frontend/app/products/[id]/page.tsx`.
+- **Substitution Engine (`SubstituteService`):**
+  - Category-isolated discovery matching real active listings and variants from verified active retailers (`Retailer.verification_status == "VERIFIED"`).
+  - 5 explainable recommendation classifications:
+    1. `CLOSEST_MATCH`: Highest specification overlap score, matching brand, and closest price proximity.
+    2. `BUDGET_FRIENDLY`: Comparable category listing priced $\ge 5\%$ or ₹100 lower.
+    3. `BETTER_VALUE`: Highly rated seller ($\ge 4.5$★) with competitive pricing ($\le 105\%$) and solid feature parity.
+    4. `PREMIUM_UPGRADE`: Higher tier model ($> 105\%$) with upgraded specifications.
+    5. `AVAILABLE_NOW`: Immediate in-stock trigger when the original item is out of stock or low stock.
+  - Transparent explanations computing matching specs, differing specs, price difference in paise, percentage savings, stock levels, and compatibility notes.
+- **Customer Basket Item Replacement (`POST /api/v1/cart/items/{item_id}/replace`):**
+  - Requires explicit customer confirmation (no automatic basket manipulation).
+  - Anti-IDOR cart item ownership validation.
+  - Category matching enforcement (rejects mismatched categories with `400 CATEGORY_MISMATCH`).
+  - Automatic quantity preservation and clamping to stock ($\le \min(available\_stock, 10)$).
+  - Automatic quantity merge if the substitute listing is already in the customer's cart.
+  - Invalidation/superseding of existing active pricing quotes (`QuoteStatus.SUPERSEDED`) to prevent stale checkouts.
+- **Verified Capabilities:**
+  - 11/11 dedicated backend integration tests passing (`test_substitute_intelligence.py`).
+  - 5/5 dedicated frontend API client tests passing (`substitutes.test.ts`).
+  - 427/427 total backend test suite passing.
+  - 82/82 total frontend test suite passing.
+
 ---
 
 ## 4. Verification & Testing Evidence Summary
 
-- **Backend Test Suite:** 412 passed (100%), 0 failures, 7 warnings (Starlette deprecation notice).
-- **Frontend Test Suite:** 77 passed (100%), 0 failures.
+- **Backend Test Suite:** 427 passed (100%), 0 failures, 8 warnings (Starlette/Alembic deprecation notice).
+- **Frontend Test Suite:** 82 passed (100%), 0 failures.
 - **Frontend Type Check:** `tsc --noEmit` passed with 0 errors.
 - **Frontend Production Build:** Next.js 15 production build succeeded (28/28 routes compiled).
 - **Linter & Formatter:** `ruff check` and `ruff format --check` passed 100% clean on all modules, tests, and migrations.
@@ -296,7 +323,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Retailer Panel Dashboard** | Retailer | Core | **Expanded (Phase 5A + 5B)** | Store profile, open/pause toggle, `/retailer/listings`, `/retailer/inventory`, overview metrics. |
 | **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
 | **Basket Mission & Guided Shopping** | Customer | Core Differentiator | **Fully Implemented (Phase 2A)** | Goal-based shopping plans, multi-product knapsack allocation, live stock & price validation, alternative product switching, one-click basket transfer. |
-| **Substitute & Price Intelligence** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.4, §3.10. |
+| **Substitute & Price Intelligence** | Customer | Core Differentiator | **Fully Implemented (Phase 2B)** | Intelligent substitute discovery engine, 5 explainable tiers, spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
 | **Demand Gap & Community Buying** | Admin / Retailer / Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.5, §3.6, §3.7. |
 | **AI Negotiator & Dukaan vs Dukaan**| Retailer / Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.8, §3.9. |
 | **Basket Product Passport** | Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.11. |

@@ -19,10 +19,12 @@ import {
   Store,
   Trash2,
   Truck,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 import { useCart } from "@/lib/cart/cart-context";
 import { createQuote, refreshQuote } from "@/lib/api/quotes";
 import { reservationApi } from "@/lib/api/reservations";
@@ -48,10 +50,24 @@ export default function CartPage() {
     updateQuantity,
     removeItem,
     clearCart,
+    refreshCart,
   } = useCart();
 
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+
+  // Substitute Intelligence State (Phase 2B)
+  const [substituteItem, setSubstituteItem] = useState<CartItem | null>(null);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
+
+  const handleOpenSubstituteModal = (item: CartItem) => {
+    setSubstituteItem(item);
+    setIsSubstituteModalOpen(true);
+  };
+
+  const handleSubstituteReplaced = async () => {
+    await refreshCart();
+  };
 
   // Quote State (Phase 2C - Server-Authoritative Pricing & Persistent Quotes)
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -516,16 +532,40 @@ export default function CartPage() {
                             </div>
                           )}
 
-                          {/* Availability / Stock Notice */}
+                          {/* Availability / Stock Notice & Intelligent Substitutes */}
                           {!item.is_available && (
-                            <div className="flex items-center gap-1 text-xs text-red-600 font-semibold pt-0.5">
-                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                              {item.validation_message || "Item unavailable"}
+                            <div className="space-y-1.5 pt-1">
+                              <div className="flex items-center gap-1 text-xs text-red-600 font-semibold">
+                                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                                {item.validation_message || "Item unavailable"}
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleOpenSubstituteModal(item)}
+                                className="h-7 text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 border-amber-500/40 font-semibold cursor-pointer"
+                              >
+                                <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-600" />
+                                Find Suitable Substitutes
+                              </Button>
                             </div>
                           )}
-                          {item.is_available && item.available_stock <= 5 && (
-                            <div className="text-[11px] text-amber-600 dark:text-amber-400 font-medium pt-0.5">
-                              Only {item.available_stock} units left in stock
+                          {item.is_available && (
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              {item.available_stock <= 5 && (
+                                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                  Only {item.available_stock} left
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSubstituteModal(item)}
+                                className="text-[11px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center gap-1 font-medium transition-colors cursor-pointer"
+                              >
+                                <Sparkles className="h-3 w-3 text-amber-500" />
+                                Explore Alternatives
+                              </button>
                             </div>
                           )}
                         </div>
@@ -902,6 +942,14 @@ export default function CartPage() {
           </Card>
         </div>
       </div>
+
+      {/* Intelligent Substitute Modal (Phase 2B) */}
+      <SubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        cartItem={substituteItem}
+        onReplaced={handleSubstituteReplaced}
+      />
     </div>
   );
 }

@@ -88,6 +88,10 @@ import type {
   MissionAlternativeItem,
   MissionAddToCartResponse,
   MissionPreviewResponse,
+  SubstituteType,
+  SubstituteListResponse,
+  CartItemReplaceRequest,
+  CartItemReplaceResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -446,6 +450,55 @@ class ApiClient {
     return this.post<CartMergeResponse>("/api/v1/cart/merge", {
       guest_token: guestToken,
     });
+  }
+
+  // ================= Substitute Intelligence (Phase 2B) =================
+  public async getListingSubstitutes(
+    listingId: string,
+    params?: {
+      type?: SubstituteType;
+      limit?: number;
+      in_stock_only?: boolean;
+    }
+  ): Promise<SubstituteListResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.type) searchParams.set("type", params.type);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.in_stock_only !== undefined)
+      searchParams.set("in_stock_only", String(params.in_stock_only));
+
+    const qs = searchParams.toString();
+    const endpoint = `/api/v1/substitutes/listings/${encodeURIComponent(listingId)}${qs ? `?${qs}` : ""}`;
+    return this.get<SubstituteListResponse>(endpoint);
+  }
+
+  public async getCartItemSubstitutes(
+    itemId: string,
+    params?: {
+      type?: SubstituteType;
+      limit?: number;
+      in_stock_only?: boolean;
+    }
+  ): Promise<SubstituteListResponse> {
+    const searchParams = new URLSearchParams();
+    if (params?.type) searchParams.set("type", params.type);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    if (params?.in_stock_only !== undefined)
+      searchParams.set("in_stock_only", String(params.in_stock_only));
+
+    const qs = searchParams.toString();
+    const endpoint = `/api/v1/cart/items/${encodeURIComponent(itemId)}/substitutes${qs ? `?${qs}` : ""}`;
+    return this.get<SubstituteListResponse>(endpoint);
+  }
+
+  public async replaceCartItem(
+    itemId: string,
+    payload: CartItemReplaceRequest
+  ): Promise<CartItemReplaceResponse> {
+    return this.post<CartItemReplaceResponse>(
+      `/api/v1/cart/items/${encodeURIComponent(itemId)}/replace`,
+      payload
+    );
   }
 
   // ================= Quotes & Pricing (Phase 2C) =================

@@ -13,6 +13,7 @@ from app.modules.payments.router import router as payments_router
 from app.modules.pricing.router import router as pricing_router
 from app.modules.retailer.router import router as retailer_router
 from app.modules.search.router import router as search_router
+from app.modules.substitutes.router import router as substitutes_router
 
 api_router = APIRouter()
 
@@ -33,6 +34,9 @@ api_router.include_router(cart_router)
 
 # Mount Basket Mission endpoints (Phase 2A)
 api_router.include_router(missions_router)
+
+# Mount Basket Substitute Intelligence endpoints (Phase 2B)
+api_router.include_router(substitutes_router)
 
 # Mount Pricing & Quotes endpoints
 api_router.include_router(pricing_router)

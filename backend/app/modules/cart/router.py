@@ -1,10 +1,11 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.exceptions import AppException
 from app.modules.cart.dependencies import (
     CartContext,
     clear_guest_cart_cookie,
@@ -23,6 +24,13 @@ from app.modules.identity.dependencies import (
     verify_csrf_token,
 )
 from app.modules.identity.models import User
+from app.modules.substitutes.schemas import (
+    CartItemReplaceRequest,
+    CartItemReplaceResponse,
+    SubstituteListResponse,
+    SubstituteType,
+)
+from app.modules.substitutes.service import SubstituteService
 
 cart_router = APIRouter(prefix="/cart", tags=["Cart"])
 
@@ -101,6 +109,72 @@ async def clear_cart(
     ctx: Annotated[CartContext, Depends(get_cart_context)],
 ) -> CartResponse:
     return await ctx.service.clear_cart(cart_id=ctx.cart.id)
+
+
+@cart_router.get(
+    "/items/{item_id}/substitutes",
+    response_model=SubstituteListResponse,
+    summary="Get substitute recommendations for an item in the active cart",
+)
+async def get_cart_item_substitutes(
+    item_id: uuid.UUID,
+    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    type: Annotated[
+        SubstituteType | None,
+        Query(description="Filter by substitute category"),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=20, description="Maximum number of substitutes"),
+    ] = 10,
+    in_stock_only: Annotated[
+        bool,
+        Query(description="Only return verified in-stock substitutes"),
+    ] = True,
+) -> SubstituteListResponse:
+    # Ensure item belongs to active cart
+    item = await ctx.service.repo.get_cart_item_by_id(item_id)
+    if not item or item.cart_id != ctx.cart.id:
+        raise AppException(
+            code="ITEM_NOT_FOUND",
+            message="Cart item not found.",
+            status_code=404,
+        )
+
+    sub_service = SubstituteService(db)
+    return await sub_service.get_substitutes_for_listing(
+        listing_id=item.listing_id,
+        filter_type=type,
+        limit=limit,
+        in_stock_only=in_stock_only,
+    )
+
+
+@cart_router.post(
+    "/items/{item_id}/replace",
+    response_model=CartItemReplaceResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_csrf_token)],
+    summary="Replace a cart item with an intelligent substitute",
+)
+async def replace_cart_item(
+    item_id: uuid.UUID,
+    body: CartItemReplaceRequest,
+    ctx: Annotated[CartContext, Depends(get_cart_context)],
+) -> CartItemReplaceResponse:
+    updated_cart, old_id, new_id = await ctx.service.replace_item(
+        cart_id=ctx.cart.id,
+        item_id=item_id,
+        new_listing_id=body.new_listing_id,
+        quantity=body.quantity,
+    )
+    return CartItemReplaceResponse(
+        cart=updated_cart,
+        replaced_item_id=old_id,
+        new_item_id=new_id,
+        message="Item successfully replaced in your basket.",
+    )
 
 
 @cart_router.post(

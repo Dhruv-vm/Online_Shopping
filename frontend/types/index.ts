@@ -1632,3 +1632,87 @@ export interface MissionPreviewResponse {
     items_count: number;
   }[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2B: Substitute Intelligence
+// ---------------------------------------------------------------------------
+
+export type SubstituteType =
+  | "CLOSEST_MATCH"
+  | "BUDGET_FRIENDLY"
+  | "BETTER_VALUE"
+  | "PREMIUM_UPGRADE"
+  | "AVAILABLE_NOW";
+
+export type AvailabilityStatus = "IN_STOCK" | "LOW_STOCK" | "OUT_OF_STOCK";
+
+export interface SpecComparison {
+  attribute_key: string;
+  label: string;
+  original_value: unknown;
+  substitute_value: unknown;
+  is_match: boolean;
+}
+
+export interface SubstituteItem {
+  listing_id: string;
+  product_id: string;
+  product_name: string;
+  product_slug: string;
+  brand: string;
+  variant_id: string;
+  variant_name: string;
+  variant_sku: string;
+  variant_attributes: Record<string, unknown>;
+  primary_image_url?: string | null;
+  retailer_id: string;
+  retailer_name: string;
+  retailer_slug: string;
+  retailer_rating: number;
+  retailer_verification_status: string;
+  original_price_paise: number;
+  selling_price_paise: number;
+  price_diff_paise: number;
+  price_diff_percentage: number;
+  savings_percentage: number;
+  available_stock: number;
+  is_in_stock: boolean;
+  availability_status: AvailabilityStatus;
+  similarity_score: number;
+  substitute_type: SubstituteType;
+  applicable_types: SubstituteType[];
+  reason: string;
+  matching_specs: string[];
+  differing_specs: string[];
+  detailed_comparisons: SpecComparison[];
+  compatibility_notes?: string | null;
+}
+
+export interface SubstituteListResponse {
+  original_listing_id: string;
+  original_product_name: string;
+  original_product_slug: string;
+  original_brand: string;
+  original_category_id: string;
+  original_category_name: string;
+  original_selling_price_paise: number;
+  original_is_in_stock: boolean;
+  original_available_stock: number;
+  original_attributes: Record<string, unknown>;
+  substitutes: SubstituteItem[];
+  total_count: number;
+  trigger_reason?: string | null;
+}
+
+export interface CartItemReplaceRequest {
+  new_listing_id: string;
+  quantity?: number;
+}
+
+export interface CartItemReplaceResponse {
+  cart: Cart;
+  replaced_item_id: string;
+  new_item_id: string;
+  message: string;
+}
+
