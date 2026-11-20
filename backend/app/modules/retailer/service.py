@@ -560,6 +560,9 @@ class RetailerService:
                 "mrp_paise": int(listing.original_price_paise),
             },
         )
+        from app.modules.price_intel.extras import trigger_price_alerts
+
+        await trigger_price_alerts(self.session, listing.variant_id)
         if (
             previous_selling is not None
             and listing.selling_price_paise < previous_selling

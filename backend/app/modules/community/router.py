@@ -11,8 +11,12 @@ from app.modules.community.schemas import (
     CampaignCreateRequest,
     CampaignItem,
     CampaignListResponse,
+    CustomerStartRequest,
     JoinRequest,
     ShareResponse,
+    TemplateItem,
+    TemplateListResponse,
+    TemplateUpsertRequest,
 )
 from app.modules.community.service import CommunityBuyingService
 from app.modules.identity.dependencies import (
@@ -58,11 +62,34 @@ async def browse_campaigns(
     user = await get_current_user_optional(request, db)
     svc = CommunityBuyingService(db)
     items, total = await svc.list(
-        status="OPEN", retailer_id=None, limit=limit, offset=offset
+        status="OPEN", retailer_id=None, limit=limit, offset=offset, public=True
     )
     return CampaignListResponse(
         items=await svc.serialize(items, user.id if user else None), total=total
     )
+
+
+@router.get("/templates", response_model=TemplateListResponse)
+async def browse_templates(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TemplateListResponse:
+    """Public: products on which customers may start their own group buy."""
+    svc = CommunityBuyingService(db)
+    items = await svc.serialize_templates(
+        await svc.list_templates(retailer_id=None, public=True)
+    )
+    return TemplateListResponse(items=items, total=len(items))
+
+
+@router.post("/start", response_model=CampaignItem, status_code=201)
+async def customer_start_campaign(
+    payload: CustomerStartRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(require_customer)],
+) -> CampaignItem:
+    """Customer: start a group buy on retailer-published terms (creator joins)."""
+    svc = CommunityBuyingService(db)
+    return await _one(svc, await svc.start_by_customer(user.id, payload), user.id)
 
 
 @router.get("/campaigns/{campaign_id}", response_model=CampaignItem)
@@ -136,6 +163,43 @@ async def retailer_create_campaign(
     return await _one(
         svc, await svc.create(req=payload, actor_user_id=user.id, retailer=retailer)
     )
+
+
+@retailer_router.get("/templates", response_model=TemplateListResponse)
+async def retailer_templates(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+) -> TemplateListResponse:
+    svc = CommunityBuyingService(db)
+    items = await svc.serialize_templates(
+        await svc.list_templates(retailer_id=retailer.id, public=False)
+    )
+    return TemplateListResponse(items=items, total=len(items))
+
+
+@retailer_router.post("/templates", response_model=TemplateItem, status_code=201)
+async def retailer_upsert_template(
+    payload: TemplateUpsertRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+) -> TemplateItem:
+    """Publish (or replace) terms that let customers start group buys on a listing."""
+    svc = CommunityBuyingService(db)
+    t = await svc.upsert_template(retailer, payload)
+    return (await svc.serialize_templates([t]))[0]
+
+
+@retailer_router.post(
+    "/templates/{template_id}/deactivate", response_model=TemplateItem
+)
+async def retailer_deactivate_template(
+    template_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+) -> TemplateItem:
+    svc = CommunityBuyingService(db)
+    t = await svc.deactivate_template(template_id, retailer)
+    return (await svc.serialize_templates([t]))[0]
 
 
 @retailer_router.post("/campaigns/{campaign_id}/cancel", response_model=CampaignItem)
