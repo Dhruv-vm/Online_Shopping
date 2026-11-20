@@ -13,6 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,6 +65,13 @@ class DemandPool(Base):
     __table_args__ = (
         Index("ix_demand_pools_key", "normalized_product_name", "pincode", "status"),
         Index("ix_demand_pools_status_activity", "status", "last_signal_at"),
+        Index(
+            "uq_demand_pool_open",
+            "normalized_product_name",
+            text("COALESCE(pincode, '')"),
+            unique=True,
+            postgresql_where=text("status = 'OPEN'"),
+        ),
     )
 
 

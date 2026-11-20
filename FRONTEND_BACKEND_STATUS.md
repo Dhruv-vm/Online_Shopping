@@ -8,6 +8,22 @@
 
 ---
 
+## P3. Phase 3 Frontend Status & Redesign Readiness — 2026-11-20
+
+| Area | Status |
+| :--- | :--- |
+| API client | `lib/api/phase3.ts` (typed, 12 tests) for all 53 endpoints |
+| Customer pages | `/sale-stream`, `/community-buying`, `/community-buying/[id]`, `/exchange`, `/auctions`, `/list-to-basket`; PDP price-history widget; cart negotiator; zero-result “Request this product” |
+| Retailer pages | `/retailer/demand-gaps`, `/retailer/exchange`, `/retailer/auctions`, `/retailer/community-buying`, `/retailer/negotiation` (+ sidebar section) |
+| Admin pages | `/admin/demand` (+ sidebar link) |
+| i18n | `I18nProvider`, `LanguageSwitcher` in header, 8 locale files |
+| Checks | type-check 0 errors · lint 0 errors (2 old warnings) · 112/112 tests · build ✅ 48 routes |
+
+**Redesign readiness:** contracts are documented in FRONTEND_INTEGRATION_GUIDE.md (roles, error codes, money/time conventions, loading/error patterns, image data, Razorpay flow). Phase 3 pages are deliberately unstyled shells built on `components/phase3/kit.tsx`, so the redesign can replace presentation without touching data logic. Not done: browser E2E tests, visual design, `next/image` migration, out-of-stock “Notify me” button on PDP (component exists: `RequestProductButton outOfStock`).
+
+---
+
+
 ## 0. Frontend ↔ Backend Verification — Stabilisation Audit 2026-11-20
 
 | Check | Result |

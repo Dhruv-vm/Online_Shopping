@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,6 +70,12 @@ class RetailerNegotiationRule(Base):
         ),
         Index(
             "ix_negotiation_rules_retailer", "retailer_id", "listing_id", "is_active"
+        ),
+        Index(
+            "uq_negotiation_rule_scope",
+            "retailer_id",
+            text("COALESCE(listing_id, '00000000-0000-0000-0000-000000000000'::uuid)"),
+            unique=True,
         ),
     )
 

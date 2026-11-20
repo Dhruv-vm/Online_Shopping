@@ -7,6 +7,34 @@
 
 ---
 
+## P3. Phase 3 Architecture — 2026-11-20
+
+```mermaid
+flowchart LR
+    subgraph Customer
+      N[Negotiator] --> AW
+      G[Group buy success] --> AW
+      X[RFQ accept] --> AW
+      A[Auction choose] --> AW
+    end
+    AW[(price_awards\nsingle-use, customer-bound)] --> Q[Quote service\napplies best award]
+    Q --> R[Reservation] --> O[Order\nconsumes awards] --> P[Razorpay]
+    L[Listing price change] --> T[(price_history_ticks)] & S[(sale_stream_events)] & E1[[price.changed]]
+    D[Discount w/ end time] --> S
+    SR[Search zero results] --> DG[(demand_pools/signals)]
+    E1 & E2[[demand./group_buy./exchange./negotiation./auction./sale_stream.]] --> OB[(outbox_events)] --> K{{basket.events.marketplace}}
+```
+
+* **One checkout path.** Special prices never bypass quotes, reservations, orders or payment verification; they are injected as `PriceAward`s and consumed with the order.
+* **PostgreSQL is the source of truth.** Kafka carries lifecycle events (`basket.events.marketplace`, plus `product.updated` for search); OpenSearch remains the product index. Demand records are not indexed in OpenSearch: pools are filtered by status/pincode/threshold, which PostgreSQL serves directly.
+* **Real-time.** Sale Stream: cursor polling (`since`). Auctions: SSE (`text/event-stream`) or 2 s polling.
+* **Background jobs** (`core/background.py`): every 15 s close auctions, settle group buys, expire RFQs/awards/sale-stream; hourly hot sellers, price snapshot, demand expiry. All replica-safe (row locks / idempotent upserts).
+* **Locality.** `retailers.service_pincodes` (empty = unrestricted) scopes demand, RFQs and auctions.
+* **i18n.** `frontend/locales/*.json` + `I18nProvider`; backend query normalisation (`i18n/lexicon.py`) and admin-curated `content_translations`.
+
+---
+
+
 ## 0. Runtime Architecture Changes — Stabilisation Audit 2026-11-20
 
 ### 0.1 Event flow (as implemented after the audit)

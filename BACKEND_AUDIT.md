@@ -8,6 +8,52 @@
 
 ---
 
+## P3. Phase 3 Implementation & Comprehensive Final Audit — 2026-11-20
+
+> Branch `feature/phase-3-advanced-marketplace` (local; based on `audit/stabilisation-and-repair` @ `95a5de1`). Supersedes earlier sections where they conflict.
+
+### P3.1 New modules
+`demand`, `community`, `exchange`, `negotiation`, `auctions`, `price_intel`, `sale_stream`, `i18n`, `vision` under `backend/app/modules/`, plus shared `pricing/awards.py` (`PriceAward`), `cart/integration.py`, `core/events/marketplace_events.py`, `core/notify.py`, `core/pincode.py`, `core/search/versioning.py`. Migrations `0022`–`0030` (all reversible; downgrade to `0021` and re-upgrade verified). 53 new endpoints (201 operations total).
+
+### P3.2 Final audit — results by area
+
+| # | Area | Result | Evidence / notes |
+| :--- | :--- | :--- | :--- |
+| 1 | Phase 1 functionality | ✅ | All Phase 1 tests pass; one test adjusted to fulfil only paid orders (audit rule). |
+| 2 | Phase 2 (missions, substitutes, intent, passport) | ✅ | All pass; mission budget test was disturbed by Phase 3 fixtures → fixtures isolated. |
+| 3 | Phase 3 features | ✅ (3I OCR provider not configured) | 45 feature tests; see TEST_REPORT.md. |
+| 4–6 | Admin / retailer / customer workflows | ✅ API-level | Browser E2E not executed (no E2E framework in repo). |
+| 7 | Database consistency | ✅ | Empty→head and down/up verified; FK/CHECK/unique constraints on all new tables; partial unique indexes for open demand pools and negotiation-rule scope; no Phase 3 `alembic check` drift. |
+| 8 | API contracts | ✅ | Route walk = 201 operations; all documented in API_INVENTORY.md and FRONTEND_INTEGRATION_GUIDE.md. |
+| 9 | AuthN / RBAC | ✅ | Every Phase 3 mutation: role dependency + CSRF; ownership enforced in services (404 for foreign resources). Retailers/admins cannot act as customers in customer flows (403). |
+| 10 | Razorpay | ✅ (mocked) | Payment suite unchanged and green; special prices reach Razorpay only via server quotes/orders. |
+| 11 | Inventory & orders | ✅ | Awards consumed atomically with order creation; stock checks at join/bid/accept; reservations unchanged. |
+| 12 | Kafka | ⚠️ code-verified, live broker unavailable | New topic `basket.events.marketplace` (must be created in Aiven). Aiven broker DNS does not resolve. |
+| 13 | OpenSearch | ✅ live | Live Aiven probe passed (projection, versioning, search, delete). **Fixed**: unconfigured environments queried an empty mock index (0 results). |
+| 14 | Media | ⚠️ unchanged | URL-only (validated). OCR upload uses validated base64 JSON. Object storage still missing (DISC-01). |
+| 15 | Frontend/backend integration | ✅ | Typed client + 12 tests; 48 routes build. |
+| 16 | Security | ✅ | See P3.3. |
+| 17 | Performance & reliability | ✅ with notes | Suite 87.7 s; new indexes on all hot lookups; background jobs bounded (≤50–200 rows/run). Search fallback per-request aggregates are fine at current catalogue size (~800 products) but should move to OpenSearch-only at scale. |
+| 18 | Error handling | ✅ | Uniform `{error:{code,message,details}}`; zero-result demand capture isolated in a savepoint so it can never break search. |
+| 19 | Test coverage | ✅ | 513 backend (+46 vs audit), 112 frontend (+12). |
+| 20 | Documentation | ✅ | 10 documents updated/created; false claims corrected (HMAC quotes, vitest, tsvector, test isolation). |
+
+### P3.3 Security review of Phase 3
+* Floors and competing bids are never exposed (negotiation floor hidden; retailers only see best price, not who bid).
+* All prices server-computed; bids capped at the bidder's list price; awards single-use, customer-bound, time-limited.
+* Demand manipulation: unique-shopper counts use authenticated customers only; retailers/admins cannot cast signals.
+* Image intake: type allow-list + magic-byte check + 5 MB cap; OCR provider never fabricates output.
+* Live-infrastructure isolation: test suite blanks Kafka/OpenSearch unless explicitly opted in.
+
+### P3.4 Incident during Phase 3 testing (resolved)
+The repository-root `.env` configures live Aiven OpenSearch/Kafka. Early Phase 3 feature test runs did not blank these, and best-effort synchronous search sync wrote **2 test product documents** to the live `basket_products_v1` index. They were identified precisely (product ids existing only in the scratch test DB) and deleted; a guard in `tests/conftest.py` now prevents recurrence. No Kafka messages were produced (broker unreachable; publisher not started in tests).
+
+### P3.5 Correction
+The platform has **no HMAC-signed quotes** (earlier docs claimed “HMAC-SHA256 quotes”). Quotes are server-persisted and referenced by id with ownership checks, which is the actual integrity mechanism.
+
+---
+
+
 ## 0. Stabilisation Audit — 2026-11-20 (independently verified)
 
 > Branch `audit/stabilisation-and-repair` (from `feature/phase-2d-product-passport` @ `026f801`).

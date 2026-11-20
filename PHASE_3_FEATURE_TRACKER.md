@@ -15,15 +15,15 @@ This tracker documents the 9 approved **Phase 3 advanced marketplace capabilitie
 
 | Feature | Spec Ref | Category | Current Code Status | Target Release |
 | :--- | :---: | :--- | :---: | :---: |
-| **1. Demand Gap & Unmet Demand Aggregation** | §1.5, §2.9, §3.5 | Merchant Intelligence | Planned / 0% Built | Phase 3A |
-| **2. Basket Community Buying (Group Purchasing)**| §1.5, §2.8, §3.6 | Social Commerce | Planned / 0% Built | Phase 3B |
-| **3. Basket Community Exchange (Customer RFQs)** | §1.5, §2.8, §3.7 | Dynamic Sourcing | Planned / 0% Built | Phase 3C |
-| **4. AI Negotiator (Automated Deal Negotiation)** | §1.6, §2.8, §3.8 | Conversational Commerce| Planned / 0% Built | Phase 3D |
-| **5. Dukaan vs Dukaan (Multi-Retailer Bidding)** | §1.6, §2.8, §3.9 | Reverse Auction | Planned / 0% Built | Phase 3E |
-| **6. Basket Price Intelligence & Discount History** | §1.7, §2.3, §3.10| Consumer Protection | Planned / 0% Built | Phase 3F |
-| **7. Sale Stream (Real-Time Flash Deals Feed)** | §1.2, §2.4, §3.12| Live Engagement | Planned / 0% Built | Phase 3G |
-| **8. Bharat Multilingual (Regional Languages)** | §1.10, §3.13 | Inclusivity / Localization| Planned / 0% Built | Phase 3H |
-| **9. Handwritten List to Basket (Vision OCR)** | §3.14 | Smart Onboarding | Planned / 0% Built | Phase 3I (Optional) |
+| **1. Demand Gap & Unmet Demand Aggregation** | §1.5, §2.9, §3.5 | Merchant Intelligence | ✅ Implemented & tested (`0026`) | Phase 3A |
+| **2. Basket Community Buying (Group Purchasing)**| §1.5, §2.8, §3.6 | Social Commerce | ✅ Implemented & tested (`0027`) | Phase 3B |
+| **3. Basket Community Exchange (Customer RFQs)** | §1.5, §2.8, §3.7 | Dynamic Sourcing | ✅ Implemented & tested (`0028`) | Phase 3C |
+| **4. AI Negotiator (Automated Deal Negotiation)** | §1.6, §2.8, §3.8 | Conversational Commerce| ✅ Implemented & tested (`0029`, rule engine) | Phase 3D |
+| **5. Dukaan vs Dukaan (Multi-Retailer Bidding)** | §1.6, §2.8, §3.9 | Reverse Auction | ✅ Implemented & tested (`0030`) | Phase 3E |
+| **6. Basket Price Intelligence & Discount History** | §1.7, §2.3, §3.10| Consumer Protection | ✅ Implemented & tested (`0023`) | Phase 3F |
+| **7. Sale Stream (Real-Time Flash Deals Feed)** | §1.2, §2.4, §3.12| Live Engagement | ✅ Implemented & tested (`0024`, no Rewind) | Phase 3G |
+| **8. Bharat Multilingual (Regional Languages)** | §1.10, §3.13 | Inclusivity / Localization| ✅ Implemented & tested (`0025`) | Phase 3H |
+| **9. Handwritten List to Basket (Vision OCR)** | §3.14 | Smart Onboarding | ✅ Architecture + text path tested; OCR provider not configured | Phase 3I (Optional) |
 
 > [!IMPORTANT]
 > **Explicit Architectural Scope Boundary:**  
@@ -185,3 +185,23 @@ flowchart TD
 
     P3A --> P3B --> P3C --> P3D --> P3E --> P3F --> P3G --> P3H --> P3I
 ```
+
+---
+
+## 4. Implementation Record (2026-11-20, branch `feature/phase-3-advanced-marketplace`)
+
+The original specifications above are preserved unchanged. This section records how they were implemented and where implementation deliberately differs.
+
+| # | Module | Migration | Endpoints | Tests | Spec deviations / notes |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| 1 Demand Gap | `app/modules/demand` | `0026_demand_gap` | 9 | 7 | Adds `demand_pool_responses` (retailer commitments) and admin endpoints (§1.5). Retailer “service pincodes” added to `retailers` (`0022`). Unique shoppers count authenticated customers only (anti-manipulation). |
+| 2 Community Buying | `app/modules/community` | `0027_community_buying` | 11 | 3 | **No card pre-authorisation** (real payments out of scope): members pay the unlocked price at normal checkout within 48 h via a price award. Campaigns are created by retailers (own listings) or admins; customer-created campaigns need a product decision on who funds the discount. |
+| 3 Community Exchange | `app/modules/exchange` | `0028_community_exchange` | 9 | 3 | Bids are line items on the retailer's own listings (needed to convert to a checkout). “Join similar requests / aggregate demand” is served by Demand Gap pools. |
+| 4 AI Negotiator | `app/modules/negotiation` | `0029_ai_negotiator` | 7 | 5 | Deterministic rule engine with templated messages (en, hi); no LLM credential configured. Adds `bundle_extra_discount_bps`. “HMAC quote”: the codebase has no HMAC quote signing; the agreed price is locked into the server-authoritative quote. |
+| 5 Dukaan vs Dukaan | `app/modules/auctions` | `0030_dukaan_vs_dukaan` | 7 | 2 | SSE on `/auctions/{id}/live` (JSON otherwise). Customer explicitly chooses the winner after 90 s. |
+| 6 Price Intelligence | `app/modules/price_intel` | `0023_price_intelligence` | 1 | 4 | Rolling aggregation computed on read (no materialised view). Ticks store day-low as well as close. |
+| 7 Sale Stream | `app/modules/sale_stream` | `0024_sale_stream` | 1 | 3 | Polled feed with `since` cursor (SSE not needed). **Sale Stream Rewind not implemented** — expired events are never served. |
+| 8 Bharat Multilingual | `app/modules/i18n` + `frontend/locales` | `0025_bharat_multilingual` | 6 | 6 | Lightweight i18n provider instead of `next-intl` (no new dependency or `[locale]` routing before the redesign; dictionaries use the spec path and are next-intl compatible). Seed lexicon/UI strings need native-speaker review. Voice queries not implemented. |
+| 9 List to Basket | `app/modules/vision` | — | 2 | 5 | Base64 JSON upload (no `python-multipart`). No OCR provider configured → 503 `OCR_PROVIDER_UNAVAILABLE`; text path fully functional. |
+
+Shared foundation: `price_awards` (`0022`) — customer-specific single-use prices applied by the quote service and consumed by orders; `basket.events.marketplace` topic; Phase 3 background jobs. Migration numbers differ from §2 (`0021` was used by the audit).

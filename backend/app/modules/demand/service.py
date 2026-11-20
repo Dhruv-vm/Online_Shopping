@@ -139,6 +139,8 @@ class DemandService:
         elif guest_token_hash is not None:
             identity_filter = DemandSignal.guest_token_hash == guest_token_hash
 
+        # Guests can mint unlimited cart tokens, so only authenticated customers
+        # count as unique shoppers (guests still add to total demand).
         if identity_filter is not None:
             recent = (
                 await self.session.execute(
@@ -154,12 +156,15 @@ class DemandService:
             if recent:
                 return pool, True
             seen_before = (
-                await self.session.execute(
-                    select(DemandSignal.id)
-                    .where(DemandSignal.pool_id == pool.id, identity_filter)
-                    .limit(1)
-                )
-            ).first()
+                user_id is None
+                or (
+                    await self.session.execute(
+                        select(DemandSignal.id)
+                        .where(DemandSignal.pool_id == pool.id, identity_filter)
+                        .limit(1)
+                    )
+                ).first()
+            )
         else:
             seen_before = True  # anonymous signals never count as unique users
 

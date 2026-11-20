@@ -7,6 +7,73 @@
 
 ---
 
+## P3. Phase 3 Endpoints (verified 2026-11-20) — 53 new operations
+
+> Total after Phase 3: **201 operations** (198 under `/api/v1` + `/health`, `/ready`, `/metrics`), generated from the running app.
+> Schemas are in each module's `schemas.py` and the OpenAPI document (`/api/v1/openapi.json`, non-production). Frontend usage: `frontend/lib/api/phase3.ts` and **FRONTEND_INTEGRATION_GUIDE.md**. Paths are relative to `/api/v1`.
+
+| Method | Endpoint | Auth / role | Request | Response | Errors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/price-intelligence/listings/{listing_id}` | Public | `days` 7–90 | PriceIntelligence | 404 LISTING_NOT_FOUND, 422 |
+| `GET` | `/sale-stream/live` | Public | `event_type, category_slug, before, since, limit≤50` | SaleStreamResponse | 422 |
+| `GET` | `/i18n/languages` | Public | — | LanguagesResponse | — |
+| `GET` | `/i18n/normalize` | Public | `q` 1–200 | NormalizedQueryResponse | 422 |
+| `GET` | `/i18n/translations` | Public | `entity_type, lang, ids` (≤100) | TranslationsResponse | 422 INVALID_IDS/TOO_MANY_IDS/UNSUPPORTED_LANGUAGE |
+| `GET` | `/i18n/preference` | Any signed-in user | — | `{language}` | 401 |
+| `PUT` | `/i18n/preference` | Any signed-in user + CSRF | `{language}` | `{language}` | 401, 422 UNSUPPORTED_LANGUAGE |
+| `PUT` | `/admin/i18n/translations` | Admin + CSRF | `{entity_type, entity_id, language, fields{name?,description?}}` | 204 | 403, 404 ENTITY_NOT_FOUND, 422 |
+| `POST` | `/demand/signal` | Guest or customer + CSRF (cookie) | `{query_text?, listing_id?, category_id?, pincode?, signal_type}` | 201 `{pool, deduplicated}` | 403 (retailer/admin), 404, 409 LISTING_IN_STOCK, 422 |
+| `POST` | `/demand/pools/{pool_id}/join` | Guest or customer | `{pincode?}` | 201 `{pool, deduplicated}` | 403, 404 DEMAND_POOL_NOT_FOUND |
+| `GET` | `/demand/pools` | Public | `q, pincode, limit, offset` | DemandPoolList | 422 INVALID_PINCODE |
+| `GET` | `/demand/my-requests` | Signed-in | — | DemandPoolList (with offers) | 401 |
+| `GET` | `/retailer/demand-gaps` | Retailer | `pincode, category_id, limit, offset` | DemandPoolList | 403 |
+| `POST` | `/retailer/demand-gaps/{pool_id}/fulfill` | Retailer (verified) + CSRF | `{listing_id, note?}` | DemandPool | 403 PINCODE_NOT_SERVICED/RETAILER_NOT_VERIFIED, 404, 409 ALREADY_RESPONDED |
+| `GET` | `/admin/demand/pools` | Admin | `status, limit, offset` | DemandPoolList | 403 |
+| `PATCH` | `/admin/demand/pools/{pool_id}` | Admin + CSRF | `{status?, visibility_threshold?}` | DemandPool | 404, 409 OPEN_POOL_EXISTS |
+| `GET` | `/admin/demand/trends` | Admin | `days` 1–90 | DemandTrendsResponse | 403 |
+| `GET` | `/community-buying/campaigns` | Public | `limit, offset` | CampaignList | — |
+| `GET` | `/community-buying/campaigns/{id}` | Public | — | Campaign | 404 CAMPAIGN_NOT_FOUND |
+| `POST` | `/community-buying/campaigns/{id}/join` | Customer + CSRF | `{quantity 1–10}` | Campaign | 401/403, 409 ALREADY_JOINED/CAMPAIGN_FULL/CAMPAIGN_CLOSED/INSUFFICIENT_STOCK, 422 QUANTITY_LIMIT |
+| `POST` | `/community-buying/campaigns/{id}/leave` | Customer + CSRF | — | Campaign | 404 NOT_A_MEMBER, 409 |
+| `GET` | `/community-buying/campaigns/{id}/share` | Customer | — | `{url, message, whatsapp_url, sms_url}` | 409 CAMPAIGN_CLOSED |
+| `GET` | `/retailer/community-buying/campaigns` | Retailer | `status` | CampaignList | 403 |
+| `POST` | `/retailer/community-buying/campaigns` | Retailer (verified, own listing) + CSRF | CampaignCreate | 201 Campaign | 403, 404, 409 LISTING_INACTIVE, 422 |
+| `POST` | `/retailer/community-buying/campaigns/{id}/cancel` | Retailer (owner) + CSRF | — | Campaign | 404, 409 |
+| `GET` | `/admin/community-buying/campaigns` | Admin | `status` | CampaignList | 403 |
+| `POST` | `/admin/community-buying/campaigns` | Admin + CSRF | CampaignCreate | 201 Campaign | 404, 422 |
+| `POST` | `/admin/community-buying/campaigns/{id}/cancel` | Admin + CSRF | — | Campaign | 404, 409 |
+| `POST` | `/exchange/requests` | Customer + CSRF | `{title, delivery_pincode, budget_limit_paise?, items[1–20], bidding_hours}` | 201 ExchangeRequest | 422 |
+| `GET` | `/exchange/requests` | Customer | `limit, offset` | ExchangeRequestList (bids) | 401/403 |
+| `GET` | `/exchange/requests/{id}` | Customer (owner) | — | ExchangeRequest | 404 RFQ_NOT_FOUND |
+| `POST` | `/exchange/requests/{id}/accept-bid` | Customer (owner) + CSRF | `{bid_id}` | AcceptBidResponse | 404 BID_NOT_FOUND, 409 RFQ_CLOSED/BID_NO_LONGER_AVAILABLE |
+| `POST` | `/exchange/requests/{id}/cancel` | Customer (owner) + CSRF | — | ExchangeRequest | 404, 409 RFQ_CLOSED |
+| `GET` | `/retailer/exchange/requests` | Retailer | `limit, offset` | ExchangeRequestList (my_bid only) | 403 |
+| `POST` | `/retailer/exchange/requests/{id}/bids` | Retailer (verified) + CSRF | `{lines[{manifest_index, listing_id, unit_price_paise}], estimated_delivery_hours, notes?}` | 201 Bid | 403 PINCODE_NOT_SERVICED, 404, 409 RFQ_CLOSED/INSUFFICIENT_STOCK/BID_LOCKED, 422 BID_ABOVE_LIST_PRICE/BID_OVER_BUDGET/INVALID_BID_LINE |
+| `DELETE` | `/retailer/exchange/requests/{id}/bids` | Retailer + CSRF | — | 204 | 404 |
+| `GET` | `/admin/exchange/requests` | Admin | `status` | ExchangeRequestList (bids) | 403 |
+| `POST` | `/negotiate/start` | Customer + CSRF | `{target_price_paise?, max_budget_paise?, language?}` | 201 NegotiationSession | 400 EMPTY_CART, 422 UNSUPPORTED_LANGUAGE, 429 NEGOTIATION_LIMIT |
+| `POST` | `/negotiate/counter-offer` | Customer (owner) + CSRF | `{session_id, proposed_price_paise}` | NegotiationSession | 404, 409 CART_CHANGED/NEGOTIATION_CLOSED/MAX_ROUNDS_REACHED |
+| `POST` | `/negotiate/accept` | Customer (owner) + CSRF | `{session_id}` | NegotiationSession (+quote_id) | 404, 409 |
+| `GET` | `/negotiate/sessions/{id}` | Customer (owner) | — | NegotiationSession | 404 |
+| `GET` | `/retailer/negotiation-rules` | Retailer | — | Rule[] | 403 |
+| `PUT` | `/retailer/negotiation-rules` | Retailer + CSRF | RuleUpsert | Rule | 404, 422 FLOOR_ABOVE_PRICE/FLOOR_NEEDS_LISTING |
+| `DELETE` | `/retailer/negotiation-rules/{rule_id}` | Retailer (owner) + CSRF | — | 204 | 404 RULE_NOT_FOUND |
+| `POST` | `/auctions/start` | Customer + CSRF | `{pincode}` | 201 Auction | 400 EMPTY_CART, 409 AUCTION_IN_PROGRESS, 422 |
+| `GET` | `/auctions/{id}/live` | Customer (owner) | `max_seconds`; `Accept: text/event-stream` for SSE | Auction / SSE | 404 |
+| `POST` | `/auctions/{id}/accept` | Customer (owner) + CSRF | `{bid_id}` | `{auction, cart_id, message}` | 404, 409 AUCTION_STILL_LIVE/AUCTION_CLOSED/BID_NO_LONGER_AVAILABLE |
+| `POST` | `/auctions/{id}/cancel` | Customer (owner) + CSRF | — | Auction | 409 |
+| `GET` | `/retailer/auctions` | Retailer | — | AuctionList | 403 |
+| `POST` | `/retailer/auctions/{id}/bid` | Retailer (verified) + CSRF | `{bid_price_paise, delivery_eta_minutes, warranty_note?}` | 201 AuctionBid | 403 PINCODE_NOT_SERVICED, 409 AUCTION_CLOSED, 422 BID_ABOVE_LIST_PRICE/BID_NOT_LOWER/CANNOT_FULFIL_BASKET |
+| `GET` | `/admin/auctions` | Admin | `status` | AuctionList | 403 |
+| `POST` | `/vision/parse-list` | Customer + CSRF | `{text}` or `{image_base64, content_type}` | ParseListResponse | 422 (validation), 502 OCR_PROVIDER_ERROR, 503 OCR_PROVIDER_UNAVAILABLE |
+| `POST` | `/vision/build-cart` | Customer + CSRF | `{items[{listing_id, quantity}]}` | BuildCartResponse | 409 NOTHING_TO_ADD |
+
+**Modified in Phase 3:** `GET /search` (adds `original_query, interpreted_query, detected_language, query_translated`; zero-result queries are logged as demand; `force_fallback` ignored in production; uses PostgreSQL when OpenSearch is unconfigured), `POST /quotes` and checkout (apply Phase 3 price awards), `POST /orders` (consumes awards), `PATCH /retailer/listings/{id}` and `POST /retailer/listings|products` (record price history, emit `price.changed`, Sale Stream price drops), `POST /retailer/offers` and `POST /admin/deals` (flash deals).
+
+**Validation conventions:** PIN codes `^[1-9][0-9]{5}$`; quantities 1–10 (cart limit); all money integer paise > 0; ids are UUIDs; free text length-bounded per schema.
+
+---
+
 ## 0. Verified Endpoint Inventory — 2026-11-20 (generated from the running app)
 
 > Generated by walking the FastAPI router tree of `app.main:create_app()` (script kept at

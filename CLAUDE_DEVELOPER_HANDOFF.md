@@ -3,11 +3,15 @@
 > **Target Agent:** Claude (Principal Full-Stack Engineer & Architect)  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Workspace Path:** `/Users/dhruv/dhruv files/basket/Online_Shopping`  
-> **Current Feature Branch:** `audit/stabilisation-and-repair` (local; based on `feature/phase-2d-product-passport` @ `026f801`)  
+> **Current Feature Branch:** `feature/phase-3-advanced-marketplace` (local; Phase 3 on top of `audit/stabilisation-and-repair` @ `95a5de1`)  
 > **Target Base Branch:** `integration`  
 > **Handoff Date:** 2026-11-20  
 
 ---
+
+## 00. Phase 3 status (2026-11-20)
+
+All nine Phase 3 features are implemented on `feature/phase-3-advanced-marketplace` (local only). Read PHASE_3_FEATURE_TRACKER.md §4, FRONTEND_INTEGRATION_GUIDE.md and TEST_REPORT.md first. Apply migrations to your dev DB with `cd backend && .venv/bin/alembic upgrade head` (dev `basket_db` is still at `0020`). Before go-live: restore the Aiven Kafka service and create topic `basket.events.marketplace`; configure an OCR provider if 3I is wanted; native-speaker review of `frontend/locales/*.json` and `backend/app/modules/i18n/lexicon.py`.
 
 ## 0. READ FIRST — Stabilisation Audit Handoff (2026-11-20)
 

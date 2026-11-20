@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.1.0-phase3] — 2026-11-20 — Phase 3 marketplace (local branch `feature/phase-3-advanced-marketplace`)
+
+### Added
+- 3A Demand Gap (signals, pools, retailer fulfilment, admin thresholds/trends; zero-result search capture).
+- 3B Community Buying (group campaigns, join/leave/share, settlement, single-use group price at checkout).
+- 3C Community Exchange (customer RFQs, retailer line-item bids, accept into basket).
+- 3D AI Negotiator (rule-bound engine, retailer rules, quote lock-in; en/hi messages).
+- 3E Dukaan vs Dukaan (90 s reverse auctions, SSE live view, award into basket).
+- 3F Price Intelligence (daily ticks, lowest/highest/averages, genuine-discount & MRP-inflation badges).
+- 3G Sale Stream (price drops, flash deals, hot sellers; **no Rewind**).
+- 3H Bharat Multilingual (8 languages UI, Indic query normalisation, content translations, user preference).
+- 3I Handwritten List to Basket (OCR provider interface, text path, review → build cart).
+- Shared: `price_awards`, retailer `service_pincodes`, `basket.events.marketplace`, Phase 3 background jobs, migrations `0022`–`0030`, 53 endpoints, 12 frontend routes, opt-in live infra tests.
+- Docs: FRONTEND_INTEGRATION_GUIDE.md, TEST_REPORT.md.
+
+### Fixed
+- Search returned 0 results whenever OpenSearch was unconfigured (empty mock index); now uses PostgreSQL.
+- Test suite can no longer write to live Kafka/OpenSearch configured in `.env`.
+
+### Security
+- Demand unique-shopper counts resistant to guest-token inflation; non-customers cannot cast demand signals.
+
+---
+
 ## [1.0.1-audit] — 2026-11-20 — Stabilisation audit (local branch `audit/stabilisation-and-repair`)
 
 ### Security

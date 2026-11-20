@@ -10,6 +10,25 @@
 
 ---
 
+## P3. Phase 3 Milestone — Implemented & Verified (2026-11-20)
+
+| Feature | Status | Verification | Remaining |
+| :--- | :--- | :--- | :--- |
+| 3A Demand Gap | ✅ Complete | 7 tests, API + UI | retailer push notifications |
+| 3B Community Buying | ✅ Complete (no card pre-auth) | 3 tests incl. order | pre-auth & customer-created groups (product decision) |
+| 3C Community Exchange | ✅ Complete | 3 tests incl. order | — |
+| 3D AI Negotiator | ✅ Complete (rule engine) | 5 tests incl. order | LLM phrasing optional; more language templates |
+| 3E Dukaan vs Dukaan | ✅ Complete | 2 tests incl. order + SSE | — |
+| 3F Price Intelligence | ✅ Complete | 4 tests | history accrues from go-live |
+| 3G Sale Stream (no Rewind) | ✅ Complete | 3 tests | — |
+| 3H Bharat Multilingual | ✅ Foundation complete | 6 tests + UI | native review, voice search |
+| 3I List to Basket (optional) | ✅ Architecture + text path | 5 tests | configure OCR provider |
+
+Backend 513 passed / 0 failed; frontend 112/112, build 48 routes. Live: OpenSearch ✅, Kafka unavailable (DNS). See TEST_REPORT.md.
+
+---
+
+
 ## 0. Stabilisation Audit Milestone — 2026-11-20
 
 **Branch:** `audit/stabilisation-and-repair` (local only) · **Base:** `feature/phase-2d-product-passport` @ `026f801` · **Phase 3:** not started (specification only, verified: no Phase 3 code in `backend/app` or `frontend/`).

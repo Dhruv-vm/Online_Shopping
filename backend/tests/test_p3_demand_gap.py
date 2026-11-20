@@ -222,3 +222,25 @@ async def test_validation_and_rbac(async_client: AsyncClient):
     assert join.status_code == 404
     trends = await async_client.get("/api/v1/admin/demand/trends", headers=admin)
     assert trends.status_code == 200 and trends.json()["daily"]
+
+
+@pytest.mark.asyncio
+async def test_guest_tokens_cannot_inflate_unique_shoppers(async_client: AsyncClient):
+    """Security: rotating guest tokens adds total demand but never unique shoppers,
+    and retailer/admin accounts cannot cast demand signals."""
+    name = _name()
+    for _ in range(5):
+        r = await async_client.post(
+            "/api/v1/demand/signal",
+            json={"query_text": name},
+            headers={"X-Guest-Cart-Token": uuid.uuid4().hex},
+        )
+        assert r.status_code == 201
+    pool = r.json()["pool"]
+    assert pool["total_demand_count"] == 5 and pool["unique_users_count"] == 0
+    _, retailer = await make_user("retailer")
+    assert (
+        await async_client.post(
+            "/api/v1/demand/signal", json={"query_text": name}, headers=retailer
+        )
+    ).status_code == 403

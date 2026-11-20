@@ -43,6 +43,18 @@ admin_router = APIRouter(
 )
 
 
+def _customers_only(user) -> None:
+    """Retailers/admins must not cast demand signals (market manipulation)."""
+    if user is not None and user.role != "customer":
+        from app.core.exceptions import AppException
+
+        raise AppException(
+            code="FORBIDDEN",
+            message="Only customers can request products.",
+            status_code=403,
+        )
+
+
 def _pin(p: str | None) -> str | None:
     try:
         return validate_pincode(p)
@@ -62,6 +74,7 @@ async def log_demand_signal(
 ) -> DemandSignalResponse:
     """Public (customer or guest): request a product / notify me / out-of-stock."""
     user = await get_current_user_optional(request, db)
+    _customers_only(user)
     uid, guest = caller_identity(request, user)
     svc = DemandService(db)
     pool, dedup = await svc.record_signal(
@@ -88,6 +101,7 @@ async def join_demand_pool(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> DemandSignalResponse:
     user = await get_current_user_optional(request, db)
+    _customers_only(user)
     uid, guest = caller_identity(request, user)
     svc = DemandService(db)
     pool, dedup = await svc.record_signal(

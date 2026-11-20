@@ -7,6 +7,30 @@
 
 ---
 
+## P3. Phase 3 Discrepancies & Decisions — 2026-11-20
+
+| ID | Severity | Summary | Status |
+| :--- | :---: | :--- | :--- |
+| P3-01 | Medium | Search queried an empty in-memory mock index whenever OpenSearch was unconfigured (all dev/sandbox searches returned 0) | **Fixed** |
+| P3-02 | High (process) | Root `.env` points at live Aiven services; test runs could write to shared OpenSearch (2 docs written, then removed) | **Fixed** (conftest guard) |
+| P3-03 | Medium | Docs claimed HMAC-signed quotes; none exist | **Docs corrected**; server-side quotes are the integrity mechanism |
+| P3-04 | Medium | Aiven Kafka bootstrap host does not resolve (service off/deleted); `basket.events.marketplace` topic must be created | **Open — infra** |
+| P3-05 | Low | Tracker migration numbers (`0021_demand_gap`…) collided with audit `0021` | Renumbered `0022`–`0030`; tracker §4 records mapping |
+| P3-06 | Medium | Community Buying “pre-authorise card” not implemented (no real payments) | **Open — product/payments decision**; members pay at checkout after success |
+| P3-07 | Low | Customer-created group buys need a funding rule for the discount | **Open — product decision**; retailer/admin creation implemented |
+| P3-08 | Low | AI Negotiator is a deterministic rule engine (no LLM configured); only en/hi message templates | Documented; `language_fallback` flag exposed |
+| P3-09 | Low | `next-intl` not adopted; lightweight provider with spec dictionary layout | Documented; migrate during redesign if `[locale]` routing is wanted |
+| P3-10 | Medium | Indic lexicon and UI translations are seed quality | **Open — native-speaker review required** |
+| P3-11 | Medium | No OCR/vision provider configured; multipart not available | Architecture + HTTP adapter + 503; base64 JSON upload |
+| P3-12 | Low | Voice-assisted queries (3H) not implemented | **Open** |
+| P3-13 | Low | Demand unique-shopper inflation via guest tokens | **Fixed** (authenticated customers only) |
+| P3-14 | Low | Expression unique indexes not declared on models | **Fixed** |
+| P3-15 | Low | Phase 3 fixtures disturbed catalogue-dependent tests | **Fixed** (isolated category) |
+| P3-16 | Low | No retailer-side notification channel (RFQ/auction/demand alerts rely on dashboards + outbox events) | **Open** — consumers for `basket.events.marketplace` not built |
+
+---
+
+
 ## 0. Audit Status Update — 2026-11-20 (verified against code and tests)
 
 ### 0.1 Status of the original register
