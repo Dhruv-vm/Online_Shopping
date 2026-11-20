@@ -1476,3 +1476,159 @@ export interface RetailerAnalyticsResponse {
   low_stock_count: number;
   out_of_stock_count: number;
 }
+
+// Basket Mission Types
+export interface MissionItem {
+  id: string;
+  mission_id: string;
+  product_id: string;
+  variant_id: string;
+  listing_id: string;
+  retailer_id: string;
+  product_name: string;
+  brand: string;
+  variant_name: string;
+  sku: string;
+  retailer_name: string;
+  retailer_slug: string;
+  image_url?: string | null;
+  group_name: string;
+  quantity: number;
+  unit_price_paise: number;
+  current_selling_price_paise: number;
+  price_changed: boolean;
+  available_stock: number;
+  is_in_stock: boolean;
+  subtotal_paise: number;
+  is_selected: boolean;
+  recommendation_reason: string;
+  sort_order: number;
+}
+
+export interface MissionGroup {
+  group_name: string;
+  items: MissionItem[];
+  subtotal_paise: number;
+  items_count: number;
+}
+
+export interface MissionSummary {
+  id: string;
+  title: string;
+  description?: string | null;
+  budget_paise: number;
+  total_cost_paise: number;
+  remaining_budget_paise: number;
+  is_over_budget: boolean;
+  items_count: number;
+  status: "ACTIVE" | "SAVED" | "COMPLETED" | "ARCHIVED";
+  category_id?: string | null;
+  category_name?: string | null;
+  people_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MissionDetail {
+  id: string;
+  customer_id: string;
+  title: string;
+  description?: string | null;
+  budget_paise: number;
+  category_id?: string | null;
+  category_name?: string | null;
+  people_count: number;
+  preferences: string[];
+  excluded_brands: string[];
+  status: "ACTIVE" | "SAVED" | "COMPLETED" | "ARCHIVED";
+  total_cost_paise: number;
+  remaining_budget_paise: number;
+  is_over_budget: boolean;
+  budget_shortfall_paise: number;
+  items_count: number;
+  unavailable_items_count: number;
+  summary_explanation: string;
+  groups: MissionGroup[];
+  items: MissionItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MissionCreatePayload {
+  title: string;
+  description?: string;
+  budget_paise: number;
+  category_id?: string;
+  people_count?: number;
+  preferences?: string[];
+  excluded_brands?: string[];
+}
+
+export interface MissionUpdatePayload {
+  title?: string;
+  description?: string;
+  budget_paise?: number;
+  status?: "ACTIVE" | "SAVED" | "COMPLETED" | "ARCHIVED";
+  people_count?: number;
+  preferences?: string[];
+  excluded_brands?: string[];
+}
+
+export interface MissionItemAddPayload {
+  listing_id: string;
+  quantity?: number;
+  group_name?: string;
+}
+
+export interface MissionItemUpdatePayload {
+  quantity?: number;
+  is_selected?: boolean;
+  group_name?: string;
+}
+
+export interface MissionItemReplacePayload {
+  new_listing_id: string;
+  quantity?: number;
+}
+
+export interface MissionAlternativeItem {
+  listing_id: string;
+  product_id: string;
+  variant_id: string;
+  product_name: string;
+  brand: string;
+  retailer_id: string;
+  retailer_name: string;
+  retailer_slug: string;
+  selling_price_paise: number;
+  price_diff_paise: number;
+  available_stock: number;
+  is_in_stock: boolean;
+  image_url?: string | null;
+  match_type: string;
+}
+
+export interface MissionAddToCartResponse {
+  mission_id: string;
+  added_items_count: number;
+  skipped_items_count: number;
+  warnings: string[];
+  cart: unknown;
+}
+
+export interface MissionPreviewResponse {
+  title: string;
+  budget_paise: number;
+  total_cost_paise: number;
+  remaining_budget_paise: number;
+  is_over_budget: boolean;
+  budget_shortfall_paise: number;
+  items_count: number;
+  summary_explanation: string;
+  groups: {
+    group_name: string;
+    items: unknown[];
+    subtotal_paise: number;
+    items_count: number;
+  }[];
+}
