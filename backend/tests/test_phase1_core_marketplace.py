@@ -67,12 +67,25 @@ async def test_a_retailer1_operations(async_client: AsyncClient):
             "code": offer_code,
             "description": "20% off test discount",
             "discount_type": "PERCENTAGE",
-            "discount_value": 20,
+            # basis points: 2000 = 20%
+            "discount_value": 2000,
             "min_order_paise": 50000,
             "max_discount_paise": 10000,
         },
     )
     assert create_offer_resp.status_code == 201
+
+    # Percentages above 90% (9000 bps) are rejected so the UI and checkout agree.
+    over_cap = await async_client.post(
+        "/api/v1/retailer/offers",
+        headers=auth_headers,
+        json={
+            "name": "Invalid discount",
+            "discount_type": "PERCENTAGE",
+            "discount_value": 9500,
+        },
+    )
+    assert over_cap.status_code == 422
     offer_data = create_offer_resp.json()
     assert offer_data["code"] == offer_code
     assert offer_data["is_active"] is True

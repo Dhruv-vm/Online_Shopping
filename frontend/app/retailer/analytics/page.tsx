@@ -17,6 +17,10 @@ import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import type { RetailerAnalyticsResponse } from "@/types";
 
+function inr(paise: number): string {
+  return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function RetailerAnalyticsPage() {
   const [data, setData] = useState<RetailerAnalyticsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,51 +82,25 @@ export default function RetailerAnalyticsPage() {
         </div>
       ) : (
         <>
-          {/* Top 4 KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="rounded-xl border bg-card p-5 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Gross Sales</span>
-                <DollarSign className="h-4 w-4 text-emerald-600" />
+          {/* KPI cards — definitions documented on RetailerAnalyticsResponse */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[
+              { label: "Gross Sales", value: inr(data.gross_sales_paise), hint: "Paid orders, excluding cancelled items", icon: <DollarSign className="h-4 w-4 text-emerald-600" /> },
+              { label: "Settled Revenue", value: inr(data.settled_revenue_paise), hint: "Delivered items, net of refunds", icon: <CheckCircle className="h-4 w-4 text-emerald-700" /> },
+              { label: "Paid Orders", value: String(data.paid_orders), hint: `${data.pending_payment_orders} more awaiting payment (not counted)`, icon: <ShoppingCart className="h-4 w-4 text-blue-600" /> },
+              { label: "Fulfilled Orders", value: String(data.fulfilled_orders), hint: "Paid orders fully delivered", icon: <Package className="h-4 w-4 text-purple-600" /> },
+              { label: "Units Dispatched", value: String(data.units_dispatched), hint: "Shipped, out for delivery or delivered", icon: <Package className="h-4 w-4 text-indigo-600" /> },
+              { label: "Avg Order Value", value: inr(data.average_order_value_paise), hint: "Gross sales ÷ paid orders", icon: <TrendingUp className="h-4 w-4 text-amber-600" /> },
+            ].map((k) => (
+              <div key={k.label} className="rounded-xl border bg-card p-5 shadow-xs space-y-2">
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span className="text-xs font-semibold uppercase tracking-wider">{k.label}</span>
+                  {k.icon}
+                </div>
+                <div className="text-2xl font-bold text-foreground font-mono">{k.value}</div>
+                <p className="text-[11px] text-muted-foreground">{k.hint}</p>
               </div>
-              <div className="text-2xl font-bold text-foreground font-mono">
-                ₹{(data.total_revenue_paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-              </div>
-              <p className="text-[11px] text-muted-foreground">Settled across confirmed customer orders</p>
-            </div>
-
-            <div className="rounded-xl border bg-card p-5 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Fulfilled Orders</span>
-                <ShoppingCart className="h-4 w-4 text-blue-600" />
-              </div>
-              <div className="text-2xl font-bold text-foreground font-mono">
-                {data.total_orders}
-              </div>
-              <p className="text-[11px] text-muted-foreground">Distinct customer purchases</p>
-            </div>
-
-            <div className="rounded-xl border bg-card p-5 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Units Dispatched</span>
-                <Package className="h-4 w-4 text-purple-600" />
-              </div>
-              <div className="text-2xl font-bold text-foreground font-mono">
-                {data.total_units_sold}
-              </div>
-              <p className="text-[11px] text-muted-foreground">Individual items sold</p>
-            </div>
-
-            <div className="rounded-xl border bg-card p-5 shadow-xs space-y-2">
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span className="text-xs font-semibold uppercase tracking-wider">Avg Order Value</span>
-                <TrendingUp className="h-4 w-4 text-amber-600" />
-              </div>
-              <div className="text-2xl font-bold text-foreground font-mono">
-                ₹{(data.average_order_value_paise / 100).toFixed(2)}
-              </div>
-              <p className="text-[11px] text-muted-foreground">Average store basket ticket</p>
-            </div>
+            ))}
           </div>
 
           {/* Section: Stock Health & Orders Breakdown */}
@@ -138,7 +116,8 @@ export default function RetailerAnalyticsPage() {
                   <p className="text-xs text-muted-foreground">No orders in pipeline.</p>
                 ) : (
                   Object.entries(data.orders_by_status).map(([status, count]) => {
-                    const percentage = Math.min(100, Math.round((count / Math.max(1, data.total_orders)) * 100));
+                    const pipelineTotal = Object.values(data.orders_by_status).reduce((x, y) => x + y, 0);
+                    const percentage = Math.round((count / Math.max(1, pipelineTotal)) * 100);
                     return (
                       <div key={status} className="space-y-1">
                         <div className="flex justify-between text-xs">

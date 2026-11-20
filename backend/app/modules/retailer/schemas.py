@@ -364,6 +364,15 @@ class RetailerOfferCreateRequest(BaseModel):
     is_active: bool = True
     valid_to: datetime.datetime | None = None
 
+    @model_validator(mode="after")
+    def _check_percentage_range(self) -> "RetailerOfferCreateRequest":
+        # PERCENTAGE values are basis points (2000 = 20%); cap at 90%.
+        if self.discount_type == "PERCENTAGE" and self.discount_value > 9000:
+            raise ValueError(
+                "Percentage discounts are expressed in basis points and may not exceed 9000 (90%)."
+            )
+        return self
+
 
 class RetailerOfferUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=255)
@@ -387,6 +396,25 @@ class RetailerAnalyticsProductItem(BaseModel):
 
 
 class RetailerAnalyticsResponse(BaseModel):
+    """Retailer sales metrics.
+
+    Definitions (all scoped to this retailer's items):
+    * gross_sales_paise: value of non-cancelled items in *paid* orders.
+    * settled_revenue_paise: value of delivered items in paid orders, net of refunds.
+    * paid_orders: distinct paid orders containing a non-cancelled item.
+    * fulfilled_orders: paid orders whose items for this retailer are all delivered.
+    * units_dispatched: units shipped, out for delivery or delivered.
+    * pending_payment_orders: orders still awaiting payment (excluded from sales).
+    Legacy fields total_revenue_paise/total_orders/total_units_sold mirror
+    gross_sales_paise/paid_orders/units sold in paid orders.
+    """
+
+    gross_sales_paise: int = 0
+    settled_revenue_paise: int = 0
+    paid_orders: int = 0
+    fulfilled_orders: int = 0
+    units_dispatched: int = 0
+    pending_payment_orders: int = 0
     total_revenue_paise: int
     total_orders: int
     total_units_sold: int

@@ -2,6 +2,7 @@ import datetime
 import logging
 import re
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1235,6 +1236,17 @@ class RetailerService:
         newly_cancelled: list = []
 
         target_status = req.status.strip().upper()
+        # Defence in depth: fulfilment requires a captured payment, regardless of
+        # how the order status was reached.
+        if target_status != "CANCELLED" and order.payment_status not in (
+            "SUCCEEDED",
+            "PARTIALLY_REFUNDED",
+        ):
+            raise AppException(
+                code="ORDER_NOT_PAID",
+                message="This order has not been paid yet and cannot be fulfilled.",
+                status_code=409,
+            )
         allowed_statuses = {
             "CONFIRMED",
             "PROCESSING",
@@ -1495,6 +1507,12 @@ class RetailerService:
         if req.description is not None:
             discount.description = req.description.strip() or None
         if req.discount_value is not None:
+            if discount.discount_type == "PERCENTAGE" and req.discount_value > 9000:
+                raise AppException(
+                    code="VALIDATION_ERROR",
+                    message="Percentage discounts may not exceed 9000 basis points (90%).",
+                    status_code=422,
+                )
             discount.discount_value = req.discount_value
         if req.min_order_paise is not None:
             discount.min_order_paise = req.min_order_paise
@@ -1530,7 +1548,10 @@ class RetailerService:
     # ================= Retailer Analytics =================
 
     async def get_analytics(self, retailer: Retailer) -> RetailerAnalyticsResponse:
-        # Aggregated stats from OrderItem across ALL eligible order items
+        paid_states = ("SUCCEEDED", "PARTIALLY_REFUNDED")
+        is_paid = Order.payment_status.in_(paid_states)
+        live_item = OrderItem.fulfillment_status != "CANCELLED"
+        # Top products and gross sales: non-cancelled items in paid orders.
         items_stmt = (
             select(
                 OrderItem.listing_id,
@@ -1540,19 +1561,13 @@ class RetailerService:
                 func.sum(OrderItem.total_selling_price_paise).label("revenue_paise"),
             )
             .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                OrderItem.retailer_id == retailer.id,
-                Order.status != "CANCELLED",
-                OrderItem.fulfillment_status != "CANCELLED",
-            )
+            .where(OrderItem.retailer_id == retailer.id, is_paid, live_item)
             .group_by(OrderItem.listing_id, OrderItem.product_title, OrderItem.sku)
             .order_by(func.sum(OrderItem.total_selling_price_paise).desc())
         )
         top_items_rows = (await self.session.execute(items_stmt)).all()
-
         total_units = sum(int(row.units_sold or 0) for row in top_items_rows)
-        total_rev = sum(int(row.revenue_paise or 0) for row in top_items_rows)
-
+        gross_sales = sum(int(row.revenue_paise or 0) for row in top_items_rows)
         top_selling = [
             RetailerAnalyticsProductItem(
                 listing_id=row.listing_id,
@@ -1564,34 +1579,90 @@ class RetailerService:
             for row in top_items_rows[:10]
         ]
 
-        # Distinct orders count
-        orders_count_stmt = (
-            select(func.count(func.distinct(OrderItem.order_id)))
-            .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                OrderItem.retailer_id == retailer.id,
-                Order.status != "CANCELLED",
-                OrderItem.fulfillment_status != "CANCELLED",
+        totals = (
+            await self.session.execute(
+                select(
+                    func.count(func.distinct(OrderItem.order_id))
+                    .filter(is_paid, live_item)
+                    .label("paid_orders"),
+                    func.count(func.distinct(OrderItem.order_id))
+                    .filter(Order.status == "PENDING_PAYMENT")
+                    .label("pending_payment_orders"),
+                    func.coalesce(
+                        func.sum(OrderItem.quantity).filter(
+                            is_paid,
+                            OrderItem.fulfillment_status.in_(
+                                ("SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED")
+                            ),
+                        ),
+                        0,
+                    ).label("units_dispatched"),
+                    func.coalesce(
+                        func.sum(OrderItem.total_selling_price_paise).filter(
+                            is_paid, OrderItem.fulfillment_status == "DELIVERED"
+                        ),
+                        0,
+                    ).label("delivered_value"),
+                )
+                .select_from(OrderItem)
+                .join(Order, OrderItem.order_id == Order.id)
+                .where(OrderItem.retailer_id == retailer.id)
             )
-        )
-        total_orders = (await self.session.execute(orders_count_stmt)).scalar() or 0
+        ).one()
+        paid_orders = int(totals.paid_orders or 0)
 
-        aov = total_rev // total_orders if total_orders > 0 else 0
+        # Refunded returns attributed to this retailer's items reduce settled revenue.
+        from app.modules.orders.models import OrderReturn, ReturnItem
 
-        # Orders by status (computed per retailer suborder)
-        orders_stmt = (
-            select(Order)
-            .options(selectinload(Order.items))
-            .join(OrderItem, Order.id == OrderItem.order_id)
-            .where(OrderItem.retailer_id == retailer.id)
-            .distinct()
+        refunded_paise = int(
+            (
+                await self.session.execute(
+                    select(func.coalesce(func.sum(ReturnItem.refund_subtotal_paise), 0))
+                    .join(OrderReturn, ReturnItem.return_id == OrderReturn.id)
+                    .join(OrderItem, ReturnItem.order_item_id == OrderItem.id)
+                    .where(
+                        OrderItem.retailer_id == retailer.id,
+                        OrderReturn.status == "REFUNDED",
+                    )
+                )
+            ).scalar()
+            or 0
         )
-        ret_orders = (await self.session.execute(orders_stmt)).scalars().all()
+        settled = max(0, int(totals.delivered_value or 0) - refunded_paise)
+
+        aov = gross_sales // paid_orders if paid_orders > 0 else 0
+
+        # Pipeline by sub-order status, aggregated in SQL (no ORM object loading).
+        status_rows = (
+            await self.session.execute(
+                select(
+                    OrderItem.order_id,
+                    func.array_agg(OrderItem.fulfillment_status).label("statuses"),
+                )
+                .where(OrderItem.retailer_id == retailer.id)
+                .group_by(OrderItem.order_id)
+            )
+        ).all()
         orders_by_status: dict[str, int] = {}
-        for o in ret_orders:
-            my_items = [i for i in o.items if i.retailer_id == retailer.id]
-            st = self._derive_suborder_status(my_items)
+        fulfilled_orders = 0
+        paid_order_ids: set = set()
+        if status_rows:
+            paid_order_ids = set(
+                (
+                    await self.session.execute(
+                        select(Order.id).where(
+                            Order.id.in_([r.order_id for r in status_rows]), is_paid
+                        )
+                    )
+                ).scalars()
+            )
+        for row in status_rows:
+            st = self._derive_suborder_status(
+                [SimpleNamespace(fulfillment_status=x) for x in (row.statuses or [])]
+            )
             orders_by_status[st] = orders_by_status.get(st, 0) + 1
+            if st == "DELIVERED" and row.order_id in paid_order_ids:
+                fulfilled_orders += 1
 
         # Stock health from StoreInventory
         inv_stmt = (
@@ -1626,8 +1697,14 @@ class RetailerService:
         inv_counts = (await self.session.execute(inv_stmt)).one()
 
         return RetailerAnalyticsResponse(
-            total_revenue_paise=total_rev,
-            total_orders=total_orders,
+            gross_sales_paise=gross_sales,
+            settled_revenue_paise=settled,
+            paid_orders=paid_orders,
+            fulfilled_orders=fulfilled_orders,
+            units_dispatched=int(totals.units_dispatched or 0),
+            pending_payment_orders=int(totals.pending_payment_orders or 0),
+            total_revenue_paise=gross_sales,
+            total_orders=paid_orders,
             total_units_sold=total_units,
             average_order_value_paise=aov,
             orders_by_status=orders_by_status,

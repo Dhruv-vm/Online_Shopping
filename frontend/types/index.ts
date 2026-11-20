@@ -1466,6 +1466,14 @@ export interface RetailerAnalyticsProductItem {
 }
 
 export interface RetailerAnalyticsResponse {
+  /** Non-cancelled items in paid orders. */
+  gross_sales_paise: number;
+  /** Delivered items in paid orders, net of refunds. */
+  settled_revenue_paise: number;
+  paid_orders: number;
+  fulfilled_orders: number;
+  units_dispatched: number;
+  pending_payment_orders: number;
   total_revenue_paise: number;
   total_orders: number;
   total_units_sold: number;

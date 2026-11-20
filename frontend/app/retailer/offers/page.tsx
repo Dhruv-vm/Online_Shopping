@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { formatDiscountBenefit, toStoredDiscountValue } from "@/lib/pricing/discount";
 import {
   Tag,
   PlusCircle,
@@ -73,7 +74,7 @@ export default function RetailerOffersPage() {
         name: name.trim(),
         description: description.trim() || undefined,
         discount_type: discountType,
-        discount_value: discountType === "PERCENTAGE" ? Math.round(val * 100) : Math.round(val * 100),
+        discount_value: toStoredDiscountValue(discountType, val),
         min_order_paise: Math.round((parseFloat(minOrderRupees) || 0) * 100),
         max_discount_paise: maxDiscountRupees ? Math.round(parseFloat(maxDiscountRupees) * 100) : undefined,
         is_active: true,
@@ -205,9 +206,7 @@ export default function RetailerOffersPage() {
                   <div className="p-2 rounded bg-muted/40 space-y-0.5">
                     <span className="text-muted-foreground block text-[10px] uppercase font-bold">Benefit</span>
                     <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                      {offer.discount_type === "PERCENTAGE"
-                        ? `${(offer.discount_value / 100).toFixed(0)}% OFF`
-                        : `₹${(offer.discount_value / 100).toFixed(2)} OFF`}
+                      {formatDiscountBenefit(offer.discount_type, offer.discount_value)}
                     </span>
                   </div>
                   <div className="p-2 rounded bg-muted/40 space-y-0.5">
