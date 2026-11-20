@@ -133,7 +133,6 @@ async def test_language_preference(async_client: AsyncClient):
     assert (await async_client.get("/api/v1/i18n/preference")).status_code == 401
 
 
-
 @pytest.mark.asyncio
 async def test_profile_exposes_preferred_language(async_client: AsyncClient):
     _, headers = await make_user()

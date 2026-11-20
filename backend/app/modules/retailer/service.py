@@ -105,6 +105,19 @@ class RetailerService:
     async def update_profile(
         self, retailer: Retailer, req: RetailerProfileUpdateRequest
     ) -> RetailerProfileResponse:
+        if req.gstin is not None:
+            import re as _re
+
+            from app.modules.retailer.schemas import GSTIN_RE
+
+            g = req.gstin.strip().upper()
+            if g and not _re.fullmatch(GSTIN_RE, g):
+                raise AppException(
+                    code="INVALID_GSTIN",
+                    message="GSTIN must be 15 characters, e.g. 29ABCDE1234F1Z5.",
+                    status_code=422,
+                )
+            retailer.gstin = g or None
         if req.description is not None:
             retailer.description = req.description.strip() or None
         if req.logo_url is not None:
@@ -862,6 +875,7 @@ class RetailerService:
             variant_sku=v.sku,
             variant_attributes=v.attributes or {},
             seller_sku=listing.seller_sku,
+            listing_image_url=getattr(listing, "image_url", None),
             original_price_paise=listing.original_price_paise,
             selling_price_paise=listing.selling_price_paise,
             currency=listing.currency,
@@ -1716,3 +1730,107 @@ class RetailerService:
             low_stock_count=int(inv_counts.low_stock or 0),
             out_of_stock_count=int(inv_counts.out_of_stock or 0),
         )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding: verification documents, resubmission, listing photos
+# ---------------------------------------------------------------------------
+async def submit_document(session, retailer: Retailer, req):
+    from app.modules.catalogue.models import RetailerVerificationDocument
+    from app.modules.media.storage import Base64Upload, save_upload
+
+    if retailer.verification_status == "VERIFIED" and retailer.is_active is False:
+        raise AppException(
+            code="RETAILER_SUSPENDED",
+            message="Suspended stores cannot submit documents.",
+            status_code=403,
+        )
+    ref = ""
+    if req.content_base64:
+        ref = save_upload(
+            Base64Upload(
+                content_base64=req.content_base64, content_type=req.content_type
+            ),
+            folder=f"retailer-docs-{retailer.id.hex[:12]}",
+            documents=True,
+            private=True,
+        )
+    doc = RetailerVerificationDocument(
+        id=uuid.uuid4(),
+        retailer_id=retailer.id,
+        document_type=req.document_type,
+        document_url=ref,
+        document_number=(req.document_number or "").strip().upper() or None,
+        status="PENDING",
+    )
+    session.add(doc)
+    await session.flush()
+    return doc
+
+
+async def list_documents(session, retailer: Retailer):
+    from app.modules.catalogue.models import RetailerVerificationDocument
+
+    return list(
+        (
+            await session.execute(
+                select(RetailerVerificationDocument)
+                .where(RetailerVerificationDocument.retailer_id == retailer.id)
+                .order_by(RetailerVerificationDocument.created_at.desc())
+            )
+        ).scalars()
+    )
+
+
+async def resubmit_for_verification(session, retailer: Retailer) -> Retailer:
+    """A REJECTED store may fix its details and ask for review again."""
+    from app.modules.catalogue.models import RetailerVerificationHistory
+
+    if retailer.verification_status != "REJECTED":
+        raise AppException(
+            code="INVALID_VERIFICATION_STATE",
+            message="Only rejected applications can be resubmitted.",
+            status_code=409,
+        )
+    session.add(
+        RetailerVerificationHistory(
+            id=uuid.uuid4(),
+            retailer_id=retailer.id,
+            admin_id=None,
+            action="RESUBMIT",
+            from_status="REJECTED",
+            to_status="PENDING",
+            reason="Resubmitted by retailer",
+        )
+    )
+    retailer.verification_status = "PENDING"
+    retailer.rejection_reason = None
+    await session.flush()
+    return retailer
+
+
+async def set_listing_image(
+    session, retailer: Retailer, listing_id: uuid.UUID, req
+) -> str | None:
+    from app.modules.media.storage import Base64Upload, save_upload
+
+    svc = RetailerService(session)
+    svc._assert_verified_and_active(retailer, "upload listing photos")
+    listing = await session.get(ProductListing, listing_id)
+    if listing is None or listing.retailer_id != retailer.id:
+        raise AppException(
+            code="LISTING_NOT_FOUND",
+            message="Listing not found in your store catalogue.",
+            status_code=404,
+        )
+    if req is None:
+        listing.image_url = None
+    else:
+        listing.image_url = save_upload(
+            Base64Upload(
+                content_base64=req.content_base64, content_type=req.content_type
+            ),
+            folder="listings",
+        )
+    await session.flush()
+    return listing.image_url

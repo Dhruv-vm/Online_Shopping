@@ -56,6 +56,8 @@ class RetailerDocumentItem(BaseModel):
     id: uuid.UUID
     document_type: str
     document_url: str
+    document_number: str | None = None
+    has_private_file: bool = False
     status: str
     rejection_reason: str | None = None
     created_at: datetime.datetime

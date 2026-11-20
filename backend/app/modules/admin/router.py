@@ -419,3 +419,115 @@ async def delete_admin_deal(
     service = AdminService(db)
     await service.delete_deal(deal_id)
     await db.commit()
+
+
+# ================= Media: canonical images & private documents =================
+from fastapi.responses import FileResponse  # noqa: E402
+from pydantic import BaseModel as _BM  # noqa: E402
+from pydantic import Field as _F  # noqa: E402
+
+from app.core.exceptions import AppException  # noqa: E402
+
+
+class AdminImageUploadRequest(_BM):
+    content_base64: str = _F(..., min_length=8, max_length=7_200_000)
+    content_type: str = _F(..., max_length=32)
+    alt_text: str | None = _F(None, max_length=255)
+    make_primary: bool = False
+
+
+@router.post("/catalogue/products/{product_id}/images", status_code=201)
+async def admin_upload_product_image(
+    product_id: uuid.UUID,
+    body: AdminImageUploadRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Upload a canonical product image (validated, stored by the media service)."""
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+    from sqlalchemy import update as _update
+
+    from app.modules.catalogue.models import Product, ProductImage
+    from app.modules.media.storage import Base64Upload, save_upload
+
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise AppException(
+            code="PRODUCT_NOT_FOUND", message="Product not found.", status_code=404
+        )
+    url = save_upload(
+        Base64Upload(
+            content_base64=body.content_base64, content_type=body.content_type
+        ),
+        folder="products",
+    )
+    count = (
+        await db.execute(
+            _select(_func.count()).where(ProductImage.product_id == product_id)
+        )
+    ).scalar() or 0
+    primary = body.make_primary or count == 0
+    if primary:
+        await db.execute(
+            _update(ProductImage)
+            .where(ProductImage.product_id == product_id)
+            .values(is_primary=False)
+        )
+    img = ProductImage(
+        id=uuid.uuid4(),
+        product_id=product_id,
+        url=url,
+        alt_text=(body.alt_text or product.name)[:255],
+        is_primary=primary,
+        sort_order=int(count),
+    )
+    db.add(img)
+    await db.flush()
+    await AdminService(db)._sync_product_search(product_id)
+    await db.commit()
+    return {"id": str(img.id), "url": url, "is_primary": primary}
+
+
+@router.delete("/catalogue/images/{image_id}")
+async def admin_delete_product_image(
+    image_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    from app.modules.catalogue.models import ProductImage
+
+    img = await db.get(ProductImage, image_id)
+    if img is None:
+        raise AppException(
+            code="IMAGE_NOT_FOUND", message="Image not found.", status_code=404
+        )
+    pid = img.product_id
+    await db.delete(img)
+    await db.flush()
+    await AdminService(db)._sync_product_search(pid)
+    await db.commit()
+    return {"deleted": str(image_id)}
+
+
+@router.get("/retailers/{retailer_id}/documents/{document_id}/file")
+async def admin_download_document(
+    retailer_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> FileResponse:
+    """Admins only: download a privately stored verification document."""
+    from app.modules.catalogue.models import RetailerVerificationDocument
+    from app.modules.media.storage import private_path
+
+    doc = await db.get(RetailerVerificationDocument, document_id)
+    if doc is None or doc.retailer_id != retailer_id:
+        raise AppException(
+            code="DOCUMENT_NOT_FOUND", message="Document not found.", status_code=404
+        )
+    path = private_path(doc.document_url or "")
+    if path is None:
+        raise AppException(
+            code="DOCUMENT_FILE_UNAVAILABLE",
+            message="No stored file for this document (number-only submission or external link).",
+            status_code=404,
+        )
+    return FileResponse(path, filename=f"{doc.document_type.lower()}{path.suffix}")

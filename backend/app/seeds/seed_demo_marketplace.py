@@ -97,7 +97,9 @@ def _verify_safe() -> None:
 
 
 async def _ensure_store(session, spec: dict) -> Retailer:
-    user = (await session.execute(select(User).where(User.email == spec["email"]))).scalar_one_or_none()
+    user = (
+        await session.execute(select(User).where(User.email == spec["email"]))
+    ).scalar_one_or_none()
     if user is None:
         user = User(
             id=uuid.uuid4(),
@@ -110,7 +112,9 @@ async def _ensure_store(session, spec: dict) -> Retailer:
         )
         session.add(user)
         await session.flush()
-    ret = (await session.execute(select(Retailer).where(Retailer.slug == spec["slug"]))).scalar_one_or_none()
+    ret = (
+        await session.execute(select(Retailer).where(Retailer.slug == spec["slug"]))
+    ).scalar_one_or_none()
     if ret is None:
         ret = Retailer(
             id=uuid.uuid4(),
@@ -158,7 +162,7 @@ async def _cross_list(session, ret: Retailer, spec: dict) -> int:
             )
         )
     ).all()
-    for ref, variant, product in ref_listings:
+    for ref, variant, _product in ref_listings:
         exists = (
             await session.execute(
                 select(ProductListing.id).where(
@@ -170,7 +174,9 @@ async def _cross_list(session, ret: Retailer, spec: dict) -> int:
         if exists:
             continue
         jitter = int(_stable_unit(spec["slug"], str(variant.id)) * 300) - 150  # ±1.5%
-        price = int(ref.selling_price_paise) * (spec["price_factor_bps"] + jitter) // 10000
+        price = (
+            int(ref.selling_price_paise) * (spec["price_factor_bps"] + jitter) // 10000
+        )
         price = max(100, (price // 100) * 100 - 1 if price > 1000 else price)
         price = min(price, int(ref.original_price_paise))
         listing = ProductListing(
@@ -207,10 +213,14 @@ async def _demo_price_history(session, days: int = 45) -> int:
     """Deterministic DEMO_SEED history ending yesterday; never overwrites LIVE rows."""
     today = datetime.now(UTC).date()
     listings = (
-        await session.execute(
-            select(ProductListing).where(ProductListing.is_active.is_(True))
+        (
+            await session.execute(
+                select(ProductListing).where(ProductListing.is_active.is_(True))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     written = 0
     for lst in listings:
         existing = set(
@@ -294,7 +304,10 @@ async def _offers(session, stores: dict[str, Retailer]) -> None:
         first = (
             await session.execute(
                 select(ProductListing)
-                .where(ProductListing.retailer_id == ret.id, ProductListing.is_active.is_(True))
+                .where(
+                    ProductListing.retailer_id == ret.id,
+                    ProductListing.is_active.is_(True),
+                )
                 .order_by(ProductListing.selling_price_paise.desc())
                 .limit(1)
             )
@@ -315,18 +328,27 @@ async def _offers(session, stores: dict[str, Retailer]) -> None:
 
 
 async def _rules_and_templates(session, stores: dict[str, Retailer]) -> None:
-    for i, (slug, ret) in enumerate(stores.items()):
+    for i, ret in enumerate(stores.values()):
         listings = (
-            await session.execute(
-                select(ProductListing)
-                .where(ProductListing.retailer_id == ret.id, ProductListing.is_active.is_(True))
-                .order_by(ProductListing.selling_price_paise.desc())
-                .limit(3)
+            (
+                await session.execute(
+                    select(ProductListing)
+                    .where(
+                        ProductListing.retailer_id == ret.id,
+                        ProductListing.is_active.is_(True),
+                    )
+                    .order_by(ProductListing.selling_price_paise.desc())
+                    .limit(3)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         has_rule = (
             await session.execute(
-                select(func.count()).where(RetailerNegotiationRule.retailer_id == ret.id)
+                select(func.count()).where(
+                    RetailerNegotiationRule.retailer_id == ret.id
+                )
             )
         ).scalar() or 0
         if not has_rule:
@@ -394,7 +416,9 @@ async def _customer_activity(session) -> None:
     if not has_campaign:
         t = (
             await session.execute(
-                select(GroupBuyTemplate).where(GroupBuyTemplate.is_active.is_(True)).limit(1)
+                select(GroupBuyTemplate)
+                .where(GroupBuyTemplate.is_active.is_(True))
+                .limit(1)
             )
         ).scalar_one_or_none()
         if t:
@@ -404,7 +428,9 @@ async def _customer_activity(session) -> None:
 
     # Open RFQ with one genuine bid from a demo store.
     has_rfq = (
-        await session.execute(select(func.count()).where(ExchangeRequest.user_id == cust.id))
+        await session.execute(
+            select(func.count()).where(ExchangeRequest.user_id == cust.id)
+        )
     ).scalar() or 0
     if not has_rfq:
         ex = ExchangeService(session)
@@ -422,7 +448,9 @@ async def _customer_activity(session) -> None:
             ),
         )
         store = (
-            await session.execute(select(Retailer).where(Retailer.slug == "namma-digital-store"))
+            await session.execute(
+                select(Retailer).where(Retailer.slug == "namma-digital-store")
+            )
         ).scalar_one_or_none()
         if store:
             lines = []
@@ -430,7 +458,10 @@ async def _customer_activity(session) -> None:
                 lst = (
                     await session.execute(
                         select(ProductListing)
-                        .join(ProductVariant, ProductVariant.id == ProductListing.variant_id)
+                        .join(
+                            ProductVariant,
+                            ProductVariant.id == ProductListing.variant_id,
+                        )
                         .join(Product, Product.id == ProductVariant.product_id)
                         .where(
                             ProductListing.retailer_id == store.id,
@@ -477,7 +508,9 @@ async def seed_demo_marketplace() -> None:
             logger.info("Store %s: %d new listings", spec["store_name"], n)
             stores[spec["slug"]] = ret
         for slug in ("basket-mart", "basket-lifestyle"):
-            r = (await session.execute(select(Retailer).where(Retailer.slug == slug))).scalar_one()
+            r = (
+                await session.execute(select(Retailer).where(Retailer.slug == slug))
+            ).scalar_one()
             stores[slug] = r
         await session.commit()
 

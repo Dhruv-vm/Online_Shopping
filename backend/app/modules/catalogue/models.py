@@ -49,6 +49,7 @@ class Retailer(Base):
     business_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     contact_phone: Mapped[str | None] = mapped_column(String(15), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
     business_hours: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     policies: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -138,6 +139,7 @@ class RetailerVerificationDocument(Base):
     )
     document_type: Mapped[str] = mapped_column(String(32), nullable=False)
     document_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    document_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(
         String(32), default="PENDING", index=True, nullable=False
     )
@@ -333,6 +335,8 @@ class ProductListing(Base):
         index=True,
     )
     seller_sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Store-supplied photo for this offer (canonical images stay on the product).
+    image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     original_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     selling_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
