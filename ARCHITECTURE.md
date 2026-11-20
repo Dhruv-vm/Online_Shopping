@@ -351,4 +351,35 @@ Phase 2C introduces a customer-controlled memory system that remembers shopping 
 4. **Complete Customer Control & Erasure (`DELETE /api/v1/intent/clear-all`):**
    - Customers can delete individual memories or trigger a full wipe of all intent records via their account dashboard.
 
+---
+
+## 12. Phase 2D: Product Passport Architecture
+
+### 12.1 Overview & Domain Isolation
+Basket Product Passport provides a transparent, auditable product-information record that helps customers understand what a product is, which claims have been verified by administration, what evidence supports those claims, and which details are specific to an individual retailer's listing.
+
+The architecture enforces strict separation between **canonical product-level facts** and **retailer-listing-specific facts**:
+- **Product-Level Passport (`product_passports`):**
+  - Associated 1:1 with `products.id`.
+  - Holds canonical facts: Manufacturer, Country of origin, Model number, GTIN/EAN/UPC, Material composition, Technical specifications, Package contents, Manufacturer warranty terms, Care/safety instructions, and Certifications.
+  - Edited only by authorized administrative users (`PUT /api/v1/admin/passport/products/{id}`).
+- **Retailer Listing Passport (`listing_passports`):**
+  - Associated 1:1 with `product_listings.id`.
+  - Captures seller-specific details: Item condition (`NEW`, `REFURBISHED`, `OPEN_BOX`, `PRE_OWNED`), Seller warranty terms, Packaging notes, and Fulfillment/dispatch notes.
+  - Retailer mutations are strictly scoped to listings owned by the authenticated retailer (`retailer_id == current_retailer.id`). One retailer can never overwrite canonical product facts or another retailer's listing details.
+- **Traceable Claims & Evidence (`passport_claims`):**
+  - Stores granular assertions (e.g. FSSAI license, BIS certification, Agmark grade, organic compliance).
+  - Tracks complete audit provenance: `submitted_by_user_id`, `review_status` (`PENDING`, `VERIFIED`, `REJECTED`), `reviewed_by_user_id`, `reviewed_at`, `rejection_reason`, `evidence_url`, `evidence_type`, and `is_public_evidence`.
+
+### 12.2 Verification Lifecycle & Trust Rules
+1. **Unconditional `PENDING` Default:** All claims submitted by retailers start as `PENDING`. Retailers cannot approve their own claims.
+2. **Mandatory Admin Rejection Reason:** Admins can reject invalid claims with a required non-empty `rejection_reason`, which is visible to the submitting retailer to explain required corrections.
+3. **Re-Review Trigger on Edit:** Updating any previously verified or rejected claim immediately resets `review_status` to `PENDING` and clears the prior reviewer and rejection reason.
+4. **Customer Privacy & Redaction:**
+   - Public customer responses (`GET /api/v1/products/{id}/passport`) only expose `evidence_url` if `is_public_evidence` is `True` **AND** `review_status` is `VERIFIED`.
+   - Internal admin notes, reviewer IDs, submitter IDs, and rejection reasons are strictly stripped from all customer-facing payloads.
+   - Customers never see pending or rejected claims represented as verified facts.
+5. **Safe Empty Fallback:** Products without an active passport return a safe empty schema containing product metadata and available seller offers without throwing 404 or breaking catalogue browsing.
+
+
 

@@ -9,6 +9,15 @@ from app.modules.intent.router import intent_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.missions.router import router as missions_router
 from app.modules.orders.router import router as orders_router
+from app.modules.passport.router import (
+    admin_router as passport_admin_router,
+)
+from app.modules.passport.router import (
+    public_router as passport_public_router,
+)
+from app.modules.passport.router import (
+    retailer_router as passport_retailer_router,
+)
 from app.modules.payments.router import internal_router as internal_payments_router
 from app.modules.payments.router import router as payments_router
 from app.modules.pricing.router import router as pricing_router
@@ -41,6 +50,11 @@ api_router.include_router(substitutes_router)
 
 # Mount Basket Intent Memory endpoints (Phase 2C)
 api_router.include_router(intent_router)
+
+# Mount Basket Product Passport endpoints (Phase 2D)
+api_router.include_router(passport_public_router)
+api_router.include_router(passport_retailer_router)
+api_router.include_router(passport_admin_router)
 
 # Mount Pricing & Quotes endpoints
 api_router.include_router(pricing_router)

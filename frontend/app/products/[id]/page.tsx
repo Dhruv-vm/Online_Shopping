@@ -28,6 +28,7 @@ import {
 import { useCart } from "@/lib/cart/cart-context";
 import { useCompare } from "@/lib/compare/compare-context";
 import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
+import { ProductPassportSection } from "@/components/passport/ProductPassportSection";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -655,6 +656,14 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Product Passport Section (Phase 2D) */}
+      <div className="mt-8">
+        <ProductPassportSection
+          productIdOrSlug={productIdOrSlug}
+          selectedListingId={currentListing?.id}
+        />
       </div>
 
       {/* Substitute Intelligence Modal (Phase 2B) */}

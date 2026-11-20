@@ -1849,4 +1849,203 @@ export interface IntentSuggestionResponse {
   explanation?: string | null;
 }
 
+// ================= Product Passport Types (Phase 2D) =================
+
+export type ClaimReviewStatus = "PENDING" | "VERIFIED" | "REJECTED";
+export type ClaimScope = "PRODUCT" | "LISTING";
+export type ItemCondition = "NEW" | "REFURBISHED" | "OPEN_BOX" | "PRE_OWNED";
+
+export interface ClaimReviewHistoryItem {
+  id: string;
+  claim_id: string;
+  claim_scope: string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  evidence_url?: string | null;
+  evidence_type: string;
+  evidence_notes?: string | null;
+  is_public_evidence: boolean;
+  action: "SUBMITTED" | "REVISED" | "VERIFIED" | "REJECTED" | string;
+  review_status: ClaimReviewStatus | string;
+  reviewer_id?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+}
+
+export interface PublicClaim {
+  id: string;
+  claim_scope: ClaimScope | string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  review_status: ClaimReviewStatus | string;
+  is_public_evidence: boolean;
+  evidence_url?: string | null;
+  evidence_type?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface PublicListingPassport {
+  id: string;
+  listing_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  item_condition: ItemCondition | string;
+  seller_warranty?: string | null;
+  packaging_notes?: string | null;
+  fulfillment_notes?: string | null;
+  claims: PublicClaim[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ListingBrief {
+  listing_id: string;
+  retailer_id: string;
+  retailer_name: string;
+  selling_price_paise: number;
+  is_in_stock: boolean;
+  item_condition: string;
+}
+
+export interface PublicProductPassport {
+  id?: string | null;
+  product_id: string;
+  product_name: string;
+  brand: string;
+  category_name: string;
+  manufacturer?: string | null;
+  country_of_origin?: string | null;
+  model_number?: string | null;
+  gtin_ean_upc?: string | null;
+  materials: unknown[];
+  technical_specs: Record<string, unknown>;
+  package_contents: string[];
+  usage_instructions?: string | null;
+  safety_instructions?: string | null;
+  warranty_info?: string | null;
+  certifications: unknown[];
+  claims: PublicClaim[];
+  listing_passport?: PublicListingPassport | null;
+  available_listings: ListingBrief[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface RetailerClaim {
+  id: string;
+  passport_id?: string | null;
+  listing_id?: string | null;
+  retailer_id?: string | null;
+  claim_scope: string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  evidence_url?: string | null;
+  evidence_type: string;
+  evidence_notes?: string | null;
+  is_public_evidence: boolean;
+  review_status: ClaimReviewStatus | string;
+  rejection_reason?: string | null;
+  version?: number;
+  review_history?: ClaimReviewHistoryItem[];
+  submitted_by_user_id?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetailerListingPassportDetail {
+  id: string;
+  listing_id: string;
+  retailer_id: string;
+  item_condition: ItemCondition | string;
+  seller_warranty?: string | null;
+  packaging_notes?: string | null;
+  fulfillment_notes?: string | null;
+  claims: RetailerClaim[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetailerListingPassportUpsertRequest {
+  item_condition?: ItemCondition | string;
+  seller_warranty?: string | null;
+  packaging_notes?: string | null;
+  fulfillment_notes?: string | null;
+}
+
+export interface RetailerClaimCreateRequest {
+  claim_scope?: ClaimScope | string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  evidence_url?: string | null;
+  evidence_type?: string;
+  evidence_notes?: string | null;
+  is_public_evidence?: boolean;
+}
+
+export interface RetailerClaimUpdateRequest {
+  claim_type?: string;
+  claim_key?: string;
+  claim_value?: string;
+  evidence_url?: string | null;
+  evidence_type?: string;
+  evidence_notes?: string | null;
+  is_public_evidence?: boolean;
+}
+
+export interface AdminClaim {
+  id: string;
+  passport_id?: string | null;
+  listing_id?: string | null;
+  retailer_id?: string | null;
+  retailer_name?: string | null;
+  product_id?: string | null;
+  product_name?: string | null;
+  claim_scope: string;
+  claim_type: string;
+  claim_key: string;
+  claim_value: string;
+  evidence_url?: string | null;
+  evidence_type: string;
+  evidence_notes?: string | null;
+  is_public_evidence: boolean;
+  review_status: ClaimReviewStatus | string;
+  rejection_reason?: string | null;
+  version?: number;
+  review_history?: ClaimReviewHistoryItem[];
+  submitted_by_user_id?: string | null;
+  reviewed_by_user_id?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminClaimQueueResponse {
+  items: AdminClaim[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface AdminProductPassportUpsertRequest {
+  manufacturer?: string | null;
+  country_of_origin?: string | null;
+  model_number?: string | null;
+  gtin_ean_upc?: string | null;
+  materials?: unknown[];
+  technical_specs?: Record<string, unknown>;
+  package_contents?: string[];
+  usage_instructions?: string | null;
+  safety_instructions?: string | null;
+  warranty_info?: string | null;
+  certifications?: unknown[];
+}
+
+
 

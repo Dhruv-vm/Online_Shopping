@@ -102,6 +102,18 @@ import type {
   IntentMemoryItemCreateRequest,
   IntentOverviewResponse,
   IntentSuggestionResponse,
+  PublicClaim,
+  PublicListingPassport,
+  PublicProductPassport,
+  RetailerClaim,
+  ClaimReviewHistoryItem,
+  RetailerListingPassportDetail,
+  RetailerListingPassportUpsertRequest,
+  RetailerClaimCreateRequest,
+  RetailerClaimUpdateRequest,
+  AdminClaim,
+  AdminClaimQueueResponse,
+  AdminProductPassportUpsertRequest,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -1321,6 +1333,127 @@ class ApiClient {
   ): Promise<IntentSuggestionResponse> {
     const q = categoryId ? `?category_id=${encodeURIComponent(categoryId)}` : "";
     return this.get<IntentSuggestionResponse>(`/api/v1/intent/suggestions${q}`);
+  }
+
+  // ================= Basket Product Passport APIs (Phase 2D) =================
+
+  public async getProductPassport(
+    productIdOrSlug: string,
+    listingId?: string
+  ): Promise<PublicProductPassport> {
+    const q = listingId ? `?listing_id=${encodeURIComponent(listingId)}` : "";
+    return this.get<PublicProductPassport>(
+      `/api/v1/products/${encodeURIComponent(productIdOrSlug)}/passport${q}`
+    );
+  }
+
+  public async getListingPassport(listingId: string): Promise<PublicListingPassport> {
+    return this.get<PublicListingPassport>(
+      `/api/v1/passport/listings/${encodeURIComponent(listingId)}`
+    );
+  }
+
+  public async getRetailerListingPassport(
+    listingId: string
+  ): Promise<RetailerListingPassportDetail> {
+    return this.get<RetailerListingPassportDetail>(
+      `/api/v1/retailer/passport/listings/${encodeURIComponent(listingId)}`
+    );
+  }
+
+  public async upsertRetailerListingPassport(
+    listingId: string,
+    payload: RetailerListingPassportUpsertRequest
+  ): Promise<RetailerListingPassportDetail> {
+    return this.put<RetailerListingPassportDetail>(
+      `/api/v1/retailer/passport/listings/${encodeURIComponent(listingId)}`,
+      payload
+    );
+  }
+
+  public async submitRetailerClaim(
+    listingId: string,
+    payload: RetailerClaimCreateRequest
+  ): Promise<RetailerClaim> {
+    return this.post<RetailerClaim>(
+      `/api/v1/retailer/passport/listings/${encodeURIComponent(listingId)}/claims`,
+      payload
+    );
+  }
+
+  public async updateRetailerClaim(
+    claimId: string,
+    payload: RetailerClaimUpdateRequest
+  ): Promise<RetailerClaim> {
+    return this.put<RetailerClaim>(
+      `/api/v1/retailer/passport/claims/${encodeURIComponent(claimId)}`,
+      payload
+    );
+  }
+
+  public async listRetailerClaims(listingId?: string): Promise<RetailerClaim[]> {
+    const q = listingId ? `?listing_id=${encodeURIComponent(listingId)}` : "";
+    return this.get<RetailerClaim[]>(`/api/v1/retailer/passport/claims${q}`);
+  }
+
+  public async getRetailerClaimHistory(
+    claimId: string
+  ): Promise<ClaimReviewHistoryItem[]> {
+    return this.get<ClaimReviewHistoryItem[]>(
+      `/api/v1/retailer/passport/claims/${encodeURIComponent(claimId)}/history`
+    );
+  }
+
+  public async getAdminClaimsQueue(params?: {
+    status?: string;
+    scope?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<AdminClaimQueueResponse> {
+    const qp = new URLSearchParams();
+    if (params?.status) qp.set("status", params.status);
+    if (params?.scope) qp.set("scope", params.scope);
+    if (params?.search) qp.set("search", params.search);
+    if (params?.page) qp.set("page", params.page.toString());
+    if (params?.limit) qp.set("limit", params.limit.toString());
+    const qs = qp.toString() ? `?${qp.toString()}` : "";
+    return this.get<AdminClaimQueueResponse>(`/api/v1/admin/passport/queue${qs}`);
+  }
+
+  public async verifyAdminClaim(claimId: string): Promise<AdminClaim> {
+    return this.post<AdminClaim>(
+      `/api/v1/admin/passport/claims/${encodeURIComponent(claimId)}/verify`,
+      {}
+    );
+  }
+
+  public async rejectAdminClaim(
+    claimId: string,
+    rejectionReason: string
+  ): Promise<AdminClaim> {
+    return this.post<AdminClaim>(
+      `/api/v1/admin/passport/claims/${encodeURIComponent(claimId)}/reject`,
+      { rejection_reason: rejectionReason }
+    );
+  }
+
+  public async getAdminClaimHistory(
+    claimId: string
+  ): Promise<ClaimReviewHistoryItem[]> {
+    return this.get<ClaimReviewHistoryItem[]>(
+      `/api/v1/admin/passport/claims/${encodeURIComponent(claimId)}/history`
+    );
+  }
+
+  public async upsertAdminCanonicalPassport(
+    productId: string,
+    payload: AdminProductPassportUpsertRequest
+  ): Promise<PublicProductPassport> {
+    return this.put<PublicProductPassport>(
+      `/api/v1/admin/passport/products/${encodeURIComponent(productId)}`,
+      payload
+    );
   }
 }
 
