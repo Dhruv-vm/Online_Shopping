@@ -303,17 +303,30 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
         alt_price = alts[0]["selling_price_paise"]
     else:
         # Fallback to create an alternative listing in the same category
-        from app.database import async_session_maker
         from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
 
-        from app.modules.catalogue.models import Category, ProductListing
+        from app.core.database import get_session_factory
+        from app.modules.catalogue.models import (
+            Category,
+            ProductListing,
+            ProductVariant,
+        )
 
-        async with async_session_maker() as db:
+        session_factory = get_session_factory()
+        if session_factory is None:
+            raise RuntimeError("Database session factory is not configured.")
+
+        async with session_factory() as db:
             cur_l = (
                 await db.execute(
-                    select(ProductListing).where(
-                        ProductListing.id == uuid.UUID(first_item["listing_id"])
+                    select(ProductListing)
+                    .options(
+                        selectinload(ProductListing.variant).selectinload(
+                            ProductVariant.product
+                        )
                     )
+                    .where(ProductListing.id == uuid.UUID(first_item["listing_id"]))
                 )
             ).scalar_one()
             cat = (
@@ -324,12 +337,14 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
                 )
             ).scalar_one()
             cat_slug = cat.slug
+            cat_name = cat.name
 
         alt_listing = await create_test_listing(
             retailer_name="Basket Lifestyle",
             product_name="Alternative Kitchen Item",
             selling_price_paise=249900,
             category_slug=cat_slug,
+            category_name=cat_name,
         )
         alt_listing_id = alt_listing["id"]
         alt_price = alt_listing["selling_price_paise"]
