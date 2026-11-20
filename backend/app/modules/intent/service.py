@@ -94,7 +94,7 @@ class IntentService:
         mapped_memories = [self._map_memory(m) for m in memories]
 
         active_count = sum(1 for i in intentions if i.is_active)
-        personalization_enabled = profile.personalization_enabled if profile else True
+        personalization_enabled = profile.personalization_enabled if profile else False
 
         return IntentOverviewResponse(
             profile=mapped_profile,
@@ -112,7 +112,7 @@ class IntentService:
         if not profile:
             profile = await self.repo.upsert_profile(
                 customer_id=customer_id,
-                personalization_enabled=True,
+                personalization_enabled=False,
             )
             await self.session.flush()
         return self._map_profile(profile)

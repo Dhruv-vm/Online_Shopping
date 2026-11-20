@@ -288,10 +288,10 @@ During Phase 4 testing, a critical issue was observed where customers completed 
 
 ### 3.14 Basket Intent Memory (Phase 2C Customer Preference & Recurring Goal Memory)
 - **Source Files:**
-  - Backend: `backend/app/modules/intent/` (`models.py`, `schemas.py`, `repository.py`, `service.py`, `router.py`), migration `backend/alembic/versions/0017_basket_intent_memory.py`, test suite `backend/tests/test_intent_memory.py`.
+  - Backend: `backend/app/modules/intent/` (`models.py`, `schemas.py`, `repository.py`, `service.py`, `router.py`), migrations `0017_basket_intent_memory.py` & `0018_personalization_opt_in.py`, test suite `backend/tests/test_intent_memory.py`.
   - Frontend: `frontend/app/account/intent/page.tsx`, `frontend/components/account/account-nav.tsx`, `frontend/app/account/page.tsx`, `frontend/app/missions/page.tsx`, `frontend/lib/api/intent.test.ts`, `frontend/lib/api/client.ts`, `frontend/types/index.ts`.
-- **Database Architecture (Alembic 0017):**
-  - `customer_preference_profiles`: 1:1 customer profile storing preferred brands, categories, retailers, price range, attributes, shopping priorities, and personalization consent status.
+- **Database Architecture (Alembic 0017 / 0018):**
+  - `customer_preference_profiles`: 1:1 customer profile storing preferred brands, categories, retailers, price range, attributes, shopping priorities, and personalization consent status (`personalization_enabled` defaults to `False` — strict opt-in).
   - `recurring_intentions`: Customer repeating shopping targets with frequency, budget, notes, and active status. Guaranteed zero automatic order placement or payment deductions.
   - `intent_memory_items`: Granular explicit memories and notes with provenance tracking (`CUSTOMER_STATED`, `MISSION_DERIVED`).
 - **Personalization Integration:**

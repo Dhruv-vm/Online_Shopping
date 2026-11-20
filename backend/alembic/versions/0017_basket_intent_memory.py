@@ -65,7 +65,7 @@ def upgrade() -> None:
             "personalization_enabled",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.true(),
+            server_default=sa.false(),
         ),
         sa.Column(
             "created_at",

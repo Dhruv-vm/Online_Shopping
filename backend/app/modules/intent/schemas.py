@@ -46,7 +46,7 @@ class CustomerPreferenceProfileRequest(BaseModel):
     preferred_attributes: dict[str, Any] = Field(default_factory=dict)
     shopping_priorities: list[str] = Field(default_factory=list)
     category_preferences: dict[str, Any] = Field(default_factory=dict)
-    personalization_enabled: bool = True
+    personalization_enabled: bool | None = None
 
 
 class CustomerPreferenceProfileResponse(BaseModel):
@@ -59,7 +59,7 @@ class CustomerPreferenceProfileResponse(BaseModel):
     preferred_attributes: dict[str, Any] = Field(default_factory=dict)
     shopping_priorities: list[str] = Field(default_factory=list)
     category_preferences: dict[str, Any] = Field(default_factory=dict)
-    personalization_enabled: bool = True
+    personalization_enabled: bool = False
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
@@ -136,7 +136,7 @@ class IntentOverviewResponse(BaseModel):
     memories: list[IntentMemoryItemResponse] = Field(default_factory=list)
     active_intentions_count: int = 0
     total_memories_count: int = 0
-    personalization_enabled: bool = True
+    personalization_enabled: bool = False
 
 
 class IntentSuggestionResponse(BaseModel):
@@ -147,5 +147,5 @@ class IntentSuggestionResponse(BaseModel):
     applicable_intentions: list[RecurringIntentionResponse] = Field(
         default_factory=list
     )
-    personalization_enabled: bool = True
+    personalization_enabled: bool = False
     explanation: str | None = None

@@ -131,7 +131,7 @@ test("Basket Intent Memory API Client integration", async (t) => {
   });
 
   await t.test("updatePersonalizationConsent updates consent toggle", async () => {
-    const mockConsent: PersonalizationConsentResponse = {
+    const mockConsentDisabled: PersonalizationConsentResponse = {
       personalization_enabled: false,
       updated_at: "2026-11-20T10:00:00Z",
       message: "Personalized recommendations disabled.",
@@ -143,15 +143,31 @@ test("Basket Intent Memory API Client integration", async (t) => {
         "http://localhost:8000/api/v1/intent/consent"
       );
       assert.strictEqual(init?.method, "PATCH");
-      return new Response(JSON.stringify(mockConsent), {
+      return new Response(JSON.stringify(mockConsentDisabled), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
     };
 
-    const res = await apiClient.updatePersonalizationConsent(false);
-    assert.strictEqual(res.personalization_enabled, false);
-    assert.strictEqual(res.message, "Personalized recommendations disabled.");
+    const resDisabled = await apiClient.updatePersonalizationConsent(false);
+    assert.strictEqual(resDisabled.personalization_enabled, false);
+
+    const mockConsentEnabled: PersonalizationConsentResponse = {
+      personalization_enabled: true,
+      updated_at: "2026-11-20T10:00:00Z",
+      message: "Personalized recommendations enabled.",
+    };
+
+    globalThis.fetch = async (input, init) => {
+      assert.strictEqual(init?.method, "PATCH");
+      return new Response(JSON.stringify(mockConsentEnabled), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const resEnabled = await apiClient.updatePersonalizationConsent(true);
+    assert.strictEqual(resEnabled.personalization_enabled, true);
   });
 
   await t.test("listRecurringIntentions passes active_only param when requested", async () => {

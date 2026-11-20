@@ -130,64 +130,99 @@ async def create_custom_listing(
 
 @pytest.mark.asyncio
 async def test_preference_profile_lifecycle(async_client: AsyncClient):
-    """Customer can view, create, and update their structured shopping preference profile."""
+    """Customer can view, create, and update preference profile; personalization defaults to disabled."""
     _user, token = await register_user(async_client, "prof_user")
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1. Get initial profile
+    # 1. New customers have personalization disabled by default
     get_res = await async_client.get("/api/v1/intent/profile", headers=headers)
     assert get_res.status_code == 200
     data = get_res.json()
-    assert data["personalization_enabled"] is True
+    assert data["personalization_enabled"] is False
     assert data["preferred_brands"] == []
 
-    # 2. Update profile
-    payload = {
+    # Overview also reports personalization disabled by default
+    overview_res = await async_client.get("/api/v1/intent/overview", headers=headers)
+    assert overview_res.status_code == 200
+    assert overview_res.json()["personalization_enabled"] is False
+
+    # 2. Saving preferences does not enable personalization
+    payload_prefs_only = {
         "preferred_brands": ["Sony", "Apple", "Boat"],
         "preferred_categories": ["electronics"],
         "preferred_retailers": ["Basket Mart"],
         "preferred_price_range": {"min_paise": 100000, "max_paise": 5000000},
         "shopping_priorities": ["QUALITY", "LOWEST_PRICE"],
         "preferred_attributes": {"material": "cotton", "color": "black"},
-        "personalization_enabled": True,
     }
     put_res = await async_client.put(
-        "/api/v1/intent/profile", headers=headers, json=payload
+        "/api/v1/intent/profile", headers=headers, json=payload_prefs_only
     )
     assert put_res.status_code == 200
     updated = put_res.json()
     assert updated["preferred_brands"] == ["Sony", "Apple", "Boat"]
     assert updated["preferred_price_range"]["max_paise"] == 5000000
     assert "QUALITY" in updated["shopping_priorities"]
+    assert updated["personalization_enabled"] is False
 
-
-@pytest.mark.asyncio
-async def test_personalization_consent_toggle(async_client: AsyncClient):
-    """Customer can toggle personalization consent on and off."""
-    _user, token = await register_user(async_client, "consent_user")
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # Disable personalization
-    patch_res = await async_client.patch(
-        "/api/v1/intent/consent",
-        headers=headers,
-        json={"personalization_enabled": False},
-    )
-    assert patch_res.status_code == 200
-    assert patch_res.json()["personalization_enabled"] is False
-
-    # Check profile reflects disabled state
-    prof_res = await async_client.get("/api/v1/intent/profile", headers=headers)
-    assert prof_res.json()["personalization_enabled"] is False
-
-    # Re-enable personalization
-    patch_res2 = await async_client.patch(
+    # 3. Explicit opt-in enables personalization
+    opt_in_res = await async_client.patch(
         "/api/v1/intent/consent",
         headers=headers,
         json={"personalization_enabled": True},
     )
+    assert opt_in_res.status_code == 200
+    assert opt_in_res.json()["personalization_enabled"] is True
+
+    # Check profile confirms personalization is now enabled
+    prof_after = await async_client.get("/api/v1/intent/profile", headers=headers)
+    assert prof_after.json()["personalization_enabled"] is True
+
+    # 4. Editing preferences while opted in preserves explicit opt-in
+    edit_res = await async_client.put(
+        "/api/v1/intent/profile",
+        headers=headers,
+        json={"preferred_brands": ["Sony", "Apple", "Boat", "Sennheiser"]},
+    )
+    assert edit_res.status_code == 200
+    assert edit_res.json()["personalization_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_personalization_consent_toggle(async_client: AsyncClient):
+    """Customer must explicitly opt-in to enable personalization, and can opt-out at any time."""
+    _user, token = await register_user(async_client, "consent_user")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Initial state is False
+    prof_res = await async_client.get("/api/v1/intent/profile", headers=headers)
+    assert prof_res.json()["personalization_enabled"] is False
+
+    # Explicit opt-in enables personalization
+    patch_res = await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": True},
+    )
+    assert patch_res.status_code == 200
+    assert patch_res.json()["personalization_enabled"] is True
+
+    # Check profile reflects enabled state
+    prof_res2 = await async_client.get("/api/v1/intent/profile", headers=headers)
+    assert prof_res2.json()["personalization_enabled"] is True
+
+    # Opt-out disables personalization
+    patch_res2 = await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": False},
+    )
     assert patch_res2.status_code == 200
-    assert patch_res2.json()["personalization_enabled"] is True
+    assert patch_res2.json()["personalization_enabled"] is False
+
+    # Check profile reflects disabled state
+    prof_res3 = await async_client.get("/api/v1/intent/profile", headers=headers)
+    assert prof_res3.json()["personalization_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -293,11 +328,16 @@ async def test_intent_memory_items_crud(async_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_clear_all_memories(async_client: AsyncClient):
-    """Customer can clear all memories and recurring intentions in one operation."""
+    """Customer can clear all memories; subsequent profile creation defaults to personalization disabled."""
     _user, token = await register_user(async_client, "clear_user")
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Add a preference
+    # Explicitly opt-in and add preference
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": True},
+    )
     await async_client.put(
         "/api/v1/intent/profile",
         headers=headers,
@@ -316,16 +356,30 @@ async def test_clear_all_memories(async_client: AsyncClient):
         json={"key": "test_key", "summary": "Test memory note"},
     )
 
+    # Verify profile was opted in and had data
+    pre_overview = await async_client.get("/api/v1/intent/overview", headers=headers)
+    assert pre_overview.json()["personalization_enabled"] is True
+    assert len(pre_overview.json()["recurring_intentions"]) == 1
+    assert len(pre_overview.json()["memories"]) == 1
+
     # Clear all
     clear_res = await async_client.delete("/api/v1/intent/clear-all", headers=headers)
     assert clear_res.status_code == 204
 
-    # Check overview is empty
+    # Check overview is completely empty and personalization is disabled
     overview_res = await async_client.get("/api/v1/intent/overview", headers=headers)
     assert overview_res.status_code == 200
     ov = overview_res.json()
+    assert ov["profile"] is None
     assert ov["recurring_intentions"] == []
     assert ov["memories"] == []
+    assert ov["personalization_enabled"] is False
+
+    # Subsequent new profile must default to personalization disabled
+    new_prof_res = await async_client.get("/api/v1/intent/profile", headers=headers)
+    assert new_prof_res.status_code == 200
+    new_profile = new_prof_res.json()
+    assert new_profile["personalization_enabled"] is False
 
 
 @pytest.mark.asyncio
@@ -361,11 +415,11 @@ async def test_customer_isolation_and_anti_idor(async_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_intent_suggestions_for_mission_planning(async_client: AsyncClient):
-    """GET /api/v1/intent/suggestions provides pre-fill recommendations for Mission planning."""
+    """GET /api/v1/intent/suggestions provides pre-fill recommendations only when opted-in."""
     _user, token = await register_user(async_client, "sug_user")
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Configure preferences and recurring intention
+    # Configure preferences and recurring intention without opting in
     await async_client.put(
         "/api/v1/intent/profile",
         headers=headers,
@@ -386,9 +440,22 @@ async def test_intent_suggestions_for_mission_planning(async_client: AsyncClient
         },
     )
 
-    sug_res = await async_client.get("/api/v1/intent/suggestions", headers=headers)
-    assert sug_res.status_code == 200
-    data = sug_res.json()
+    # 1. Before opt-in: suggestions are disabled and neutral
+    sug_res1 = await async_client.get("/api/v1/intent/suggestions", headers=headers)
+    assert sug_res1.status_code == 200
+    assert sug_res1.json()["personalization_enabled"] is False
+    assert sug_res1.json()["suggested_brands"] == []
+
+    # 2. Explicit opt-in enables suggestions
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": True},
+    )
+
+    sug_res2 = await async_client.get("/api/v1/intent/suggestions", headers=headers)
+    assert sug_res2.status_code == 200
+    data = sug_res2.json()
     assert "Prestige" in data["suggested_brands"]
     assert "DURABILITY" in data["suggested_priorities"]
     assert data["suggested_budget_paise"] == 1500000
@@ -400,7 +467,7 @@ async def test_intent_suggestions_for_mission_planning(async_client: AsyncClient
 async def test_substitute_recommendation_personalized_by_intent(
     async_client: AsyncClient,
 ):
-    """Substitute discovery personalizes scores and generates transparent notes for preferred brands."""
+    """Substitute discovery only applies preference boosts after explicit opt-in; opt-out removes them."""
     _user, token = await register_user(async_client, "sub_intent_user")
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -446,7 +513,7 @@ async def test_substitute_recommendation_personalized_by_intent(
         original_price_paise=349900,
     )
 
-    # Save preference for "PreferredSound"
+    # Save preference for "PreferredSound" (without opting in)
     await async_client.put(
         "/api/v1/intent/profile",
         headers=headers,
@@ -462,19 +529,56 @@ async def test_substitute_recommendation_personalized_by_intent(
     assert add_resp.status_code == 200
     item_id = add_resp.json()["items"][0]["id"]
 
-    # Query cart substitutes
-    sub_resp = await async_client.get(
+    # 1. Before opt-in: substitute discovery is neutral, no personalization notes
+    sub_resp1 = await async_client.get(
         f"/api/v1/cart/items/{item_id}/substitutes",
         headers=headers,
     )
-    assert sub_resp.status_code == 200
-    substitutes = sub_resp.json()["substitutes"]
-    matched_sub = next(
-        (s for s in substitutes if s["listing_id"] == str(sub["listing_id"])), None
+    assert sub_resp1.status_code == 200
+    matched1 = next(
+        s
+        for s in sub_resp1.json()["substitutes"]
+        if s["listing_id"] == str(sub["listing_id"])
     )
-    assert matched_sub is not None
-    # Compatibility notes include personalization attribution
-    assert "PreferredSound" in matched_sub["compatibility_notes"]
+    assert "PreferredSound" not in (matched1.get("compatibility_notes") or "")
+
+    # 2. Explicit opt-in enables personalization
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": True},
+    )
+
+    sub_resp2 = await async_client.get(
+        f"/api/v1/cart/items/{item_id}/substitutes",
+        headers=headers,
+    )
+    assert sub_resp2.status_code == 200
+    matched2 = next(
+        s
+        for s in sub_resp2.json()["substitutes"]
+        if s["listing_id"] == str(sub["listing_id"])
+    )
+    assert "PreferredSound" in matched2["compatibility_notes"]
+
+    # 3. Opt-out immediately removes personalization notes
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": False},
+    )
+
+    sub_resp3 = await async_client.get(
+        f"/api/v1/cart/items/{item_id}/substitutes",
+        headers=headers,
+    )
+    assert sub_resp3.status_code == 200
+    matched3 = next(
+        s
+        for s in sub_resp3.json()["substitutes"]
+        if s["listing_id"] == str(sub["listing_id"])
+    )
+    assert "PreferredSound" not in (matched3.get("compatibility_notes") or "")
 
 
 @pytest.mark.asyncio
@@ -507,7 +611,7 @@ async def test_disabled_personalization_omits_intent_influence(
 async def test_mission_recommendation_personalized_by_intent(
     async_client: AsyncClient,
 ):
-    """Missions utilize intent profile preferred brands and shopping priorities for personalized planning."""
+    """Missions only utilize intent profile preferred brands after explicit opt-in; opt-out reverts to neutral."""
     _user, token = await register_user(async_client, "mission_intent_user")
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -553,31 +657,73 @@ async def test_mission_recommendation_personalized_by_intent(
         original_price_paise=299900,
     )
 
-    # Save preference profile with ChefMaster preferred
+    # 1. Save preference profile with ChefMaster preferred (without opting in)
     await async_client.put(
         "/api/v1/intent/profile",
         headers=headers,
         json={"preferred_brands": ["ChefMaster"], "shopping_priorities": ["QUALITY"]},
     )
 
-    # Create mission
-    mission_resp = await async_client.post(
+    # Before opt-in: mission does NOT cite saved preferred brand
+    mission_resp1 = await async_client.post(
         "/api/v1/missions",
         headers=headers,
         json={
-            "title": "Kitchen Upgrade",
+            "title": "Kitchen Upgrade Neutral",
             "category_id": str(cat.id),
             "budget_paise": 500000,
             "optimization_goal": "BALANCED",
         },
     )
-    assert mission_resp.status_code == 201
-    mission_data = mission_resp.json()
+    assert mission_resp1.status_code == 201
+    for itm in mission_resp1.json()["items"]:
+        assert "Matches your saved preferred brand" not in itm["recommendation_reason"]
+
+    # 2. Explicit opt-in enables personalization
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": True},
+    )
+
+    # Create mission while opted in
+    mission_resp2 = await async_client.post(
+        "/api/v1/missions",
+        headers=headers,
+        json={
+            "title": "Kitchen Upgrade Personalized",
+            "category_id": str(cat.id),
+            "budget_paise": 500000,
+            "optimization_goal": "BALANCED",
+        },
+    )
+    assert mission_resp2.status_code == 201
+    mission_data = mission_resp2.json()
     items = mission_data["items"]
     assert len(items) > 0
-    # The top recommended item should be from ChefMaster or reason notes preferred brand
     fav_item = next(
         (i for i in items if i["listing_id"] == str(fav["listing_id"])), None
     )
     assert fav_item is not None
     assert "ChefMaster" in fav_item["recommendation_reason"]
+
+    # 3. Explicit opt-out reverts to neutral planning
+    await async_client.patch(
+        "/api/v1/intent/consent",
+        headers=headers,
+        json={"personalization_enabled": False},
+    )
+
+    mission_resp3 = await async_client.post(
+        "/api/v1/missions",
+        headers=headers,
+        json={
+            "title": "Kitchen Upgrade Neutral Again",
+            "category_id": str(cat.id),
+            "budget_paise": 500000,
+            "optimization_goal": "BALANCED",
+        },
+    )
+    assert mission_resp3.status_code == 201
+    for itm in mission_resp3.json()["items"]:
+        assert "Matches your saved preferred brand" not in itm["recommendation_reason"]

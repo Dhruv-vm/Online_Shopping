@@ -72,7 +72,7 @@ export default function IntentMemoryPage() {
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Intent State
-  const [personalizationEnabled, setPersonalizationEnabled] = useState(true);
+  const [personalizationEnabled, setPersonalizationEnabled] = useState(false);
   const [profile, setProfile] = useState<CustomerPreferenceProfile | null>(null);
   const [intentions, setIntentions] = useState<RecurringIntention[]>([]);
   const [memories, setMemories] = useState<IntentMemoryItem[]>([]);
@@ -354,6 +354,7 @@ export default function IntentMemoryPage() {
       setIntentions([]);
       setMemories([]);
       setProfile(null);
+      setPersonalizationEnabled(false);
       setFeedback({ type: "success", message: res.message });
     } catch (err: unknown) {
       const msg = err instanceof ApiClientError ? err.message : "Failed to clear shopping memories.";

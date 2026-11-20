@@ -327,11 +327,11 @@ Substitutes are classified into 5 explainable tiers:
 
 Phase 2C introduces a customer-controlled memory system that remembers shopping preferences and recurring intentions across the entire multi-retailer marketplace.
 
-### 11.1 Domain Models & Migration 0017
+### 11.1 Domain Models & Migration 0017 / 0018
 - **`CustomerPreferenceProfile` (`customer_preference_profiles`):**
   - Attached 1:1 to `users.id` via foreign key with `ON DELETE CASCADE`.
   - Captures structured preferences: `preferred_brands` (JSONB list), `preferred_categories` (JSONB list), `preferred_retailers` (JSONB list), `preferred_price_range` (JSONB object), `preferred_attributes` (JSONB object), `shopping_priorities` (JSONB list of `ShoppingPriority`), and `category_preferences` (JSONB object).
-  - Explicit customer consent flag: `personalization_enabled` (`BOOLEAN`, default `True`).
+  - Explicit customer consent flag: `personalization_enabled` (`BOOLEAN`, default `False` — strict opt-in).
 - **`RecurringIntention` (`recurring_intentions`):**
   - Customer-defined recurring shopping targets (title, category IDs, frequency enum, budget in paise, notes, active status, last execution timestamp).
   - **Zero Auto-Order Invariant:** Recurring intentions strictly serve as planning suggestions and memory anchors. The platform never places orders, charges payment methods, or reserves stock automatically.
@@ -340,8 +340,10 @@ Phase 2C introduces a customer-controlled memory system that remembers shopping 
 
 ### 11.2 Privacy, Personalization Consent & Explainability Guardrails
 1. **Tenant Isolation & Anti-IDOR:** All intent queries and mutations strictly filter by `current_user.id`. Customer A cannot access or mutate Customer B's profile, recurring intentions, or memories.
-2. **Explicit Consent Toggle (`PATCH /api/v1/intent/consent`):**
-   - When `personalization_enabled` is set to `False`, all recommendation boosts in Mission Planning and Substitute Discovery are bypassed.
+2. **Strict Opt-In Default & Consent Toggle (`PATCH /api/v1/intent/consent`):**
+   - Personalization defaults to `False` (opt-in) across models, schemas, repositories, and migrations.
+   - Creating or editing a preference profile never silently enables personalization.
+   - When `personalization_enabled` is `False`, all recommendation boosts in Mission Planning and Substitute Discovery are bypassed.
    - Suggestions API returns empty recommendation lists and neutral explanations.
 3. **Transparent Personalization:**
    - When a substitute or mission item receives an intent score boost (e.g. for matching a preferred brand), the recommendation reason explicitly states the rationale (e.g. `"Recommended because you prefer 'Apple' in your saved intent memory."`).

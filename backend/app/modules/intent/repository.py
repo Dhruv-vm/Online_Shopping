@@ -53,7 +53,7 @@ class IntentRepository:
                 personalization_enabled=(
                     personalization_enabled
                     if personalization_enabled is not None
-                    else True
+                    else False
                 ),
             )
             self.session.add(profile)

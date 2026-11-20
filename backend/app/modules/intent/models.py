@@ -71,7 +71,7 @@ class CustomerPreferenceProfile(Base):
         nullable=False,
     )
     personalization_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
+        Boolean, default=False, server_default=func.false(), nullable=False
     )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
