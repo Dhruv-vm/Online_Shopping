@@ -296,3 +296,28 @@ OpenSearch handles discovery queries, while PostgreSQL maintains data authority:
 4. **Safe Error Envelopes:**
    - Application exceptions return structured JSON: `{ "error": { "code": "...", "message": "...", "request_id": "...", "details": [] } }`.
    - Stack traces, internal SQL strings, and sensitive credentials are never leaked in client responses.
+
+---
+
+## 10. Basket Substitute Intelligence Architecture (Phase 2B)
+
+Phase 2B extends the marketplace with an intelligent product substitution engine that discovers and recommends suitable alternatives to products in customer baskets or on product detail pages.
+
+### 10.1 Core Substitution Tiers
+Substitutes are classified into 5 explainable tiers:
+1. **`CLOSEST_MATCH`:** Product in the same category with identical or nearest specifications, matching brand, and closest price delta.
+2. **`BUDGET_FRIENDLY`:** Equivalent category product priced $\ge 5\%$ lower (or $\ge$ ₹100 lower) with core utility parity.
+3. **`BETTER_VALUE`:** Top-rated seller ($\ge 4.5$★) with competitive pricing ($\le 105\%$ of original) and high specification overlap.
+4. **`PREMIUM_UPGRADE`:** Elevated brand or enhanced attribute model priced higher ($> 105\%$ of original).
+5. **`AVAILABLE_NOW`:** Triggered when the original listing is out-of-stock or inactive, surfacing alternative in-stock options for immediate dispatch.
+
+### 10.2 Marketplace Invariants
+- **Category Isolation:** Candidates must strictly match the original product's `category_id`.
+- **Authenticity & Verification:** Only active listings from active, `VERIFIED` retailers are considered.
+- **Explainability:** Every recommendation computes `matching_specs`, `differing_specs`, `price_diff_paise`, `savings_percentage`, `similarity_score`, seller rating, and compatibility notes.
+- **Cart Replacement:**
+  - `POST /api/v1/cart/items/{item_id}/replace` requires customer consent.
+  - Validates cart ownership (anti-IDOR) and category consistency.
+  - Automatically merges quantities if the target listing is already present in the basket (capped at 10 and available stock).
+  - Supersedes active checkout quotes (`QuoteStatus.SUPERSEDED`) to prevent stale pricing checkouts.
+

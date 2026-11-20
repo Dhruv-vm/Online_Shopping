@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test lib/api/client.test.ts lib/api/auth-address.test.ts lib/api/cart.test.ts lib/api/quotes.test.ts lib/api/reservations.test.ts lib/api/orders.test.ts lib/api/payments.test.ts lib/api/portals.test.ts lib/api/missions.test.ts"
+    "test": "node --experimental-strip-types --test lib/api/client.test.ts lib/api/auth-address.test.ts lib/api/cart.test.ts lib/api/quotes.test.ts lib/api/reservations.test.ts lib/api/orders.test.ts lib/api/payments.test.ts lib/api/portals.test.ts lib/api/missions.test.ts lib/api/substitutes.test.ts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

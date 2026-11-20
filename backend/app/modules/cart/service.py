@@ -3,6 +3,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException
@@ -387,6 +388,155 @@ class CartService:
         cart = await self.repo.get_cart_by_id(cart_id)
         items = await self.repo.get_cart_items(cart_id)
         return self.format_cart_response(cart, items)
+
+    async def _supersede_active_quotes(self, cart: Cart) -> None:
+        """Mark all active checkout quotes for this cart's owner as SUPERSEDED."""
+        from app.modules.pricing.models import CheckoutQuote, QuoteStatus
+
+        if cart.customer_id:
+            stmt = select(CheckoutQuote).where(
+                CheckoutQuote.customer_id == cart.customer_id,
+                CheckoutQuote.status == QuoteStatus.ACTIVE.value,
+            )
+        elif cart.guest_token_hash:
+            stmt = select(CheckoutQuote).where(
+                CheckoutQuote.guest_token_hash == cart.guest_token_hash,
+                CheckoutQuote.status == QuoteStatus.ACTIVE.value,
+            )
+        else:
+            return
+
+        res = await self.session.execute(stmt)
+        for q in res.scalars().all():
+            q.status = QuoteStatus.SUPERSEDED.value
+
+    async def replace_item(
+        self,
+        cart_id: uuid.UUID,
+        item_id: uuid.UUID,
+        new_listing_id: uuid.UUID,
+        quantity: int | None = None,
+    ) -> tuple[CartResponse, uuid.UUID, uuid.UUID]:
+        """
+        Replaces a cart item with an alternative listing.
+        Enforces:
+        - Cart is active
+        - Caller owns the item
+        - Substitute listing is active, from a verified active retailer, and in stock
+        - Substitute belongs to the exact same category
+        - Preserves quantity if possible, otherwise clamps to available stock (max 10)
+        - Handles merging if substitute is already present in cart
+        - Supersedes active checkout quotes
+        """
+        cart = await self.repo.get_cart_by_id(cart_id, for_update=True)
+        if not cart or cart.status != "ACTIVE":
+            raise AppException(
+                code="CART_NOT_FOUND",
+                message="Active cart not found.",
+                status_code=404,
+            )
+
+        item = await self.repo.get_cart_item_by_id(item_id, for_update=True)
+        if not item or item.cart_id != cart_id:
+            raise AppException(
+                code="ITEM_NOT_FOUND",
+                message="Cart item not found.",
+                status_code=404,
+            )
+
+        # 1. Fetch current listing to check category
+        current_listing = await self.repo.get_listing_with_details(item.listing_id)
+        if not current_listing:
+            raise AppException(
+                code="ITEM_UNAVAILABLE",
+                message="Original cart item listing not found.",
+                status_code=400,
+            )
+
+        # 2. Fetch target substitute listing with details
+        new_listing = await self.repo.get_listing_with_details(new_listing_id)
+        if not new_listing:
+            raise AppException(
+                code="LISTING_NOT_FOUND",
+                message="Substitute listing not found.",
+                status_code=404,
+            )
+
+        # 3. Check active & verified
+        if (
+            not new_listing.is_active
+            or not new_listing.variant.is_active
+            or not new_listing.variant.product.is_active
+            or not new_listing.retailer.is_active
+            or new_listing.retailer.verification_status != "VERIFIED"
+        ):
+            raise AppException(
+                code="ALTERNATIVE_NOT_AVAILABLE",
+                message="The selected substitute is not currently available for purchase.",
+                status_code=400,
+            )
+
+        # 4. Enforce strict category match
+        curr_cat_id = current_listing.variant.product.category_id
+        new_cat_id = new_listing.variant.product.category_id
+        if curr_cat_id != new_cat_id:
+            raise AppException(
+                code="CATEGORY_MISMATCH",
+                message="Substitute product must belong to the same category.",
+                status_code=400,
+            )
+
+        # 5. Check inventory
+        inv = new_listing.inventory
+        on_hand = inv.on_hand_quantity if inv else 0
+        reserved = inv.reserved_quantity if inv else 0
+        available_stock = max(0, on_hand - reserved)
+
+        if available_stock <= 0:
+            raise AppException(
+                code="OUT_OF_STOCK",
+                message="The selected substitute is currently out of stock.",
+                status_code=400,
+            )
+
+        # 6. Determine quantity
+        target_qty = quantity if quantity is not None else item.quantity
+        if target_qty < 1:
+            target_qty = 1
+        if target_qty > 10:
+            target_qty = 10
+        if target_qty > available_stock:
+            target_qty = available_stock
+
+        # 7. Check if target listing is already in cart under another item
+        existing_target_item = await self.repo.get_cart_item(
+            cart_id, new_listing_id, for_update=True
+        )
+
+        if existing_target_item and existing_target_item.id != item.id:
+            # Combine quantity up to available_stock and max 10
+            combined_qty = min(
+                10,
+                min(available_stock, existing_target_item.quantity + target_qty),
+            )
+            existing_target_item.quantity = combined_qty
+            await self.repo.remove_cart_item(item)
+            active_item_id = existing_target_item.id
+        else:
+            item.listing_id = new_listing_id
+            item.variant_id = new_listing.variant_id
+            item.retailer_id = new_listing.retailer_id
+            item.quantity = target_qty
+            active_item_id = item.id
+
+        # 8. Supersede active quotes
+        await self._supersede_active_quotes(cart)
+
+        await self.session.commit()
+
+        cart = await self.repo.get_cart_by_id(cart_id)
+        items = await self.repo.get_cart_items(cart_id)
+        return self.format_cart_response(cart, items), item_id, active_item_id
 
     async def merge_guest_cart(
         self, customer_id: uuid.UUID, guest_token: str | None

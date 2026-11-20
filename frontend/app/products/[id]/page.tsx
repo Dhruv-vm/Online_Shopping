@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useCart } from "@/lib/cart/cart-context";
 import { useCompare } from "@/lib/compare/compare-context";
+import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -50,6 +51,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
   const [addSuccess, setAddSuccess] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [activeAddingListingId, setActiveAddingListingId] = useState<string | null>(null);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
 
   const handleAddToCart = async (listingId: string, qty = 1) => {
     setIsAdding(true);
@@ -430,16 +432,46 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       {addError}
                     </div>
                   )}
+                  {/* Explore Alternatives & Deals trigger */}
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsSubstituteModalOpen(true)}
+                      className="text-xs text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center gap-1.5 font-medium transition-colors cursor-pointer"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      <span>Compare with Alternative Products & Deals</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <Button disabled className="w-full bg-muted text-muted-foreground h-11">
-                  Out of Stock from this Seller
-                </Button>
+                <div className="space-y-2.5">
+                  <Button disabled className="w-full bg-muted text-muted-foreground h-11 font-semibold">
+                    Out of Stock from this Seller
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setIsSubstituteModalOpen(true)}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-black font-bold h-11 shadow-xs cursor-pointer"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Explore Available Substitutes
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
-            <div className="p-4 rounded-xl bg-muted/40 border text-sm text-muted-foreground">
-              No active retail listings available for this variant.
+            <div className="space-y-3 p-4 rounded-xl bg-muted/40 border text-sm text-muted-foreground">
+              <p>No active retail listings available for this variant.</p>
+              <Button
+                type="button"
+                onClick={() => setIsSubstituteModalOpen(true)}
+                variant="outline"
+                className="w-full text-xs font-semibold cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
+                Find Compatible Alternatives in Category
+              </Button>
             </div>
           )}
 
@@ -624,6 +656,17 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Substitute Intelligence Modal (Phase 2B) */}
+      <SubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        listingId={currentListing?.id || (product.variants?.[0]?.listings?.[0]?.id)}
+        productName={product.name}
+        onAddToCart={async (newListingId) => {
+          await handleAddToCart(newListingId, 1);
+        }}
+      />
     </div>
   );
 }
