@@ -1,3 +1,4 @@
+# ruff: noqa: E402  -- DATABASE_URL/infra env must be set before app modules import settings.
 import os
 from pathlib import Path as _Path
 from urllib.parse import urlsplit as _urlsplit
@@ -94,8 +95,9 @@ def _prepare_test_database() -> None:
 
     asyncio.run(_ensure())
     if os.environ.get("BASKET_TEST_SKIP_MIGRATE") != "1":
-        from alembic import command
         from alembic.config import Config
+
+        from alembic import command
 
         backend_dir = Path(__file__).resolve().parent.parent
         cfg = Config(str(backend_dir / "alembic.ini"))

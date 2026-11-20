@@ -17,6 +17,7 @@ import app.modules.auctions.models  # noqa: F401
 import app.modules.cart.models  # noqa: F401
 import app.modules.catalogue.models  # noqa: F401
 import app.modules.community.models  # noqa: F401
+import app.modules.data_quality.models  # noqa: F401
 import app.modules.demand.models  # noqa: F401
 import app.modules.exchange.models  # noqa: F401
 import app.modules.i18n.models  # noqa: F401

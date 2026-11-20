@@ -36,7 +36,9 @@ async def _mark_paid(order_id: str) -> None:
 async def test_unpaid_orders_excluded_from_sales_and_cannot_be_fulfilled(
     async_client: AsyncClient,
 ):
-    listing, r_headers = await make_retailer(selling_price_paise=50000, original_price_paise=50000, on_hand_quantity=20)
+    listing, r_headers = await make_retailer(
+        selling_price_paise=50000, original_price_paise=50000, on_hand_quantity=20
+    )
     _, c_headers = await make_user("customer")
     r = await async_client.post(
         "/api/v1/cart/items",
@@ -84,7 +86,11 @@ async def test_retailer_percentage_offer_uses_basis_points(async_client: AsyncCl
     ok = await async_client.post(
         "/api/v1/retailer/offers",
         headers=r_headers,
-        json={"name": "Twenty percent", "discount_type": "PERCENTAGE", "discount_value": 2000},
+        json={
+            "name": "Twenty percent",
+            "discount_type": "PERCENTAGE",
+            "discount_value": 2000,
+        },
     )
     assert ok.status_code == 201, ok.text
     assert ok.json()["discount_value"] == 2000
