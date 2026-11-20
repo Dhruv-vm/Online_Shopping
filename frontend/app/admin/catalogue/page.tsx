@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   LayoutGrid,
   Plus,
@@ -15,6 +16,7 @@ import {
   X,
   Package,
   FolderPlus,
+  FileCheck2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -271,6 +273,16 @@ export default function AdminCataloguePage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <Link href="/admin/passport">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs font-semibold border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1.5 cursor-pointer"
+            >
+              <FileCheck2 className="h-4 w-4 text-emerald-600" />
+              Passport Moderation Queue
+            </Button>
+          </Link>
           <Button
             variant="outline"
             size="sm"

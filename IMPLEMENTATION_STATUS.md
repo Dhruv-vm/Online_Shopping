@@ -49,7 +49,9 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | `321b0dc` | 396 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, 3-tier image validation (50/50), multi-retailer single basket checkout, retailer order status isolation (migration 0015), accurate sales analytics, product comparison (`/compare`), E2E flow. |
 | **#26** | `fix/marketplace-data-and-live-sync` | Final Marketplace Cleanup & Live Sync | `8c5e212` | 403 backend / 68 frontend | Clean demo marketplace environment (2 verified demo retailers: Basket Mart & Basket Lifestyle, 10 categories, 50 products), zero dummy/orphaned listings, strict financial transaction protection. |
 | **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | `1a0ce91` | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
-| **#29** | `feature/phase-2b-substitute-intelligence` | Phase 2B: Basket Substitute Intelligence | *Current* | 427 backend / 82 frontend | Intelligent substitute discovery engine, 5 explainable tiers (Closest Match, Budget Friendly, Better Value, Premium Upgrade, Available Now), spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
+| **#29** | `feature/phase-2b-substitute-intelligence` | Phase 2B: Basket Substitute Intelligence | `e3ccf0e` | 427 backend / 82 frontend | Intelligent substitute discovery engine, 5 explainable tiers (Closest Match, Budget Friendly, Better Value, Premium Upgrade, Available Now), spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
+| **#30** | `feature/phase-2c-intent-memory` | Phase 2C: Basket Intent Memory | `9adede6` | 437 backend / 93 frontend | Customer preference profiles, recurring intentions (no auto-orders), granular memory cards, mission & substitute personalization boosts with transparent explanations, dedicated dashboard `/account/intent`, strict opt-in consent controls. |
+| **#31** | `feature/phase-2d-product-passport` | Phase 2D: Basket Product Passport | *Current* | 446 backend / 99 frontend | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle (PENDING default, admin moderation queue, mandatory rejection reasons, edit re-triggering), customer PDP card, retailer submission portal, admin moderation portal. |
 
 ---
 
@@ -307,14 +309,39 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - 10/10 dedicated backend integration tests passing (`test_intent_memory.py`).
   - 10/10 dedicated frontend API client tests passing (`intent.test.ts`).
 
+### 3.15 Basket Product Passport (Phase 2D Transparent Specifications, Claims & Evidence Verification)
+- **Source Files:**
+  - Backend: `backend/app/modules/passport/` (`models.py`, `schemas.py`, `repository.py`, `service.py`, `router.py`), migration `0019_product_passport.py`, test suite `backend/tests/test_product_passport.py`.
+  - Frontend: `frontend/components/passport/ProductPassportSection.tsx`, `frontend/app/products/[id]/page.tsx`, `frontend/app/retailer/listings/[id]/passport/page.tsx`, `frontend/app/retailer/listings/page.tsx`, `frontend/app/admin/passport/page.tsx`, `frontend/app/admin/catalogue/page.tsx`, `frontend/lib/api/passport.test.ts`, `frontend/lib/api/client.ts`, `frontend/types/index.ts`.
+- **Database Architecture (Alembic 0019):**
+  - `product_passports`: 1:1 canonical product passport storing Manufacturer, Country of origin, Model number, GTIN/EAN/UPC, Material composition, Technical specifications, Package contents, Manufacturer warranty, Usage instructions, Safety instructions, and Certifications.
+  - `listing_passports`: 1:1 retailer listing passport capturing seller-specific details: Item condition (`NEW`, `REFURBISHED`, `OPEN_BOX`, `PRE_OWNED`), Seller warranty, Packaging notes, and Fulfillment/dispatch notes.
+  - `passport_claims`: Normalized claim audit records with claim scope (`PRODUCT` or `LISTING`), claim type, claim key, claim value, evidence URL, evidence document type, review status (`PENDING`, `VERIFIED`, `REJECTED`), reviewer tracking, and rejection reasons.
+- **Verification & Moderation Lifecycle:**
+  - Strict `PENDING` default on all retailer-submitted claims. Retailers cannot self-verify.
+  - Admin moderation queue (`GET /api/v1/admin/passport/queue`) with pagination and search across key, value, retailer, and product.
+  - One-click admin verification (`POST /api/v1/admin/passport/claims/{id}/verify`).
+  - Required non-empty admin rejection reasons (`POST /api/v1/admin/passport/claims/{id}/reject`) with full audit persistence.
+  - Re-review trigger on edit: updating any previously reviewed claim automatically resets status back to `PENDING` and clears prior review decisions.
+- **Privacy & Customer Protection:**
+  - Customer PDP view (`/products/[id]`) presents verified canonical facts, seller condition, and verified claims with emerald trust badges.
+  - Evidence URLs are strictly redacted unless `is_public_evidence == True` AND `review_status == "VERIFIED"`.
+  - Submitter user IDs, reviewer user IDs, and internal rejection notes are never exposed to customers.
+  - Products without passports return a safe empty baseline with zero 404s or catalogue disruptions.
+- **Verified Capabilities:**
+  - 9/9 dedicated backend integration tests passing (`test_product_passport.py`).
+  - 6/6 dedicated frontend API client tests passing (`passport.test.ts`).
+  - Full backend test suite passing (446/446, 100%).
+  - Full frontend test suite passing (99/99, 100%).
+
 ---
 
 ## 4. Verification & Testing Evidence Summary
 
-- **Backend Test Suite:** 437 passed (100%), 0 failures, 8 warnings.
-- **Frontend Test Suite:** 93 passed (100%), 0 failures.
+- **Backend Test Suite:** 446 passed (100%), 0 failures, 9 warnings.
+- **Frontend Test Suite:** 99 passed (100%), 0 failures.
 - **Frontend Type Check:** `tsc --noEmit` passed with 0 errors.
-- **Frontend Production Build:** Next.js 15 production build succeeded (29/29 routes compiled).
+- **Frontend Production Build:** Next.js 15 production build succeeded (30/30 routes compiled).
 - **Linter & Formatter:** `ruff check` and `ruff format --check` passed 100% clean on all modules, tests, and migrations; Next.js ESLint passed 100% clean.
 
 ---
@@ -348,7 +375,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Basket Intent Memory** | Customer | Core Differentiator | **Fully Implemented (Phase 2C)** | Customer preference profile, recurring shopping intentions (no auto-orders), granular memory notes, mission & substitute personalization boosts, transparent explanations, dedicated dashboard `/account/intent`, customer consent controls, clear-all data wipe. |
 | **Demand Gap & Community Buying** | Admin / Retailer / Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.5, §3.6, §3.7. |
 | **AI Negotiator & Dukaan vs Dukaan**| Retailer / Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.8, §3.9. |
-| **Basket Product Passport** | Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.11. |
+| **Basket Product Passport** | Customer / Retailer / Admin | Core Differentiator | **Fully Implemented (Phase 2D)** | Canonical product passport, retailer listing passport, auditable claim & evidence verification lifecycle (PENDING default, admin queue, mandatory rejection reasons, edit re-triggering), evidence privacy redaction, customer PDP card, retailer submission portal, admin moderation queue. |
 | **Bharat Multilingual** | Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.13. |
 | **Handwritten List to Basket** | Customer | Optional | **Planned (Phase 7)** | Optional auxiliary feature; spec defined in §3.14. |
 | **Sale Stream Rewind** | Customer | Removed | **Removed** | Formally removed from product specification. |

@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   X,
   Boxes,
+  FileCheck2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -371,6 +372,16 @@ export default function RetailerListingsPage() {
                       </td>
 
                       <td className="py-3 px-4 text-right space-x-2">
+                        <Link href={`/retailer/listings/${item.id}/passport`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            title="Product Passport & Claims"
+                          >
+                            <FileCheck2 className="h-4 w-4 text-emerald-600" />
+                          </Button>
+                        </Link>
                         <Button
                           variant="ghost"
                           size="sm"

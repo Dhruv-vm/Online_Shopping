@@ -20,6 +20,7 @@ import app.modules.intent.models  # noqa: F401
 import app.modules.inventory.models  # noqa: F401
 import app.modules.missions.models  # noqa: F401
 import app.modules.orders.models  # noqa: F401
+import app.modules.passport.models  # noqa: F401
 import app.modules.payments.models  # noqa: F401
 import app.modules.pricing.models  # noqa: F401
 from app.core.config import settings

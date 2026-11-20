@@ -19,7 +19,7 @@ def test_migration_chain_is_linear_and_single_head():
     # Exactly one migration head
     heads = script.get_heads()
     assert len(heads) == 1, f"Expected exactly 1 migration head, found {heads}"
-    assert heads[0] == "0018_personalization_opt_in"
+    assert heads[0] == "0019_product_passport"
 
     # Walk from head to base verifying linear unbroken parent links
     current = script.get_revision(heads[0])
@@ -35,6 +35,7 @@ def test_migration_chain_is_linear_and_single_head():
         current = script.get_revision(down)
 
     expected_revisions = [
+        "0019_product_passport",
         "0018_personalization_opt_in",
         "0017_basket_intent_memory",
         "0016_basket_mission",
@@ -58,9 +59,10 @@ def test_migration_chain_is_linear_and_single_head():
 
 
 def test_migration_metadata_includes_all_models():
-    """Verify Base.metadata has registered shopping_missions, intent memories, and all domain tables."""
+    """Verify Base.metadata has registered shopping_missions, intent memories, passport, and all domain tables."""
     import app.modules.intent.models  # noqa: F401
     import app.modules.missions.models  # noqa: F401
+    import app.modules.passport.models  # noqa: F401
 
     table_names = Base.metadata.tables.keys()
     assert "customer_preference_profiles" in table_names
@@ -68,6 +70,9 @@ def test_migration_metadata_includes_all_models():
     assert "customer_intent_memories" in table_names
     assert "shopping_missions" in table_names
     assert "shopping_mission_items" in table_names
+    assert "product_passports" in table_names
+    assert "listing_passports" in table_names
+    assert "passport_claims" in table_names
     assert "product_listings" in table_names
     assert "orders" in table_names
     assert "order_items" in table_names
@@ -132,7 +137,10 @@ async def test_database_schema_constraints_and_indices():
                     'chk_shopping_mission_people_positive',
                     'chk_shopping_mission_status',
                     'chk_mission_item_quantity_positive',
-                    'chk_mission_item_unit_price_nonnegative'
+                    'chk_mission_item_unit_price_nonnegative',
+                    'chk_listing_passport_condition',
+                    'chk_passport_claim_status',
+                    'chk_passport_claim_scope'
                 )
             """)
         )
@@ -142,3 +150,6 @@ async def test_database_schema_constraints_and_indices():
         assert "chk_shopping_mission_status" in constraints
         assert "chk_mission_item_quantity_positive" in constraints
         assert "chk_mission_item_unit_price_nonnegative" in constraints
+        assert "chk_listing_passport_condition" in constraints
+        assert "chk_passport_claim_status" in constraints
+        assert "chk_passport_claim_scope" in constraints
