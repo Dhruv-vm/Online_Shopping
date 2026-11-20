@@ -20,6 +20,10 @@ from app.modules.intent.router import intent_router
 from app.modules.inventory.router import internal_router as inventory_internal_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.missions.router import router as missions_router
+from app.modules.negotiation.router import (
+    retailer_router as negotiation_retailer_router,
+)
+from app.modules.negotiation.router import router as negotiation_router
 from app.modules.orders.router import router as orders_router
 from app.modules.passport.router import (
     admin_router as passport_admin_router,
@@ -104,6 +108,8 @@ api_router.include_router(community_admin_router)
 api_router.include_router(exchange_router)
 api_router.include_router(exchange_retailer_router)
 api_router.include_router(exchange_admin_router)
+api_router.include_router(negotiation_router)
+api_router.include_router(negotiation_retailer_router)
 
 
 @api_router.get("/info", tags=["System"])

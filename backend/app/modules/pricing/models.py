@@ -307,7 +307,7 @@ class PriceAward(Base):
     Buying, Community Exchange RFQs, Dukaan vs Dukaan) issue awards instead of
     building their own checkout. The quote service applies the best ACTIVE award
     when it prices the customer's cart, so the negotiated price flows through the
-    existing HMAC quote -> reservation -> order -> Razorpay pipeline. The award is
+    existing server-authoritative quote -> reservation -> order -> Razorpay pipeline. The award is
     marked USED when an order consumes the quote it was applied to.
     """
 
