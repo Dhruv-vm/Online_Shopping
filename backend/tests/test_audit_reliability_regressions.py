@@ -212,3 +212,15 @@ async def test_retailer_cannot_fulfil_unpaid_order(async_client: AsyncClient):
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "INVALID_STATUS_TRANSITION"
+
+
+@pytest.mark.asyncio
+async def test_phase3_background_jobs_run_cleanly():
+    """The Phase 3 scheduler jobs execute against PostgreSQL without errors."""
+    from app.core.background import phase3_fast_jobs, phase3_slow_jobs, run_in_txn
+    from app.modules.price_intel.service import snapshot_all_active_listings
+
+    sf = get_session_factory()
+    await phase3_fast_jobs(sf)
+    await phase3_slow_jobs(sf)
+    assert await run_in_txn(sf, snapshot_all_active_listings) >= 1

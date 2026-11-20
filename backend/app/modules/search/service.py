@@ -65,7 +65,9 @@ class SearchService:
         # search in development/sandbox returned 0 results instead of falling back
         # to PostgreSQL. Tests may still inject a mock client explicitly.
         self.client = search_client or (
-            get_opensearch_client(self.settings) if self.settings.has_opensearch else None
+            get_opensearch_client(self.settings)
+            if self.settings.has_opensearch
+            else None
         )
         self.circuit_breaker = circuit_breaker or SearchCircuitBreaker(
             failure_threshold=self.settings.OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD,

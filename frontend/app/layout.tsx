@@ -4,6 +4,7 @@ import { Footer } from "@/components/shared/footer";
 import { AuthProvider } from "@/lib/auth/auth-context";
 import { CartProvider } from "@/lib/cart/cart-context";
 import { CompareProvider } from "@/lib/compare/compare-context";
+import { I18nProvider } from "@/lib/i18n/i18n-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,15 +20,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="flex min-h-screen flex-col font-sans antialiased">
-        <AuthProvider>
-          <CartProvider>
-            <CompareProvider>
-              <Header />
-              <main className="flex-1">{children}</main>
-              <Footer />
-            </CompareProvider>
-          </CartProvider>
-        </AuthProvider>
+        <I18nProvider>
+          <AuthProvider>
+            <CartProvider>
+              <CompareProvider>
+                <Header />
+                <main className="flex-1">{children}</main>
+                <Footer />
+              </CompareProvider>
+            </CartProvider>
+          </AuthProvider>
+        </I18nProvider>
       </body>
     </html>
   );

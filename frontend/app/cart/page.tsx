@@ -29,6 +29,8 @@ import { useCart } from "@/lib/cart/cart-context";
 import { createQuote, refreshQuote } from "@/lib/api/quotes";
 import { reservationApi } from "@/lib/api/reservations";
 import { formatPrice } from "@/lib/utils";
+import { NegotiatorPanel } from "@/components/phase3/negotiator-panel";
+import { useAuth } from "@/lib/auth/auth-context";
 import type {
   CartItem,
   Quote,
@@ -52,6 +54,7 @@ export default function CartPage() {
     clearCart,
     refreshCart,
   } = useCart();
+  const { isAuthenticated } = useAuth();
 
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -653,6 +656,8 @@ export default function CartPage() {
 
         {/* Right Column: Order Summary & Retailer Delivery Breakdown */}
         <div className="lg:col-span-4 space-y-4">
+          {/* AI Negotiator (Phase 3D) */}
+          {isAuthenticated && <NegotiatorPanel />}
           <Card className="border shadow-xs">
             <CardHeader className="pb-3 border-b bg-muted/20">
               <div className="flex items-center justify-between">

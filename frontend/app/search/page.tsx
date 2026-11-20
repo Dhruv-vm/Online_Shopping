@@ -14,6 +14,7 @@ import type {
   SearchFacets,
   SearchResponse,
 } from "@/types";
+import { RequestProductButton } from "@/components/phase3/request-product";
 import {
   ChevronLeft,
   ChevronRight,
@@ -374,6 +375,7 @@ function SearchView() {
               <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
                 Try adjusting your search terms, removing filters, or browsing our full catalogue.
               </p>
+              {currentQuery && <RequestProductButton query={currentQuery} />}
               <div className="flex justify-center gap-3">
                 {activeFilterCount > 0 && (
                   <Button onClick={clearAllFilters} variant="outline" size="sm">

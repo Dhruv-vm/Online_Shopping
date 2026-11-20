@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useCart } from "@/lib/cart/cart-context";
 import { useCompare } from "@/lib/compare/compare-context";
+import { LanguageSwitcher, useI18n } from "@/lib/i18n/i18n-context";
 import { apiClient } from "@/lib/api/client";
 import type { CustomerNotification } from "@/types/index";
 
@@ -36,6 +37,7 @@ export function Header() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const { totalQuantity } = useCart();
   const { compareCount } = useCompare();
+  const { t } = useI18n();
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -190,6 +192,14 @@ export function Header() {
             Orders
           </Link>
 
+          {/* Phase 3: Sale Stream (Desktop) */}
+          <Link
+            href="/sale-stream"
+            className="text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400"
+          >
+            {t("nav.saleStream")}
+          </Link>
+
           {/* Basket Mission Link (Desktop) */}
           <Link
             href="/missions"
@@ -307,6 +317,8 @@ export function Header() {
               </div>
             )}
           </div>
+
+          <LanguageSwitcher />
 
           {/* Cart Icon Link (Desktop) */}
           <Link
@@ -484,6 +496,25 @@ export function Header() {
               <Package className="h-4 w-4 text-emerald-600" />
               My Orders & Tracking
             </Link>
+            {[
+              ["/sale-stream", "nav.saleStream"],
+              ["/community-buying", "nav.communityBuying"],
+              ["/exchange", "nav.exchange"],
+              ["/auctions", "nav.auctions"],
+              ["/list-to-basket", "nav.listToBasket"],
+            ].map(([href, key]) => (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 rounded-md hover:bg-muted text-foreground"
+              >
+                {t(key)}
+              </Link>
+            ))}
+            <div className="px-3 py-2">
+              <LanguageSwitcher />
+            </div>
             <Link
               href="/missions"
               onClick={() => setMobileMenuOpen(false)}

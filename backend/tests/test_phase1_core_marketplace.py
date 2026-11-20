@@ -89,16 +89,25 @@ async def test_a_retailer1_operations(async_client: AsyncClient):
         "order_number"
     ].startswith("BSK-")
 
-    # 5. Update order status
+    # 5. Update order status (audit rule: only paid orders can be fulfilled)
     target_order = next(
-        (
-            o
-            for o in orders_data["items"]
-            if o["status"] in ("CONFIRMED", "PENDING_PAYMENT")
-        ),
+        (o for o in orders_data["items"] if o["status"] == "CONFIRMED"),
         orders_data["items"][0],
     )
     order_id = target_order["id"]
+    if target_order["status"] == "PENDING_PAYMENT":
+        from app.modules.orders.models import Order
+
+        async with get_session_factory()() as session:
+            o = (
+                await session.execute(
+                    select(Order).where(Order.id == uuid.UUID(order_id))
+                )
+            ).scalar_one()
+            o.status = "CONFIRMED"
+            o.payment_status = "SUCCEEDED"
+            await session.commit()
+        target_order["status"] = "CONFIRMED"
     curr_status = target_order["status"]
     next_status_map = {
         "PENDING_PAYMENT": "PROCESSING",

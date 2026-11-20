@@ -76,6 +76,51 @@ async def escalate_payment_sla(session_factory) -> None:
         await ReconciliationService(session).execute_75m_sla_escalation_job(limit=50)
 
 
+async def run_in_txn(session_factory, fn) -> object:
+    async with session_factory() as session:
+        try:
+            result = await fn(session)
+            await session.commit()
+            return result
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def phase3_fast_jobs(session_factory) -> None:
+    """Every 15s: close auctions, settle group buys, expire awards/RFQs/stream."""
+    from app.modules.auctions.service import close_ended_auctions
+    from app.modules.community.service import settle_expired_campaigns
+    from app.modules.exchange.service import expire_open_requests
+    from app.modules.pricing.awards import expire_stale_awards
+    from app.modules.sale_stream.service import expire_sale_stream
+
+    for job in (
+        close_ended_auctions,
+        settle_expired_campaigns,
+        expire_open_requests,
+        expire_stale_awards,
+        expire_sale_stream,
+    ):
+        try:
+            await run_in_txn(session_factory, job)
+        except Exception as exc:
+            logger.warning("Phase 3 job %s failed: %s", job.__name__, exc)
+
+
+async def phase3_slow_jobs(session_factory) -> None:
+    """Hourly: hot-seller detection, daily price snapshot (idempotent), demand expiry."""
+    from app.modules.demand.service import expire_idle_pools
+    from app.modules.price_intel.service import snapshot_all_active_listings
+    from app.modules.sale_stream.service import detect_hot_sellers
+
+    for job in (detect_hot_sellers, snapshot_all_active_listings, expire_idle_pools):
+        try:
+            await run_in_txn(session_factory, job)
+        except Exception as exc:
+            logger.warning("Phase 3 job %s failed: %s", job.__name__, exc)
+
+
 class BackgroundWorkerSupervisor:
     """Owns all periodic jobs and the outbox publisher for one process."""
 
@@ -160,6 +205,16 @@ class BackgroundWorkerSupervisor:
             "payment-sla-escalation",
             cfg.PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS,
             lambda: escalate_payment_sla(sf),
+        )
+        self._periodic(
+            "phase3-fast",
+            cfg.PHASE3_FAST_JOB_INTERVAL_SECONDS,
+            lambda: phase3_fast_jobs(sf),
+        )
+        self._periodic(
+            "phase3-slow",
+            cfg.PHASE3_SLOW_JOB_INTERVAL_SECONDS,
+            lambda: phase3_slow_jobs(sf),
         )
         if cfg.has_kafka and cfg.OUTBOX_PUBLISHER_ENABLED:
             self._tasks.append(

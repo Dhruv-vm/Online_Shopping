@@ -78,6 +78,7 @@ export default function AdminLayout({
     { href: "/admin/retailers", label: "Retailers & Compliance", icon: Store },
     { href: "/admin/catalogue", label: "Platform Catalogue", icon: LayoutGrid },
     { href: "/admin/deals", label: "Deals & Promotions", icon: Tag },
+    { href: "/admin/demand", label: "Demand Intelligence", icon: BarChart3 },
   ];
 
   return (

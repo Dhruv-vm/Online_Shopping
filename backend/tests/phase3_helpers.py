@@ -33,7 +33,13 @@ async def make_retailer(
     service_pincodes: list[str] | None = None,
     **listing_kwargs: Any,
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """A verified retailer with a portal user and one listing."""
+    """A verified retailer with a portal user and one listing.
+
+    Phase 3 fixtures live in their own category so they never change the
+    outcome of catalogue-dependent tests (e.g. mission budget planning).
+    """
+    listing_kwargs.setdefault("category_slug", "phase3-test")
+    listing_kwargs.setdefault("category_name", "Phase 3 Test")
     listing = await create_test_listing(**listing_kwargs)
     user_id, headers = await make_user("retailer")
     async with get_session_factory()() as session:
