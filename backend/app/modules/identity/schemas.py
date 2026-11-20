@@ -60,6 +60,7 @@ class UserResponse(BaseModel):
     retailer_id: uuid.UUID | None = None
     store_name: str | None = None
     verification_status: str | None = None
+    preferred_language: str = "en"
     created_at: datetime.datetime
 
 

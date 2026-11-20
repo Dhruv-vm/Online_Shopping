@@ -1,6 +1,6 @@
 """Seed Indic shopping lexicon for search-query normalisation (Phase 3H).
 
-Maps common grocery/household terms written in the 7 supported Indic scripts
+Maps common grocery/household terms written in the 11 supported Indian-language scripts
 (and common romanised forms) to the English catalogue vocabulary. This is a
 deterministic seed dictionary, not machine translation: unknown words pass
 through unchanged. Entries should be reviewed and extended by native speakers;
@@ -19,6 +19,10 @@ SUPPORTED_LANGUAGES: dict[str, dict[str, str]] = {
     "bn": {"name": "Bengali", "native": "বাংলা", "script": "Bengali"},
     "mr": {"name": "Marathi", "native": "मराठी", "script": "Devanagari"},
     "gu": {"name": "Gujarati", "native": "ગુજરાતી", "script": "Gujarati"},
+    "ml": {"name": "Malayalam", "native": "മലയാളം", "script": "Malayalam"},
+    "pa": {"name": "Punjabi", "native": "ਪੰਜਾਬੀ", "script": "Gurmukhi"},
+    "or": {"name": "Odia", "native": "ଓଡ଼ିଆ", "script": "Odia"},
+    "ur": {"name": "Urdu", "native": "اردو", "script": "Perso-Arabic"},
 }
 
 # english term -> {lang: [native forms...]}
@@ -204,6 +208,28 @@ _TERMS: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# Malayalam, Punjabi, Odia and Urdu seed forms (native review required).
+_EXTRA_FORMS: dict[str, tuple[list[str], list[str], list[str], list[str]]] = {'milk': (['പാൽ'], ['ਦੁੱਧ'], ['କ୍ଷୀର', 'ଦୁଧ'], ['دودھ']),
+    'rice': (['അരി'], ['ਚੌਲ'], ['ଚାଉଳ'], ['چاول']),
+    'sugar': (['പഞ്ചസാര'], ['ਖੰਡ', 'ਚੀਨੀ'], ['ଚିନି'], ['چینی']),
+    'salt': (['ഉപ്പ്'], ['ਲੂਣ'], ['ଲୁଣ'], ['نمک']),
+    'oil': (['എണ്ണ'], ['ਤੇਲ'], ['ତେଲ'], ['تیل']),
+    'atta flour': (['ഗോതമ്പ് പൊടി'], ['ਆਟਾ'], ['ଅଟା'], ['آٹا']),
+    'tea': (['ചായ'], ['ਚਾਹ'], ['ଚା'], ['چائے']),
+    'soap': (['സോപ്പ്'], ['ਸਾਬਣ'], ['ସାବୁନ'], ['صابن']),
+    'butter': (['വെണ്ണ'], ['ਮੱਖਣ'], ['ଲହୁଣି'], ['مکھن']),
+    'dal lentils': (['പരിപ്പ്'], ['ਦਾਲ'], ['ଡାଲି'], ['دال']),
+    'eggs': (['മുട്ട'], ['ਆਂਡੇ'], ['ଅଣ୍ଡା'], ['انڈے']),
+    'ghee': (['നെയ്യ്'], ['ਘਿਉ'], ['ଘିଅ'], ['گھی']),
+    'curd yogurt': (['തൈര്'], ['ਦਹੀਂ'], ['ଦହି'], ['دہی']),
+    'water': (['വെള്ളം'], ['ਪਾਣੀ'], ['ପାଣି'], ['پانی']),
+    'onion': (['ഉള്ളി'], ['ਪਿਆਜ਼'], ['ପିଆଜ'], ['پیاز']),
+    'potato': (['ഉരുളക്കിഴങ്ങ്'], ['ਆਲੂ'], ['ଆଳୁ'], ['آلو']),
+    'mobile phone': (['മൊബൈൽ'], ['ਮੋਬਾਈਲ'], ['ମୋବାଇଲ'], ['موبائل']),
+    'shirt': (['ഷർട്ട്'], ['ਕਮੀਜ਼'], ['ସାର୍ଟ'], ['قمیض'])}
+for _english, (_ml, _pa, _or, _ur) in _EXTRA_FORMS.items():
+    _TERMS.setdefault(_english, {}).update({"ml": _ml, "pa": _pa, "or": _or, "ur": _ur})
+
 TERM_INDEX: dict[str, str] = {}
 for _english, _forms in _TERMS.items():
     for _lang_forms in _forms.values():
@@ -212,8 +238,12 @@ for _english, _forms in _TERMS.items():
 
 # Unicode block ranges -> language guess (Devanagari is shared by hi/mr).
 _SCRIPT_RANGES: list[tuple[int, int, str]] = [
+    (0x0600, 0x06FF, "ur"),
     (0x0900, 0x097F, "hi"),
     (0x0980, 0x09FF, "bn"),
+    (0x0A00, 0x0A7F, "pa"),
+    (0x0B00, 0x0B7F, "or"),
+    (0x0D00, 0x0D7F, "ml"),
     (0x0A80, 0x0AFF, "gu"),
     (0x0B80, 0x0BFF, "ta"),
     (0x0C00, 0x0C7F, "te"),

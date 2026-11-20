@@ -20,6 +20,10 @@ from tests.phase3_helpers import make_retailer, make_user
         ("ಹಾಲು", "milk", "kn"),
         ("দুধ", "milk", "bn"),
         ("દૂધ", "milk", "gu"),
+        ("പാൽ", "milk", "ml"),
+        ("ਦੁੱਧ", "milk", "pa"),
+        ("କ୍ଷୀର", "milk", "or"),
+        ("دودھ", "milk", "ur"),
         ("doodh", "milk", "en"),
         ("आटा 5kg", "atta flour 5kg", "hi"),
     ],
@@ -45,6 +49,10 @@ async def test_languages_and_normalize_endpoints(async_client: AsyncClient):
         "bn",
         "mr",
         "gu",
+        "ml",
+        "pa",
+        "or",
+        "ur",
     }
     n = (await async_client.get("/api/v1/i18n/normalize", params={"q": "चावल"})).json()
     assert n["normalized"] == "rice" and n["translated"] is True
@@ -123,3 +131,15 @@ async def test_language_preference(async_client: AsyncClient):
         )
     ).status_code == 422
     assert (await async_client.get("/api/v1/i18n/preference")).status_code == 401
+
+
+
+@pytest.mark.asyncio
+async def test_profile_exposes_preferred_language(async_client: AsyncClient):
+    _, headers = await make_user()
+    r = await async_client.put(
+        "/api/v1/i18n/preference", headers=headers, json={"language": "ur"}
+    )
+    assert r.status_code == 200, r.text
+    me = (await async_client.get("/api/v1/users/me", headers=headers)).json()
+    assert me["preferred_language"] == "ur"
