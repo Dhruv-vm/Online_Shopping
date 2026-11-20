@@ -28,6 +28,7 @@ import {
   ArrowRight,
   Clock,
   Truck,
+  Sparkles,
 } from "lucide-react";
 
 export default function AccountOverviewPage() {
@@ -188,7 +189,7 @@ export default function AccountOverviewPage() {
             </Card>
 
             {/* Quick Actions Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Link href="/orders" className="block group">
                 <Card className="h-full hover:border-emerald-600/50 hover:shadow-md transition-all cursor-pointer">
                   <CardContent className="p-5 flex items-start gap-3.5">
@@ -201,6 +202,24 @@ export default function AccountOverviewPage() {
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Track deliveries, view receipts, and initiate returns
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/account/intent" className="block group">
+                <Card className="h-full hover:border-amber-500/50 hover:shadow-md transition-all cursor-pointer">
+                  <CardContent className="p-5 flex items-start gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 group-hover:scale-105 transition-transform">
+                      <Sparkles className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground group-hover:text-amber-600 transition-colors text-sm">
+                        Shopping Intent & Memory
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Manage your preferences, recurring goals, and privacy
                       </p>
                     </div>
                   </CardContent>

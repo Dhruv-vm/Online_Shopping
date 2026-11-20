@@ -321,3 +321,34 @@ Substitutes are classified into 5 explainable tiers:
   - Automatically merges quantities if the target listing is already present in the basket (capped at 10 and available stock).
   - Supersedes active checkout quotes (`QuoteStatus.SUPERSEDED`) to prevent stale pricing checkouts.
 
+---
+
+## 11. Basket Intent Memory Architecture (Phase 2C)
+
+Phase 2C introduces a customer-controlled memory system that remembers shopping preferences and recurring intentions across the entire multi-retailer marketplace.
+
+### 11.1 Domain Models & Migration 0017 / 0018
+- **`CustomerPreferenceProfile` (`customer_preference_profiles`):**
+  - Attached 1:1 to `users.id` via foreign key with `ON DELETE CASCADE`.
+  - Captures structured preferences: `preferred_brands` (JSONB list), `preferred_categories` (JSONB list), `preferred_retailers` (JSONB list), `preferred_price_range` (JSONB object), `preferred_attributes` (JSONB object), `shopping_priorities` (JSONB list of `ShoppingPriority`), and `category_preferences` (JSONB object).
+  - Explicit customer consent flag: `personalization_enabled` (`BOOLEAN`, default `False` — strict opt-in).
+- **`RecurringIntention` (`recurring_intentions`):**
+  - Customer-defined recurring shopping targets (title, category IDs, frequency enum, budget in paise, notes, active status, last execution timestamp).
+  - **Zero Auto-Order Invariant:** Recurring intentions strictly serve as planning suggestions and memory anchors. The platform never places orders, charges payment methods, or reserves stock automatically.
+- **`IntentMemoryItem` (`intent_memory_items`):**
+  - Granular, explainable memory items (memory type, key, structured value, natural language summary, source provenance `CUSTOMER_STATED` / `MISSION_DERIVED` / `SYSTEM_SUGGESTED`, active flag).
+
+### 11.2 Privacy, Personalization Consent & Explainability Guardrails
+1. **Tenant Isolation & Anti-IDOR:** All intent queries and mutations strictly filter by `current_user.id`. Customer A cannot access or mutate Customer B's profile, recurring intentions, or memories.
+2. **Strict Opt-In Default & Consent Toggle (`PATCH /api/v1/intent/consent`):**
+   - Personalization defaults to `False` (opt-in) across models, schemas, repositories, and migrations.
+   - Creating or editing a preference profile never silently enables personalization.
+   - When `personalization_enabled` is `False`, all recommendation boosts in Mission Planning and Substitute Discovery are bypassed.
+   - Suggestions API returns empty recommendation lists and neutral explanations.
+3. **Transparent Personalization:**
+   - When a substitute or mission item receives an intent score boost (e.g. for matching a preferred brand), the recommendation reason explicitly states the rationale (e.g. `"Recommended because you prefer 'Apple' in your saved intent memory."`).
+   - Availability, real inventory, pricing validity, verified retailer status, and statutory HSN tax classification are never overridden by intent memory.
+4. **Complete Customer Control & Erasure (`DELETE /api/v1/intent/clear-all`):**
+   - Customers can delete individual memories or trigger a full wipe of all intent records via their account dashboard.
+
+

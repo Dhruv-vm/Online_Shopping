@@ -286,15 +286,36 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - 427/427 total backend test suite passing.
   - 82/82 total frontend test suite passing.
 
+### 3.14 Basket Intent Memory (Phase 2C Customer Preference & Recurring Goal Memory)
+- **Source Files:**
+  - Backend: `backend/app/modules/intent/` (`models.py`, `schemas.py`, `repository.py`, `service.py`, `router.py`), migrations `0017_basket_intent_memory.py` & `0018_personalization_opt_in.py`, test suite `backend/tests/test_intent_memory.py`.
+  - Frontend: `frontend/app/account/intent/page.tsx`, `frontend/components/account/account-nav.tsx`, `frontend/app/account/page.tsx`, `frontend/app/missions/page.tsx`, `frontend/lib/api/intent.test.ts`, `frontend/lib/api/client.ts`, `frontend/types/index.ts`.
+- **Database Architecture (Alembic 0017 / 0018):**
+  - `customer_preference_profiles`: 1:1 customer profile storing preferred brands, categories, retailers, price range, attributes, shopping priorities, and personalization consent status (`personalization_enabled` defaults to `False` — strict opt-in).
+  - `recurring_intentions`: Customer repeating shopping targets with frequency, budget, notes, and active status. Guaranteed zero automatic order placement or payment deductions.
+  - `intent_memory_items`: Granular explicit memories and notes with provenance tracking (`CUSTOMER_STATED`, `MISSION_DERIVED`).
+- **Personalization Integration:**
+  - Subsystem integrations across Mission Planning (`generate_plan`) and Substitute Intelligence (`get_substitutes_for_listing`).
+  - Intent boosts for preferred brands and shopping priorities (`LOWEST_PRICE`, `QUALITY`, `BALANCED`).
+  - Transparent explanations citing intent memory in recommendation reasons.
+  - Strict consent enforcement: when `personalization_enabled == False`, all memory boosts are omitted and suggestions return neutral results.
+- **Customer Privacy & Controls:**
+  - Anti-IDOR customer isolation across all endpoints.
+  - Full CRUD for preferences, recurring intentions, and memory cards.
+  - Complete data erasure (`DELETE /api/v1/intent/clear-all`) allowing customers to reset all memory records.
+- **Verified Capabilities:**
+  - 10/10 dedicated backend integration tests passing (`test_intent_memory.py`).
+  - 10/10 dedicated frontend API client tests passing (`intent.test.ts`).
+
 ---
 
 ## 4. Verification & Testing Evidence Summary
 
-- **Backend Test Suite:** 427 passed (100%), 0 failures, 8 warnings (Starlette/Alembic deprecation notice).
-- **Frontend Test Suite:** 82 passed (100%), 0 failures.
+- **Backend Test Suite:** 437 passed (100%), 0 failures, 8 warnings.
+- **Frontend Test Suite:** 93 passed (100%), 0 failures.
 - **Frontend Type Check:** `tsc --noEmit` passed with 0 errors.
-- **Frontend Production Build:** Next.js 15 production build succeeded (28/28 routes compiled).
-- **Linter & Formatter:** `ruff check` and `ruff format --check` passed 100% clean on all modules, tests, and migrations.
+- **Frontend Production Build:** Next.js 15 production build succeeded (29/29 routes compiled).
+- **Linter & Formatter:** `ruff check` and `ruff format --check` passed 100% clean on all modules, tests, and migrations; Next.js ESLint passed 100% clean.
 
 ---
 
@@ -324,6 +345,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
 | **Basket Mission & Guided Shopping** | Customer | Core Differentiator | **Fully Implemented (Phase 2A)** | Goal-based shopping plans, multi-product knapsack allocation, live stock & price validation, alternative product switching, one-click basket transfer. |
 | **Substitute & Price Intelligence** | Customer | Core Differentiator | **Fully Implemented (Phase 2B)** | Intelligent substitute discovery engine, 5 explainable tiers, spec comparison matrix, customer-approved basket replacement API, active quote superseding, Cart & PDP integration. |
+| **Basket Intent Memory** | Customer | Core Differentiator | **Fully Implemented (Phase 2C)** | Customer preference profile, recurring shopping intentions (no auto-orders), granular memory notes, mission & substitute personalization boosts, transparent explanations, dedicated dashboard `/account/intent`, customer consent controls, clear-all data wipe. |
 | **Demand Gap & Community Buying** | Admin / Retailer / Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.5, §3.6, §3.7. |
 | **AI Negotiator & Dukaan vs Dukaan**| Retailer / Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.8, §3.9. |
 | **Basket Product Passport** | Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.11. |

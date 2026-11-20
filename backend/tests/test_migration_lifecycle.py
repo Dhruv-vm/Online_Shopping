@@ -19,7 +19,7 @@ def test_migration_chain_is_linear_and_single_head():
     # Exactly one migration head
     heads = script.get_heads()
     assert len(heads) == 1, f"Expected exactly 1 migration head, found {heads}"
-    assert heads[0] == "0016_basket_mission"
+    assert heads[0] == "0018_personalization_opt_in"
 
     # Walk from head to base verifying linear unbroken parent links
     current = script.get_revision(heads[0])
@@ -35,6 +35,8 @@ def test_migration_chain_is_linear_and_single_head():
         current = script.get_revision(down)
 
     expected_revisions = [
+        "0018_personalization_opt_in",
+        "0017_basket_intent_memory",
         "0016_basket_mission",
         "0015_order_item_fulfillment",
         "0014_admin_moderation_deals",
@@ -56,10 +58,14 @@ def test_migration_chain_is_linear_and_single_head():
 
 
 def test_migration_metadata_includes_all_models():
-    """Verify Base.metadata has registered shopping_missions, shopping_mission_items, and all domain tables."""
+    """Verify Base.metadata has registered shopping_missions, intent memories, and all domain tables."""
+    import app.modules.intent.models  # noqa: F401
     import app.modules.missions.models  # noqa: F401
 
     table_names = Base.metadata.tables.keys()
+    assert "customer_preference_profiles" in table_names
+    assert "customer_recurring_intentions" in table_names
+    assert "customer_intent_memories" in table_names
     assert "shopping_missions" in table_names
     assert "shopping_mission_items" in table_names
     assert "product_listings" in table_names

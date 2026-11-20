@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Loader2,
   Lock,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
-import type { MissionSummary, Category } from "@/types";
+import type { MissionSummary, Category, IntentSuggestionResponse } from "@/types";
 
 interface Template {
   title: string;
@@ -104,6 +105,18 @@ export default function MissionsPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [intentSuggestions, setIntentSuggestions] = useState<IntentSuggestionResponse | null>(null);
+
+  // Pre-fill from URL params if directed from account intent
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlTitle = params.get("title");
+      const urlBudget = params.get("budget_rupees");
+      if (urlTitle) setTitle(urlTitle);
+      if (urlBudget) setBudgetInr(urlBudget);
+    }
+  }, []);
 
   // Load initial categories
   useEffect(() => {
@@ -119,7 +132,7 @@ export default function MissionsPage() {
     };
   }, []);
 
-  // Load saved missions when authenticated
+  // Load saved missions and intent suggestions when authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     let mounted = true;
@@ -133,6 +146,14 @@ export default function MissionsPage() {
       .finally(() => {
         if (mounted) setLoadingMissions(false);
       });
+
+    apiClient
+      .getIntentSuggestions()
+      .then((sug) => {
+        if (mounted) setIntentSuggestions(sug);
+      })
+      .catch(() => {});
+
     return () => {
       mounted = false;
     };
@@ -238,6 +259,99 @@ export default function MissionsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Intent Memory Personalization Banner */}
+              {intentSuggestions &&
+                intentSuggestions.personalization_enabled &&
+                (intentSuggestions.suggested_brands.length > 0 ||
+                  intentSuggestions.applicable_intentions.length > 0) && (
+                  <div className="p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-950/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                        <span className="text-xs font-semibold text-amber-950 dark:text-amber-200">
+                          Suggestions from your Shopping Intent Memory
+                        </span>
+                      </div>
+                      <Link
+                        href="/account/intent"
+                        className="text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+                      >
+                        Manage Memories
+                      </Link>
+                    </div>
+
+                    {intentSuggestions.applicable_intentions.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] text-muted-foreground font-medium block">
+                          Saved Recurring Goals:
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {intentSuggestions.applicable_intentions.map((intent) => (
+                            <button
+                              key={intent.id}
+                              type="button"
+                              onClick={() => {
+                                setTitle(intent.title);
+                                if (intent.budget_paise) {
+                                  setBudgetInr(String(Math.round(intent.budget_paise / 100)));
+                                }
+                                if (intent.notes) {
+                                  setPreferencesStr(intent.notes);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800 bg-white dark:bg-zinc-900 text-foreground hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors"
+                            >
+                              <Calendar className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                              <span>{intent.title}</span>
+                              {intent.budget_paise ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                  (₹{Math.round(intent.budget_paise / 100).toLocaleString("en-IN")})
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {intentSuggestions.suggested_brands.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] text-muted-foreground font-medium block">
+                          Your Preferred Brands (Click to add to preferences):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {intentSuggestions.suggested_brands.map((brand) => (
+                            <button
+                              key={brand}
+                              type="button"
+                              onClick={() => {
+                                const current = preferencesStr
+                                  .split(",")
+                                  .map((p) => p.trim())
+                                  .filter(Boolean);
+                                if (!current.includes(brand)) {
+                                  setPreferencesStr(
+                                    current.length > 0 ? `${preferencesStr}, ${brand}` : brand
+                                  );
+                                }
+                              }}
+                              className="text-[11px] px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800 bg-amber-100/60 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 hover:bg-amber-200/60 transition-colors"
+                            >
+                              + {brand}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {intentSuggestions.explanation && (
+                      <p className="text-[11px] text-muted-foreground italic">
+                        &ldquo;{intentSuggestions.explanation}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                )}
+
               {/* Inspiration Template Chips */}
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">

@@ -1716,3 +1716,137 @@ export interface CartItemReplaceResponse {
   message: string;
 }
 
+// Phase 2C Basket Intent Memory types
+export type ShoppingPriority =
+  | "LOWEST_PRICE"
+  | "QUALITY"
+  | "DURABILITY"
+  | "CONVENIENCE"
+  | "BALANCED";
+
+export type Frequency =
+  | "WEEKLY"
+  | "BIWEEKLY"
+  | "MONTHLY"
+  | "QUARTERLY"
+  | "SEASONAL"
+  | "CUSTOM";
+
+export type MemoryType = "PREFERENCE" | "RECURRING_GOAL" | "NOTE" | "CONTEXT";
+export type MemorySource =
+  | "CUSTOMER_STATED"
+  | "MISSION_DERIVED"
+  | "SYSTEM_SUGGESTED";
+
+export interface CustomerPreferenceProfile {
+  id: string;
+  customer_id: string;
+  preferred_brands: string[];
+  preferred_categories: string[];
+  preferred_retailers: string[];
+  preferred_price_range: {
+    min_paise?: number;
+    max_paise?: number;
+    [key: string]: unknown;
+  };
+  preferred_attributes: Record<string, unknown>;
+  shopping_priorities: (ShoppingPriority | string)[];
+  category_preferences: Record<string, unknown>;
+  personalization_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerPreferenceProfileRequest {
+  preferred_brands?: string[];
+  preferred_categories?: string[];
+  preferred_retailers?: string[];
+  preferred_price_range?: {
+    min_paise?: number;
+    max_paise?: number;
+    [key: string]: unknown;
+  };
+  preferred_attributes?: Record<string, unknown>;
+  shopping_priorities?: string[];
+  category_preferences?: Record<string, unknown>;
+  personalization_enabled?: boolean;
+}
+
+export interface PersonalizationConsentResponse {
+  personalization_enabled: boolean;
+  updated_at: string;
+  message: string;
+}
+
+export interface RecurringIntention {
+  id: string;
+  customer_id: string;
+  title: string;
+  category_ids: string[];
+  frequency: Frequency | string;
+  budget_paise?: number | null;
+  notes?: string | null;
+  is_active: boolean;
+  last_executed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecurringIntentionCreateRequest {
+  title: string;
+  category_ids?: string[];
+  frequency?: string;
+  budget_paise?: number | null;
+  notes?: string | null;
+}
+
+export interface RecurringIntentionUpdateRequest {
+  title?: string;
+  category_ids?: string[];
+  frequency?: string;
+  budget_paise?: number | null;
+  notes?: string | null;
+  is_active?: boolean;
+}
+
+export interface IntentMemoryItem {
+  id: string;
+  customer_id: string;
+  memory_type: MemoryType | string;
+  key: string;
+  value: Record<string, unknown> | string;
+  summary: string;
+  source: MemorySource | string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntentMemoryItemCreateRequest {
+  memory_type?: string;
+  key: string;
+  value?: Record<string, unknown> | string;
+  summary: string;
+  source?: string;
+}
+
+export interface IntentOverviewResponse {
+  profile?: CustomerPreferenceProfile | null;
+  recurring_intentions: RecurringIntention[];
+  memories: IntentMemoryItem[];
+  active_intentions_count: number;
+  total_memories_count: number;
+  personalization_enabled: boolean;
+}
+
+export interface IntentSuggestionResponse {
+  suggested_brands: string[];
+  suggested_priorities: string[];
+  suggested_budget_paise?: number | null;
+  suggested_categories: string[];
+  applicable_intentions: RecurringIntention[];
+  personalization_enabled: boolean;
+  explanation?: string | null;
+}
+
+

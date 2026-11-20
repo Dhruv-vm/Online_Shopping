@@ -92,6 +92,16 @@ import type {
   SubstituteListResponse,
   CartItemReplaceRequest,
   CartItemReplaceResponse,
+  CustomerPreferenceProfile,
+  CustomerPreferenceProfileRequest,
+  PersonalizationConsentResponse,
+  RecurringIntention,
+  RecurringIntentionCreateRequest,
+  RecurringIntentionUpdateRequest,
+  IntentMemoryItem,
+  IntentMemoryItemCreateRequest,
+  IntentOverviewResponse,
+  IntentSuggestionResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -1216,6 +1226,101 @@ class ApiClient {
       `/api/v1/missions/${encodeURIComponent(missionId)}/add-to-cart`,
       {}
     );
+  }
+
+  // ================= Basket Intent Memory (Phase 2C) =================
+  public async getIntentOverview(): Promise<IntentOverviewResponse> {
+    return this.get<IntentOverviewResponse>("/api/v1/intent/overview");
+  }
+
+  public async getPreferenceProfile(): Promise<CustomerPreferenceProfile> {
+    return this.get<CustomerPreferenceProfile>("/api/v1/intent/profile");
+  }
+
+  public async updatePreferenceProfile(
+    payload: CustomerPreferenceProfileRequest
+  ): Promise<CustomerPreferenceProfile> {
+    return this.put<CustomerPreferenceProfile>(
+      "/api/v1/intent/profile",
+      payload
+    );
+  }
+
+  public async updatePersonalizationConsent(
+    enabled: boolean
+  ): Promise<PersonalizationConsentResponse> {
+    return this.patch<PersonalizationConsentResponse>(
+      "/api/v1/intent/consent",
+      {
+        personalization_enabled: enabled,
+      }
+    );
+  }
+
+  public async listRecurringIntentions(
+    activeOnly = false
+  ): Promise<RecurringIntention[]> {
+    const q = activeOnly ? "?active_only=true" : "";
+    return this.get<RecurringIntention[]>(`/api/v1/intent/recurring${q}`);
+  }
+
+  public async createRecurringIntention(
+    payload: RecurringIntentionCreateRequest
+  ): Promise<RecurringIntention> {
+    return this.post<RecurringIntention>("/api/v1/intent/recurring", payload);
+  }
+
+  public async updateRecurringIntention(
+    id: string,
+    payload: RecurringIntentionUpdateRequest
+  ): Promise<RecurringIntention> {
+    return this.put<RecurringIntention>(
+      `/api/v1/intent/recurring/${encodeURIComponent(id)}`,
+      payload
+    );
+  }
+
+  public async toggleRecurringIntentionStatus(
+    id: string,
+    isActive: boolean
+  ): Promise<RecurringIntention> {
+    return this.patch<RecurringIntention>(
+      `/api/v1/intent/recurring/${encodeURIComponent(id)}/status`,
+      { is_active: isActive }
+    );
+  }
+
+  public async deleteRecurringIntention(id: string): Promise<MessageResponse> {
+    return this.delete<MessageResponse>(
+      `/api/v1/intent/recurring/${encodeURIComponent(id)}`
+    );
+  }
+
+  public async listIntentMemories(): Promise<IntentMemoryItem[]> {
+    return this.get<IntentMemoryItem[]>("/api/v1/intent/memories");
+  }
+
+  public async createIntentMemory(
+    payload: IntentMemoryItemCreateRequest
+  ): Promise<IntentMemoryItem> {
+    return this.post<IntentMemoryItem>("/api/v1/intent/memories", payload);
+  }
+
+  public async deleteIntentMemory(id: string): Promise<MessageResponse> {
+    return this.delete<MessageResponse>(
+      `/api/v1/intent/memories/${encodeURIComponent(id)}`
+    );
+  }
+
+  public async clearAllIntentMemories(): Promise<MessageResponse> {
+    return this.delete<MessageResponse>("/api/v1/intent/clear-all");
+  }
+
+  public async getIntentSuggestions(
+    categoryId?: string
+  ): Promise<IntentSuggestionResponse> {
+    const q = categoryId ? `?category_id=${encodeURIComponent(categoryId)}` : "";
+    return this.get<IntentSuggestionResponse>(`/api/v1/intent/suggestions${q}`);
   }
 }
 
