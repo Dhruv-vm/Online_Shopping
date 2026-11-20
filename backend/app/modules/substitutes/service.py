@@ -168,6 +168,7 @@ class SubstituteService:
                 Product.is_active.is_(True),
                 Retailer.is_active.is_(True),
                 Retailer.verification_status == "VERIFIED",
+                ProductListing.hsn_code.isnot(None),
             )
         )
         cand_res = await self.session.execute(cand_stmt)

@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, update
 
+from app.core.config import settings
 from app.core.database import get_session_factory
 from app.modules.catalogue.models import (
     Category,
@@ -14,6 +15,8 @@ from app.modules.catalogue.models import (
     StoreInventory,
 )
 from app.modules.pricing.models import CheckoutQuote, QuoteStatus
+
+_created_test_listing_ids: set[uuid.UUID] = set()
 
 
 def make_retailer(
@@ -37,26 +40,21 @@ def make_retailer(
 
 @pytest.fixture(autouse=True)
 async def cleanup_test_substitute_listings():
+    assert settings.ENVIRONMENT != "production", (
+        "Substitute intelligence tests cannot run against production environment"
+    )
     yield
     session_factory = get_session_factory()
-    if session_factory:
+    if session_factory and _created_test_listing_ids:
         async with session_factory() as session:
             stmt = (
                 update(ProductListing)
-                .where(
-                    ProductListing.id.in_(
-                        select(ProductListing.id)
-                        .join(
-                            ProductVariant,
-                            ProductListing.variant_id == ProductVariant.id,
-                        )
-                        .where(ProductVariant.sku.like("SKU-%"))
-                    )
-                )
+                .where(ProductListing.id.in_(list(_created_test_listing_ids)))
                 .values(is_active=False)
             )
             await session.execute(stmt)
             await session.commit()
+        _created_test_listing_ids.clear()
 
 
 async def register_user(
@@ -110,7 +108,7 @@ async def create_custom_listing(
             id=uuid.uuid4(),
             product_id=product.id,
             name="Default Variant",
-            sku=f"SKU-{suffix}",
+            sku=f"SUB-SKU-{suffix}",
             attributes=attributes,
             is_active=True,
         )
@@ -141,6 +139,8 @@ async def create_custom_listing(
         )
         session.add(inventory)
         await session.commit()
+
+        _created_test_listing_ids.add(listing.id)
 
         return {
             "listing_id": listing.id,

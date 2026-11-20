@@ -390,22 +390,19 @@ class CartService:
         return self.format_cart_response(cart, items)
 
     async def _supersede_active_quotes(self, cart: Cart) -> None:
-        """Mark all active checkout quotes for this cart's owner as SUPERSEDED."""
+        """Mark active checkout quotes specifically tied to this cart session as SUPERSEDED."""
         from app.modules.pricing.models import CheckoutQuote, QuoteStatus
 
+        filters = [
+            CheckoutQuote.cart_id == cart.id,
+            CheckoutQuote.status == QuoteStatus.ACTIVE.value,
+        ]
         if cart.customer_id:
-            stmt = select(CheckoutQuote).where(
-                CheckoutQuote.customer_id == cart.customer_id,
-                CheckoutQuote.status == QuoteStatus.ACTIVE.value,
-            )
+            filters.append(CheckoutQuote.customer_id == cart.customer_id)
         elif cart.guest_token_hash:
-            stmt = select(CheckoutQuote).where(
-                CheckoutQuote.guest_token_hash == cart.guest_token_hash,
-                CheckoutQuote.status == QuoteStatus.ACTIVE.value,
-            )
-        else:
-            return
+            filters.append(CheckoutQuote.guest_token_hash == cart.guest_token_hash)
 
+        stmt = select(CheckoutQuote).where(*filters)
         res = await self.session.execute(stmt)
         for q in res.scalars().all():
             q.status = QuoteStatus.SUPERSEDED.value
@@ -469,6 +466,7 @@ class CartService:
             or not new_listing.variant.product.is_active
             or not new_listing.retailer.is_active
             or new_listing.retailer.verification_status != "VERIFIED"
+            or not new_listing.hsn_code
         ):
             raise AppException(
                 code="ALTERNATIVE_NOT_AVAILABLE",
