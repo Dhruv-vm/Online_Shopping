@@ -150,3 +150,45 @@ async def test_http_provider_adapter_and_rbac(async_client: AsyncClient):
         and r.json()["provider"] == "http"
     )
     assert r.json()["items"][0]["quantity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_status_and_provider_confidence_passthrough(async_client: AsyncClient):
+    from app.core.config import settings
+    from app.modules.vision import providers
+
+    st = (await async_client.get("/api/v1/vision/status")).json()
+    assert st["ocr_available"] is False and st["manual_fallback"] is True
+
+    _, cust = await make_user()
+
+    async def fake_extract(self, image_base64, content_type):
+        return providers.OCRResult(
+            text="2 x milk\nsugar 1kg",
+            confidence=0.81,
+            line_confidence={"2 x milk": 0.93, "sugar 1kg": 0.42},
+        )
+
+    with (
+        patch.object(settings, "OCR_PROVIDER", "http"),
+        patch.object(settings, "OCR_PROVIDER_URL", "https://ocr.invalid/v1"),
+        patch.object(providers.HttpOCRProvider, "extract", fake_extract),
+    ):
+        assert (await async_client.get("/api/v1/vision/status")).json()["ocr_available"]
+        r = await async_client.post(
+            "/api/v1/vision/parse-list",
+            headers=cust,
+            json={"image_base64": PNG, "content_type": "image/png"},
+        )
+    body = r.json()
+    assert body["ocr_confidence"] == 0.81 and body["manual_entry"] is False
+    by_line = {i["line"]: i for i in body["items"]}
+    assert by_line["2 x milk"]["ocr_confidence"] == 0.93
+    assert by_line["sugar 1kg"]["ocr_confidence"] == 0.42
+    assert by_line["sugar 1kg"]["needs_review"] is True
+
+    typed = await async_client.post(
+        "/api/v1/vision/parse-list", headers=cust, json={"text": "milk"}
+    )
+    assert typed.json()["manual_entry"] is True
+    assert typed.json()["items"][0]["ocr_confidence"] is None

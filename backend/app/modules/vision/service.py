@@ -24,10 +24,12 @@ class VisionListService:
 
     async def parse(self, req) -> ParseListResponse:
         provider_name = None
+        ocr = None
         if req.image_base64:
             provider = get_ocr_provider()
             provider_name = provider.name
-            raw_text = await provider.extract_text(req.image_base64, req.content_type)
+            ocr = await provider.extract(req.image_base64, req.content_type)
+            raw_text = ocr.text
             source = "OCR"
         else:
             raw_text = req.text
@@ -79,6 +81,16 @@ class VisionListService:
                     suggested_listing_id=candidates[0].listing_id
                     if candidates
                     else None,
+                    ocr_confidence=(
+                        ocr.line_confidence.get(p.line.strip()) if ocr else None
+                    ),
+                    needs_review=(
+                        not candidates
+                        or (
+                            ocr is not None
+                            and (ocr.line_confidence.get(p.line.strip()) or 1.0) < 0.6
+                        )
+                    ),
                 )
             )
         return ParseListResponse(
@@ -87,6 +99,8 @@ class VisionListService:
             raw_text=raw_text,
             items=items,
             unmatched_count=sum(1 for i in items if not i.candidates),
+            ocr_confidence=ocr.confidence if ocr else None,
+            manual_entry=source == "TEXT",
         )
 
     async def build_cart(

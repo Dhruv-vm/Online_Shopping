@@ -57,6 +57,9 @@ class ParsedListItem(BaseModel):
     quantity: int
     candidates: list[MatchCandidate]
     suggested_listing_id: uuid.UUID | None
+    # Provider-reported recognition confidence for this line (OCR only).
+    ocr_confidence: float | None = None
+    needs_review: bool = False
 
 
 class ParseListResponse(BaseModel):
@@ -65,6 +68,15 @@ class ParseListResponse(BaseModel):
     raw_text: str
     items: list[ParsedListItem]
     unmatched_count: int
+    ocr_confidence: float | None = None
+    manual_entry: bool = False
+
+
+class VisionStatusResponse(BaseModel):
+    ocr_available: bool
+    provider: str
+    manual_fallback: bool = True
+    message: str
 
 
 class BuildCartItem(BaseModel):

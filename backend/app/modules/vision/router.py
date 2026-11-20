@@ -6,11 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.modules.identity.dependencies import require_role, verify_csrf_token
 from app.modules.identity.models import User
+from app.modules.vision.providers import UnconfiguredOCRProvider, get_ocr_provider
 from app.modules.vision.schemas import (
     BuildCartRequest,
     BuildCartResponse,
     ParseListRequest,
     ParseListResponse,
+    VisionStatusResponse,
 )
 from app.modules.vision.service import VisionListService
 
@@ -20,6 +22,23 @@ router = APIRouter(
     tags=["Handwritten List to Basket"],
     dependencies=[Depends(verify_csrf_token)],
 )
+
+
+@router.get("/status", response_model=VisionStatusResponse)
+async def vision_status() -> VisionStatusResponse:
+    """Public: whether photo recognition is available. When it is not, the UI
+    offers the clearly-labelled manual (typed list) fallback instead."""
+    provider = get_ocr_provider()
+    available = not isinstance(provider, UnconfiguredOCRProvider)
+    return VisionStatusResponse(
+        ocr_available=available,
+        provider=provider.name,
+        message=(
+            "Photo recognition is available. Review every item before adding it."
+            if available
+            else "Photo recognition is not configured on this server. Type or paste your list instead."
+        ),
+    )
 
 
 @router.post("/parse-list", response_model=ParseListResponse)

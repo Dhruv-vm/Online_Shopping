@@ -81,6 +81,10 @@ async def list_admin_retailers(
         bool | None,
         Query(description="Filter by active status"),
     ] = None,
+    include_test_fixtures: Annotated[
+        bool,
+        Query(description="Include quarantined automated-test stores"),
+    ] = False,
 ) -> list[AdminRetailerListItem]:
     service = AdminService(db)
     return await service.list_retailers(
@@ -88,6 +92,7 @@ async def list_admin_retailers(
         search=search,
         state=state,
         is_active=is_active,
+        include_test_fixtures=include_test_fixtures,
     )
 
 

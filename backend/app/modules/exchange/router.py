@@ -2,6 +2,7 @@ import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -168,3 +169,19 @@ async def admin_rfqs(
     return ExchangeRequestList(
         items=await svc.serialize(items, include_bids=True), total=total
     )
+
+
+class ModerationRequest(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=300)
+
+
+@admin_router.post("/requests/{request_id}/cancel", response_model=ExchangeRequestItem)
+async def admin_moderate_rfq(
+    request_id: uuid.UUID,
+    payload: ModerationRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ExchangeRequestItem:
+    """Admin: close an abusive or invalid RFQ (customer is notified)."""
+    svc = ExchangeService(db)
+    r = await svc.moderate_cancel(request_id, payload.reason)
+    return (await svc.serialize([r], include_bids=True))[0]

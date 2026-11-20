@@ -154,6 +154,16 @@ def create_app() -> FastAPI:
         response.headers["X-Request-ID"] = request_id
         return response
 
+    # Admin audit trail: every successful admin mutation is recorded.
+    @app.middleware("http")
+    async def admin_audit_middleware(request: Request, call_next) -> Response:
+        response: Response = await call_next(request)
+        if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            from app.modules.governance.audit import record_admin_mutation
+
+            await record_admin_mutation(request, response)
+        return response
+
     # Prometheus Metrics Middleware (Bounded Labels)
     @app.middleware("http")
     async def metrics_middleware(request: Request, call_next) -> Response:

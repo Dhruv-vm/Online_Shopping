@@ -16,6 +16,7 @@ from app.modules.demand.router import router as demand_router
 from app.modules.exchange.router import admin_router as exchange_admin_router
 from app.modules.exchange.router import retailer_router as exchange_retailer_router
 from app.modules.exchange.router import router as exchange_router
+from app.modules.governance.router import router as governance_router
 from app.modules.i18n.router import admin_router as i18n_admin_router
 from app.modules.i18n.router import router as i18n_router
 from app.modules.identity.router import address_router, auth_router, user_router
@@ -106,6 +107,7 @@ api_router.include_router(admin_router)
 api_router.include_router(price_intel_router)
 api_router.include_router(price_intel_retailer_router)
 api_router.include_router(price_intel_admin_router)
+api_router.include_router(governance_router)
 api_router.include_router(sale_stream_router)
 api_router.include_router(i18n_router)
 api_router.include_router(i18n_admin_router)

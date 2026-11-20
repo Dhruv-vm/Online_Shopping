@@ -15,6 +15,7 @@ The adapter has NOT been verified against a live service.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import httpx
@@ -25,10 +26,25 @@ from app.core.exceptions import AppException
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class OCRResult:
+    """Text recognised by a provider plus the provider's own confidence scores.
+
+    Confidence values are passed through exactly as reported (0..1); they are
+    never estimated by BASKET. Missing scores stay ``None``.
+    """
+
+    text: str
+    confidence: float | None = None
+    line_confidence: dict[str, float] = field(default_factory=dict)
+
+
 class OCRProvider(Protocol):
     name: str
 
     async def extract_text(self, image_base64: str, content_type: str) -> str: ...
+
+    async def extract(self, image_base64: str, content_type: str) -> OCRResult: ...
 
 
 class UnconfiguredOCRProvider:
@@ -43,6 +59,9 @@ class UnconfiguredOCRProvider:
             ),
             status_code=503,
         )
+
+    async def extract(self, image_base64: str, content_type: str) -> OCRResult:
+        return OCRResult(text=await self.extract_text(image_base64, content_type))
 
 
 class HttpOCRProvider:
@@ -79,14 +98,37 @@ class HttpOCRProvider:
                 message="The OCR service returned an error.",
                 status_code=502,
             )
-        text = (resp.json() or {}).get("text")
+        body = resp.json() or {}
+        text = body.get("text")
         if not isinstance(text, str):
             raise AppException(
                 code="OCR_PROVIDER_ERROR",
                 message="The OCR service returned no text.",
                 status_code=502,
             )
+        self._last_body = body
         return text
+
+    async def extract(self, image_base64: str, content_type: str) -> OCRResult:
+        text = await self.extract_text(image_base64, content_type)
+        body = getattr(self, "_last_body", {}) or {}
+
+        def _score(v) -> float | None:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return None
+            return f if 0.0 <= f <= 1.0 else None
+
+        lines: dict[str, float] = {}
+        for entry in body.get("lines") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                sc = _score(entry.get("confidence"))
+                if sc is not None:
+                    lines[entry["text"].strip()] = sc
+        return OCRResult(
+            text=text, confidence=_score(body.get("confidence")), line_confidence=lines
+        )
 
 
 def get_ocr_provider() -> OCRProvider:

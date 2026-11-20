@@ -23,10 +23,14 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from app.core.config import Settings, settings
 
 logger = logging.getLogger(__name__)
+
+# Last-run status per periodic job, exposed on the admin operational-health page.
+JOB_STATUS: dict[str, dict] = {}
 
 KAFKA_RECONNECT_INITIAL_SECONDS = 5.0
 KAFKA_RECONNECT_MAX_SECONDS = 300.0
@@ -137,12 +141,25 @@ class BackgroundWorkerSupervisor:
     ) -> None:
         async def loop() -> None:
             while not self._stopping.is_set():
+                started = datetime.now(UTC)
                 try:
                     await job()
+                    JOB_STATUS[name] = {
+                        "last_run_at": started.isoformat(),
+                        "last_ok": True,
+                        "interval_seconds": interval,
+                        "last_error": None,
+                    }
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     logger.warning("Background job %s failed: %s", name, exc)
+                    JOB_STATUS[name] = {
+                        "last_run_at": started.isoformat(),
+                        "last_ok": False,
+                        "interval_seconds": interval,
+                        "last_error": type(exc).__name__,
+                    }
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._stopping.wait(), timeout=interval)
 

@@ -108,6 +108,30 @@ class ExchangeService:
         await self.session.flush()
         return r
 
+    async def moderate_cancel(
+        self, request_id: uuid.UUID, reason: str
+    ) -> ExchangeRequest:
+        """Admin moderation: close an abusive/invalid open RFQ and tell the customer."""
+        from app.core.notify import notify_customer
+
+        r = await self._locked_request(request_id)
+        if r.status != ExchangeRequestStatus.BIDDING_OPEN.value:
+            raise AppException(
+                code="RFQ_CLOSED",
+                message="Only open requests can be moderated.",
+                status_code=409,
+            )
+        r.status = ExchangeRequestStatus.CANCELLED.value
+        notify_customer(
+            self.session,
+            customer_id=r.user_id,
+            title="Your request was closed by BASKET",
+            message=f"Your request was closed by our moderation team: {reason}",
+            event_type="RFQ_MODERATED",
+        )
+        await self.session.flush()
+        return r
+
     async def accept_bid(
         self, request_id: uuid.UUID, user_id: uuid.UUID, bid_id: uuid.UUID
     ):

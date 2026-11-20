@@ -8,12 +8,27 @@ from app.core.validation import validate_media_url
 
 
 class AdminOverviewResponse(BaseModel):
+    """Platform KPIs. Quarantined automated-test records are excluded.
+
+    * total_orders: all orders by real customers (any status).
+    * paid_orders / total_revenue_paise: orders with captured payment and
+      their payable total (gross, before refunds).
+    * refunded_paise: refunds issued on those orders.
+    * total_customers: active customer accounts.
+    * total_retailers: stores excluding quarantined test fixtures.
+    """
+
     total_orders: int
     total_revenue_paise: int
     total_customers: int
     total_retailers: int
     pending_verifications: int
     active_products: int
+    paid_orders: int = 0
+    pending_payment_orders: int = 0
+    refunded_paise: int = 0
+    active_retailers: int = 0
+    excluded_test_records: int = 0
 
 
 class AdminRetailerListItem(BaseModel):

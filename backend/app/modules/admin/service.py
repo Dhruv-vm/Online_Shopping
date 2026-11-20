@@ -107,37 +107,79 @@ class AdminService:
     # ================= Overview =================
 
     async def get_overview(self) -> AdminOverviewResponse:
-        # Total orders & total revenue
-        order_stmt = select(
-            func.count(Order.id),
-            func.coalesce(func.sum(Order.total_payable_paise), 0),
-        )
-        order_res = (await self.session.execute(order_stmt)).one()
-        total_orders, total_revenue = order_res[0], order_res[1]
+        from app.modules.data_quality.models import DataQuarantine
 
-        # Total registered customers
-        cust_stmt = select(func.count(User.id)).where(User.role == "customer")
-        total_customers = (await self.session.execute(cust_stmt)).scalar() or 0
+        def quarantined(entity: str):
+            return select(DataQuarantine.entity_id).where(
+                DataQuarantine.entity_type == entity,
+                DataQuarantine.restored_at.is_(None),
+            )
 
-        # Total retailers & pending verifications
-        ret_stmt = select(
-            func.count(Retailer.id),
-            func.count().filter(Retailer.verification_status == "PENDING"),
-        )
-        ret_res = (await self.session.execute(ret_stmt)).one()
-        total_retailers, pending_verifications = ret_res[0], ret_res[1]
+        real_orders = ~Order.customer_id.in_(
+            quarantined("user")
+        ) | Order.customer_id.is_(None)
+        paid = Order.payment_status.in_(("SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"))
+        o = (
+            await self.session.execute(
+                select(
+                    func.count(Order.id),
+                    func.count(Order.id).filter(paid),
+                    func.coalesce(func.sum(Order.total_payable_paise).filter(paid), 0),
+                    func.count(Order.id).filter(Order.status == "PENDING_PAYMENT"),
+                ).where(real_orders)
+            )
+        ).one()
+        from app.modules.payments.models import Payment, PaymentRefund
 
-        # Active products
-        prod_stmt = select(func.count(Product.id)).where(Product.is_active.is_(True))
-        active_products = (await self.session.execute(prod_stmt)).scalar() or 0
-
+        refunded = (
+            await self.session.execute(
+                select(func.coalesce(func.sum(PaymentRefund.amount_paise), 0))
+                .join(Payment, Payment.id == PaymentRefund.payment_id)
+                .join(Order, Order.id == Payment.order_id)
+                .where(real_orders, PaymentRefund.status == "REFUND_PROCESSED")
+            )
+        ).scalar() or 0
+        total_customers = (
+            await self.session.execute(
+                select(func.count(User.id)).where(
+                    User.role == "customer", User.is_active.is_(True)
+                )
+            )
+        ).scalar() or 0
+        r = (
+            await self.session.execute(
+                select(
+                    func.count(Retailer.id),
+                    func.count().filter(Retailer.verification_status == "PENDING"),
+                    func.count().filter(
+                        Retailer.is_active.is_(True),
+                        Retailer.verification_status == "VERIFIED",
+                    ),
+                ).where(~Retailer.id.in_(quarantined("retailer")))
+            )
+        ).one()
+        active_products = (
+            await self.session.execute(
+                select(func.count(Product.id)).where(Product.is_active.is_(True))
+            )
+        ).scalar() or 0
+        excluded = (
+            await self.session.execute(
+                select(func.count()).where(DataQuarantine.restored_at.is_(None))
+            )
+        ).scalar() or 0
         return AdminOverviewResponse(
-            total_orders=total_orders,
-            total_revenue_paise=total_revenue,
+            total_orders=o[0],
+            paid_orders=o[1],
+            total_revenue_paise=int(o[2]),
+            pending_payment_orders=o[3],
+            refunded_paise=int(refunded),
             total_customers=total_customers,
-            total_retailers=total_retailers,
-            pending_verifications=pending_verifications,
+            total_retailers=r[0],
+            pending_verifications=r[1],
+            active_retailers=r[2],
             active_products=active_products,
+            excluded_test_records=int(excluded),
         )
 
     # ================= Retailer Verification & Approval =================
@@ -148,6 +190,7 @@ class AdminService:
         search: str | None = None,
         state: str | None = None,
         is_active: bool | None = None,
+        include_test_fixtures: bool = False,
     ) -> list[AdminRetailerListItem]:
         stmt = (
             select(
@@ -164,6 +207,17 @@ class AdminService:
             .group_by(Retailer.id, User.full_name, User.email)
             .order_by(Retailer.created_at.desc())
         )
+        if not include_test_fixtures:
+            from app.modules.data_quality.models import DataQuarantine
+
+            stmt = stmt.where(
+                ~Retailer.id.in_(
+                    select(DataQuarantine.entity_id).where(
+                        DataQuarantine.entity_type == "retailer",
+                        DataQuarantine.restored_at.is_(None),
+                    )
+                )
+            )
         if status and status.upper() != "ALL":
             stmt = stmt.where(Retailer.verification_status == status.upper())
         if state and state.strip():
