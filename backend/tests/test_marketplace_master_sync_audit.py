@@ -72,8 +72,10 @@ async def test_b_price_synchronization(async_client: AsyncClient):
     """Test B: Immediate propagation of price updates across DB, OpenSearch, catalogue, and search."""
     h1, _ = await login(async_client, "retailer1@basket.demo")
 
-    # Get a listing from Basket Mart
-    listings_resp = await async_client.get("/api/v1/retailer/listings", headers=h1)
+    # Get an active listing from Basket Mart
+    listings_resp = await async_client.get(
+        "/api/v1/retailer/listings", headers=h1, params={"is_active": True}
+    )
     assert listings_resp.status_code == 200
     listing = listings_resp.json()["items"][0]
     listing_id = listing["id"]
@@ -135,12 +137,26 @@ async def test_c_multi_retailer_price_isolation(async_client: AsyncClient):
     h1, _ = await login(async_client, "retailer1@basket.demo")
     h2, _ = await login(async_client, "retailer2@basket.demo")
 
-    l1 = (await async_client.get("/api/v1/retailer/listings", headers=h1)).json()[
-        "items"
-    ][0]
-    l2 = (await async_client.get("/api/v1/retailer/listings", headers=h2)).json()[
-        "items"
-    ][0]
+    # Fetch active in-stock listings from each retailer
+    listings1_active = (
+        await async_client.get(
+            "/api/v1/retailer/listings", headers=h1, params={"is_active": True}
+        )
+    ).json()["items"]
+    listings2_active = (
+        await async_client.get(
+            "/api/v1/retailer/listings", headers=h2, params={"is_active": True}
+        )
+    ).json()["items"]
+
+    l1 = next(
+        (i for i in listings1_active if not i["inventory"]["is_out_of_stock"]),
+        listings1_active[0],
+    )
+    l2 = next(
+        (i for i in listings2_active if not i["inventory"]["is_out_of_stock"]),
+        listings2_active[0],
+    )
 
     original_price2 = l2["selling_price_paise"]
 
@@ -283,12 +299,26 @@ async def test_g_multi_retailer_cart_and_quote(async_client: AsyncClient):
     h1, _ = await login(async_client, "retailer1@basket.demo")
     h2, _ = await login(async_client, "retailer2@basket.demo")
 
-    l1 = (await async_client.get("/api/v1/retailer/listings", headers=h1)).json()[
-        "items"
-    ][0]
-    l2 = (await async_client.get("/api/v1/retailer/listings", headers=h2)).json()[
-        "items"
-    ][0]
+    # Fetch active in-stock listings from each retailer
+    listings1_active = (
+        await async_client.get(
+            "/api/v1/retailer/listings", headers=h1, params={"is_active": True}
+        )
+    ).json()["items"]
+    listings2_active = (
+        await async_client.get(
+            "/api/v1/retailer/listings", headers=h2, params={"is_active": True}
+        )
+    ).json()["items"]
+
+    l1 = next(
+        (i for i in listings1_active if not i["inventory"]["is_out_of_stock"]),
+        listings1_active[0],
+    )
+    l2 = next(
+        (i for i in listings2_active if not i["inventory"]["is_out_of_stock"]),
+        listings2_active[0],
+    )
 
     # Clear customer cart first
     cart_resp = await async_client.get("/api/v1/cart", headers=hc)
