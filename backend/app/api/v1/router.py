@@ -2,6 +2,9 @@ from fastapi import APIRouter
 
 from app.core.config import settings
 from app.modules.admin.router import router as admin_router
+from app.modules.auctions.router import admin_router as auctions_admin_router
+from app.modules.auctions.router import retailer_router as auctions_retailer_router
+from app.modules.auctions.router import router as auctions_router
 from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.community.router import admin_router as community_admin_router
@@ -110,6 +113,9 @@ api_router.include_router(exchange_retailer_router)
 api_router.include_router(exchange_admin_router)
 api_router.include_router(negotiation_router)
 api_router.include_router(negotiation_retailer_router)
+api_router.include_router(auctions_router)
+api_router.include_router(auctions_retailer_router)
+api_router.include_router(auctions_admin_router)
 
 
 @api_router.get("/info", tags=["System"])
