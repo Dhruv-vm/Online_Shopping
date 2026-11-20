@@ -22,10 +22,10 @@ class CatalogueService:
     def __init__(self, session: AsyncSession):
         self.repo = CatalogueRepository(session)
 
-    async def get_categories(self) -> list[CategorySchema]:
+    async def get_categories(self, top_level_only: bool = True) -> list[CategorySchema]:
         """Fetch all active categories with product counts."""
         categories_with_count = await self.repo.get_categories_with_count(
-            active_only=True
+            active_only=True, top_level_only=top_level_only
         )
         return [
             CategorySchema(

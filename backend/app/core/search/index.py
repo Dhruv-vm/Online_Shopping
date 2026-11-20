@@ -261,8 +261,6 @@ class IndexManager:
                 index=target,
                 doc_id=str(prod.id),
                 document=doc,
-                version=doc["aggregate_version"],
-                version_type="external_gte",
             )
             count += 1
 
@@ -272,3 +270,59 @@ class IndexManager:
             target,
         )
         return count
+
+    async def sync_product(self, session: AsyncSession, product_id: Any) -> bool:
+        """
+        Incrementally synchronize or delete a single product in OpenSearch.
+        """
+        from app.modules.catalogue.models import (
+            Category,
+            Product,
+            ProductListing,
+            ProductVariant,
+        )
+
+        stmt = (
+            select(Product)
+            .where(Product.id == product_id)
+            .options(
+                selectinload(Product.category).selectinload(Category.parent),
+                selectinload(Product.images),
+                selectinload(Product.variants)
+                .selectinload(ProductVariant.listings)
+                .selectinload(ProductListing.inventory),
+                selectinload(Product.variants)
+                .selectinload(ProductVariant.listings)
+                .selectinload(ProductListing.retailer),
+            )
+        )
+        result = await session.execute(stmt)
+        prod = result.scalar_one_or_none()
+
+        if not prod or not getattr(prod, "is_active", True):
+            try:
+                await self.client.delete_document(
+                    index=self.write_alias, doc_id=str(product_id)
+                )
+                return True
+            except Exception:
+                return False
+
+        doc = build_product_document(
+            product=prod,
+            variants=prod.variants,
+            category=prod.category,
+            aggregate_version=getattr(prod, "version", 1),
+        )
+        try:
+            await self.client.index_document(
+                index=self.write_alias,
+                doc_id=str(prod.id),
+                document=doc,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync product %s to OpenSearch: %s", product_id, exc
+            )
+            return False

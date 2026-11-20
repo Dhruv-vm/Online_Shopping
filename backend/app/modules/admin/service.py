@@ -1,4 +1,5 @@
 import datetime
+import logging
 import re
 import uuid
 from typing import Any
@@ -54,6 +55,8 @@ from app.modules.orders.models import (
 )
 from app.modules.pricing.models import Discount
 
+logger = logging.getLogger(__name__)
+
 
 def _slugify(text: str) -> str:
     cleaned = re.sub(r"[^\w\s-]", "", text.lower()).strip()
@@ -63,6 +66,36 @@ def _slugify(text: str) -> str:
 class AdminService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def _sync_product_search(self, product_id: uuid.UUID | None) -> None:
+        if not product_id:
+            return
+        try:
+            from app.core.config import settings
+            from app.core.search.client import get_opensearch_client
+            from app.core.search.index import IndexManager
+
+            if settings.has_opensearch:
+                os_client = get_opensearch_client(settings)
+                if await os_client.ping():
+                    idx_mgr = IndexManager(os_client)
+                    await idx_mgr.sync_product(self.session, product_id)
+        except Exception as exc:
+            logger.warning("Search sync skipped for product %s: %s", product_id, exc)
+
+    async def _sync_retailer_products(self, retailer_id: uuid.UUID) -> None:
+        try:
+            prod_ids_stmt = (
+                select(ProductVariant.product_id)
+                .join(ProductListing, ProductListing.variant_id == ProductVariant.id)
+                .where(ProductListing.retailer_id == retailer_id)
+                .distinct()
+            )
+            prod_ids = (await self.session.execute(prod_ids_stmt)).scalars().all()
+            for pid in prod_ids:
+                await self._sync_product_search(pid)
+        except Exception as exc:
+            logger.warning("Retailer search sync skipped for %s: %s", retailer_id, exc)
 
     # ================= Overview =================
 
@@ -417,6 +450,7 @@ class AdminService:
         )
         self.session.add(history_entry)
         await self.session.flush()
+        await self._sync_retailer_products(retailer.id)
 
         return AdminRetailerListItem(
             id=retailer.id,
@@ -686,6 +720,7 @@ class AdminService:
             self.session.add(variant)
 
         await self.session.flush()
+        await self._sync_product_search(prod.id)
         return await self.get_catalogue_product(prod.id)
 
     async def update_catalogue_product(
@@ -741,6 +776,7 @@ class AdminService:
             prod.slug = new_slug
 
         await self.session.flush()
+        await self._sync_product_search(product_id)
         return await self.get_catalogue_product(product_id)
 
     async def delete_catalogue_product(self, product_id: uuid.UUID) -> None:
@@ -757,6 +793,7 @@ class AdminService:
         # Deactivate product to preserve immutable order line item histories
         prod.is_active = False
         await self.session.flush()
+        await self._sync_product_search(product_id)
 
     async def create_variant(
         self, product_id: uuid.UUID, req: AdminCatalogueVariantCreateRequest
@@ -795,6 +832,7 @@ class AdminService:
         )
         self.session.add(variant)
         await self.session.flush()
+        await self._sync_product_search(product_id)
 
         return AdminCatalogueVariantItem(
             id=variant.id,
@@ -848,6 +886,7 @@ class AdminService:
             variant.sku = new_sku
 
         await self.session.flush()
+        await self._sync_product_search(variant.product_id)
         return AdminCatalogueVariantItem(
             id=variant.id,
             product_id=variant.product_id,
@@ -872,8 +911,10 @@ class AdminService:
                 status_code=404,
             )
 
+        prod_id = variant.product_id
         variant.is_active = False
         await self.session.flush()
+        await self._sync_product_search(prod_id)
 
     # ================= Category Management =================
 

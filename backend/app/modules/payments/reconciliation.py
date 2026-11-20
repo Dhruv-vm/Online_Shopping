@@ -53,6 +53,7 @@ class ReconciliationService:
         batch_size: int = 50,
         max_age_minutes: int = 1440,
         pending_cutoff_minutes: int = 5,
+        order_id: uuid.UUID | None = None,
     ) -> ReconcilePendingResponse:
         """Automated reconciliation for ambiguous attempts, pending payments, and stuck webhook leases."""
         now = datetime.now(UTC)
@@ -103,7 +104,7 @@ class ReconciliationService:
 
         # 2. Reconcile pending payments older than cutoff (Missed-Webhook Recovery)
         pending_payments = await self.repo.get_pending_payments_for_reconciliation(
-            cutoff_datetime=cutoff_pending, limit=batch_size
+            cutoff_datetime=cutoff_pending, limit=batch_size, order_id=order_id
         )
         for payment in pending_payments:
             if not payment.provider_order_id:

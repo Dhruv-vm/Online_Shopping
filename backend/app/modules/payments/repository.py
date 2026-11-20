@@ -356,28 +356,34 @@ class PaymentRepository:
         return list(res.scalars().all())
 
     async def get_pending_payments_for_reconciliation(
-        self, cutoff_datetime: datetime, limit: int = 50
+        self,
+        cutoff_datetime: datetime,
+        limit: int = 50,
+        order_id: uuid.UUID | None = None,
     ) -> list[Payment]:
+        conditions = [
+            or_(
+                Payment.status.in_(
+                    [
+                        PaymentAttemptStatus.PENDING.value,
+                        PaymentAttemptStatus.AUTHORIZED.value,
+                    ]
+                ),
+                and_(
+                    Order.payment_status == PaymentStatus.REQUIRES_RECONCILIATION.value,
+                    Order.fulfilling_capture_id.is_(None),
+                ),
+            ),
+            Payment.created_at <= cutoff_datetime,
+        ]
+        if order_id is not None:
+            conditions.append(Payment.order_id == order_id)
+
         stmt = (
             select(Payment)
             .join(Order, Payment.order_id == Order.id)
-            .where(
-                or_(
-                    Payment.status.in_(
-                        [
-                            PaymentAttemptStatus.PENDING.value,
-                            PaymentAttemptStatus.AUTHORIZED.value,
-                        ]
-                    ),
-                    and_(
-                        Order.payment_status
-                        == PaymentStatus.REQUIRES_RECONCILIATION.value,
-                        Order.fulfilling_capture_id.is_(None),
-                    ),
-                ),
-                Payment.created_at <= cutoff_datetime,
-            )
-            .order_by(Payment.created_at.asc())
+            .where(*conditions)
+            .order_by(Payment.created_at.desc())
             .limit(limit)
         )
         res = await self.session.execute(stmt)

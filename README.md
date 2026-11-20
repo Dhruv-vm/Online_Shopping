@@ -13,14 +13,12 @@ BASKET is an enterprise-grade, multi-category online retail platform engineered 
 
 | Document | Description & Purpose |
 |---|---|
-| [`PROJECT_MASTER.md`](PROJECT_MASTER.md) | **Master Control Document:** System overview, governance rules, and documentation index. |
-| [`FEATURE_SPECIFICATION.md`](FEATURE_SPECIFICATION.md) | **Finalized Product Specification:** Complete feature scope across Admin, Retailer, and Customer roles. |
-| [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) | **Verified Codebase Audit:** Evidence-backed audit of all implemented phases (Phases 0–4, PR #1 through PR #18). |
+| [`README.md`](README.md) | **System Overview:** Tech stack, local setup, credentials, and quickstart runbooks. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | **Technical Architecture:** System topology, module boundaries, data authority, and event streaming. |
-| [`INFRASTRUCTURE_STATUS.md`](INFRASTRUCTURE_STATUS.md) | **Infrastructure Status Matrix:** Live status of PostgreSQL, Kafka, OpenSearch, and Razorpay. |
+| [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) | **Verified Codebase Audit:** Evidence-backed audit of all implemented phases and test coverage. |
 | [`CHANGELOG.md`](CHANGELOG.md) | **Project Changelog:** Release history following Keep a Changelog standards. |
-| [`DEVELOPER_HANDOVER.md`](DEVELOPER_HANDOVER.md) | **Developer Handover Guide:** Step-by-step developer onboarding, bootstrap runbooks, and testing workflows. |
-| [`NEXT_STEPS.md`](NEXT_STEPS.md) | **Engineering Roadmap:** Prioritized backlog for Phase 5 (Multi-Role Panels), Phase 6, and Phase 7. |
+| [`docs/product/ONLINE_SHOPPING_FEATURES.md`](docs/product/ONLINE_SHOPPING_FEATURES.md) | **Product Features:** Canonical multi-category, multi-retailer shopping features and RBAC rules. |
+| [`docs/SANDBOX_DEPLOYMENT_RUNBOOK.md`](docs/SANDBOX_DEPLOYMENT_RUNBOOK.md) | **Deployment Runbook:** Sandbox and production staging operational runbooks. |
 
 ---
 

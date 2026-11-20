@@ -221,11 +221,13 @@ async def reconcile_pending(
         if payload and payload.pending_cutoff_minutes is not None
         else 5
     )
+    order_id = payload.order_id if payload else None
     service = ReconciliationService(db)
     return await service.reconcile_pending(
         batch_size=batch_size,
         max_age_minutes=max_age_minutes,
         pending_cutoff_minutes=cutoff_minutes,
+        order_id=order_id,
     )
 
 

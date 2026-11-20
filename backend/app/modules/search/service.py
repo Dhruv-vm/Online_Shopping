@@ -216,19 +216,81 @@ class SearchService:
         ]
 
         if query_str:
-            must_clauses.append(
+            tokens = [t.strip() for t in query_str.split() if t.strip()]
+            num_tokens = len(tokens)
+
+            should_clauses: list[dict[str, Any]] = [
                 {
                     "multi_match": {
                         "query": query_str,
                         "fields": [
-                            "name^3.0",
-                            "brand^2.0",
-                            "category_name^1.5",
-                            "description^1.0",
-                            "searchable_text^0.8",
+                            "name^10.0",
+                            "brand.text^6.0",
+                            "searchable_text^3.0",
                         ],
-                        "type": "best_fields",
-                        "fuzziness": "AUTO",
+                        "type": "phrase",
+                        "boost": 10.0,
+                    }
+                },
+                {
+                    "multi_match": {
+                        "query": query_str,
+                        "fields": [
+                            "name^6.0",
+                            "brand.text^4.0",
+                            "category_name.text^2.0",
+                            "searchable_text^1.0",
+                        ],
+                        "type": "cross_fields",
+                        "operator": "and",
+                        "boost": 5.0,
+                    }
+                },
+            ]
+
+            if num_tokens <= 2:
+                should_clauses.append(
+                    {
+                        "multi_match": {
+                            "query": query_str,
+                            "fields": [
+                                "name^4.0",
+                                "brand.text^3.0",
+                                "category_name.text^2.0",
+                                "description^1.0",
+                                "searchable_text^1.0",
+                            ],
+                            "type": "best_fields",
+                            "operator": "and",
+                            "boost": 2.0,
+                        }
+                    }
+                )
+            else:
+                should_clauses.append(
+                    {
+                        "multi_match": {
+                            "query": query_str,
+                            "fields": [
+                                "name^4.0",
+                                "brand.text^3.0",
+                                "category_name.text^2.0",
+                                "description^1.0",
+                                "searchable_text^1.0",
+                            ],
+                            "type": "best_fields",
+                            "operator": "or",
+                            "minimum_should_match": "75%",
+                            "boost": 1.0,
+                        }
+                    }
+                )
+
+            must_clauses.append(
+                {
+                    "bool": {
+                        "should": should_clauses,
+                        "minimum_should_match": 1,
                     }
                 }
             )
@@ -381,14 +443,25 @@ class SearchService:
         conditions = [Product.is_active == True]  # noqa: E712
 
         if query_str:
-            term = f"%{query_str}%"
-            conditions.append(
-                or_(
-                    Product.name.ilike(term),
-                    Product.brand.ilike(term),
-                    Product.description.ilike(term),
+            tokens = [t.strip() for t in query_str.split() if t.strip()]
+            if tokens:
+                phrase_term = f"%{query_str}%"
+                token_conditions = []
+                for t in tokens:
+                    term = f"%{t}%"
+                    token_conditions.append(
+                        or_(
+                            Product.name.ilike(term),
+                            Product.brand.ilike(term),
+                            Product.description.ilike(term),
+                        )
+                    )
+                conditions.append(
+                    or_(
+                        Product.name.ilike(phrase_term),
+                        and_(*token_conditions),
+                    )
                 )
-            )
 
         if category_slug:
             conditions.append(
