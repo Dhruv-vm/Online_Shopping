@@ -4,13 +4,10 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import AppException
 from app.modules.cart.service import CartService
-from app.modules.catalogue.models import ProductListing
 from app.modules.missions.models import ShoppingMission, ShoppingMissionItem
 from app.modules.missions.recommendation import RecommendationEngine
 from app.modules.missions.repository import MissionRepository
@@ -273,19 +270,13 @@ class MissionService:
                 status_code=404,
             )
 
-        # Look up listing
-        stmt = (
-            select(ProductListing)
-            .where(ProductListing.id == payload.listing_id)
-            .options(selectinload(ProductListing.variant))
-        )
-        res = await self.session.execute(stmt)
-        listing = res.scalar_one_or_none()
-        if not listing or not listing.is_active:
+        # Look up listing with active & in-stock validation
+        listing = await self.repo.get_valid_active_listing(payload.listing_id)
+        if not listing:
             raise AppException(
-                code="LISTING_NOT_FOUND",
-                message="Product listing not found or inactive.",
-                status_code=404,
+                code="LISTING_NOT_AVAILABLE",
+                message="Product listing is inactive, out of stock, or from an unverified retailer.",
+                status_code=400,
             )
 
         sort_order = len(mission.items)
@@ -462,18 +453,21 @@ class MissionService:
                 status_code=404,
             )
 
-        stmt = (
-            select(ProductListing)
-            .where(ProductListing.id == payload.new_listing_id)
-            .options(selectinload(ProductListing.variant))
-        )
-        res = await self.session.execute(stmt)
-        new_listing = res.scalar_one_or_none()
-        if not new_listing or not new_listing.is_active:
+        # Look up replacement listing verifying it is active, verified and in-stock
+        new_listing = await self.repo.get_valid_active_listing(payload.new_listing_id)
+        if not new_listing:
             raise AppException(
-                code="LISTING_NOT_FOUND",
-                message="Replacement product listing not found or inactive.",
-                status_code=404,
+                code="ALTERNATIVE_NOT_AVAILABLE",
+                message="Replacement product listing is inactive, out of stock, or from an unverified retailer.",
+                status_code=400,
+            )
+
+        # Enforce category consistency
+        if new_listing.variant.product.category_id != item.product.category_id:
+            raise AppException(
+                code="CATEGORY_MISMATCH",
+                message="Alternative product must belong to the same department / category.",
+                status_code=400,
             )
 
         item.listing_id = new_listing.id
@@ -543,8 +537,12 @@ class MissionService:
                 )
                 continue
 
-            qty_to_add = min(item.quantity, available_stock)
-            if qty_to_add < item.quantity:
+            qty_to_add = min(item.quantity, available_stock, 10)
+            if item.quantity > 10:
+                warnings.append(
+                    f"Quantity for '{product.name}' was capped at basket limit of 10 units (requested {item.quantity})."
+                )
+            elif qty_to_add < item.quantity:
                 warnings.append(
                     f"Only {qty_to_add} of {item.quantity} units of '{product.name}' were in stock and added to your basket."
                 )

@@ -275,18 +275,12 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
     user, token = await register_customer(async_client, "alt_shopper")
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Ensure two listings in the same category exist
-    cat_slug = "electronics"
-    alt_listing = await create_test_listing(
-        retailer_name="Basket Lifestyle",
-        product_name="Alternative Bluetooth Speaker",
-        selling_price_paise=249900,
-        category_slug=cat_slug,
-    )
-
     create_resp = await async_client.post(
         "/api/v1/missions",
-        json={"title": "Audio Setup", "budget_paise": 500000, "category_id": None},
+        json={
+            "title": "Set up a complete kitchen under ₹15,000",
+            "budget_paise": 1500000,
+        },
         headers=headers,
     )
     assert create_resp.status_code == 201
@@ -304,10 +298,46 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
     alts = alts_resp.json()
     assert isinstance(alts, list)
 
-    # Replace with alt_listing
+    if alts:
+        alt_listing_id = alts[0]["listing_id"]
+        alt_price = alts[0]["selling_price_paise"]
+    else:
+        # Fallback to create an alternative listing in the same category
+        from app.database import async_session_maker
+        from sqlalchemy import select
+
+        from app.modules.catalogue.models import Category, ProductListing
+
+        async with async_session_maker() as db:
+            cur_l = (
+                await db.execute(
+                    select(ProductListing).where(
+                        ProductListing.id == uuid.UUID(first_item["listing_id"])
+                    )
+                )
+            ).scalar_one()
+            cat = (
+                await db.execute(
+                    select(Category).where(
+                        Category.id == cur_l.variant.product.category_id
+                    )
+                )
+            ).scalar_one()
+            cat_slug = cat.slug
+
+        alt_listing = await create_test_listing(
+            retailer_name="Basket Lifestyle",
+            product_name="Alternative Kitchen Item",
+            selling_price_paise=249900,
+            category_slug=cat_slug,
+        )
+        alt_listing_id = alt_listing["id"]
+        alt_price = alt_listing["selling_price_paise"]
+
+    # Replace with valid alternative
     replace_resp = await async_client.post(
         f"/api/v1/missions/{m_id}/items/{first_item_id}/replace",
-        json={"new_listing_id": alt_listing["id"], "quantity": 1},
+        json={"new_listing_id": alt_listing_id, "quantity": 1},
         headers=headers,
     )
     assert replace_resp.status_code == 200
@@ -315,8 +345,33 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
     replaced_item = next(
         i for i in replaced_mission["items"] if i["id"] == first_item_id
     )
-    assert replaced_item["listing_id"] == alt_listing["id"]
-    assert replaced_item["unit_price_paise"] == alt_listing["selling_price_paise"]
+    assert replaced_item["listing_id"] == alt_listing_id
+    assert replaced_item["unit_price_paise"] == alt_price
+
+    # Reject replacing with a non-existent or unavailable listing -> 400
+    fake_replace = await async_client.post(
+        f"/api/v1/missions/{m_id}/items/{first_item_id}/replace",
+        json={"new_listing_id": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert fake_replace.status_code == 400
+    assert fake_replace.json()["error"]["code"] == "ALTERNATIVE_NOT_AVAILABLE"
+
+    # Reject replacing with a product from an unrelated category -> 400
+    diff_cat_listing = await create_test_listing(
+        retailer_name="Basket Lifestyle",
+        product_name="Casual Cotton T-Shirt",
+        selling_price_paise=99900,
+        category_slug="fashion-apparel",
+        category_name="Fashion & Apparel",
+    )
+    diff_cat_replace = await async_client.post(
+        f"/api/v1/missions/{m_id}/items/{first_item_id}/replace",
+        json={"new_listing_id": diff_cat_listing["id"]},
+        headers=headers,
+    )
+    assert diff_cat_replace.status_code == 400
+    assert diff_cat_replace.json()["error"]["code"] == "CATEGORY_MISMATCH"
 
 
 @pytest.mark.asyncio
@@ -408,3 +463,109 @@ async def test_mission_plan_preview(async_client: AsyncClient):
     assert len(preview["groups"]) > 0
     assert preview["total_cost_paise"] > 0
     assert "summary_explanation" in preview
+
+
+@pytest.mark.asyncio
+async def test_mission_to_checkout_complete_customer_journey(async_client: AsyncClient):
+    """End-to-End Customer Journey: Mission -> Add to Cart -> Quote -> Reservation -> Order.
+
+    Verifies:
+    1. Real marketplace products from verified retailers are planned.
+    2. Items transfer into the customer's active universal shopping basket.
+    3. Checkout quote generation validates live prices, GST, and seller attributions.
+    4. Inventory reservation acquires row locks and revalidates on-hand stock.
+    5. Order creation snapshot preserves complete financial ledger and retailer items.
+    """
+    user, token = await register_customer(async_client, "journey_shopper")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Customer creates delivery address
+    addr_resp = await async_client.post(
+        "/api/v1/addresses",
+        headers=headers,
+        json={
+            "recipient_name": "Journey Shopper",
+            "phone": "+919876543210",
+            "line1": "Flat 101, Palm Grove Apartments",
+            "city": "Mumbai",
+            "state": "MH",
+            "postal_code": "400001",
+            "is_default": True,
+        },
+    )
+    assert addr_resp.status_code == 201
+    address_id = addr_resp.json()["id"]
+
+    # 2. Customer creates a Mission
+    mission_resp = await async_client.post(
+        "/api/v1/missions",
+        headers=headers,
+        json={
+            "title": "Complete Kitchen Setup under ₹15,000",
+            "budget_paise": 1500000,
+            "people_count": 2,
+            "preferences": ["durable", "stainless steel"],
+        },
+    )
+    assert mission_resp.status_code == 201
+    mission = mission_resp.json()
+    m_id = mission["id"]
+    assert len(mission["items"]) > 0
+
+    # 3. Customer modifies item 1 quantity to 2
+    first_item = mission["items"][0]
+    update_resp = await async_client.patch(
+        f"/api/v1/missions/{m_id}/items/{first_item['id']}",
+        headers=headers,
+        json={"quantity": 2},
+    )
+    assert update_resp.status_code == 200
+
+    # 4. Add selected mission items to Cart
+    add_cart_resp = await async_client.post(
+        f"/api/v1/missions/{m_id}/add-to-cart",
+        headers=headers,
+    )
+    assert add_cart_resp.status_code == 200
+    cart_res = add_cart_resp.json()
+    assert cart_res["added_items_count"] > 0
+
+    # 5. Generate Checkout Quote (revalidates price, GST and retailer attribution)
+    quote_resp = await async_client.post(
+        "/api/v1/quotes",
+        headers=headers,
+        json={"delivery_address_id": address_id},
+    )
+    assert quote_resp.status_code == 201
+    quote = quote_resp.json()
+    quote_id = quote["id"]
+    assert quote["status"] == "ACTIVE"
+    assert quote["total_payable_paise"] > 0
+    assert len(quote["items"]) > 0
+
+    # 6. Reserve Inventory (revalidates live stock and locks rows)
+    res_resp = await async_client.post(
+        "/api/v1/reservations",
+        headers=headers,
+        json={"quote_id": quote_id},
+    )
+    assert res_resp.status_code == 201
+    reservation = res_resp.json()
+    reservation_id = reservation["id"]
+    assert reservation["status"] == "ACTIVE"
+
+    # 7. Place Order
+    order_resp = await async_client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "quote_id": quote_id,
+            "reservation_id": reservation_id,
+            "delivery_address_id": address_id,
+        },
+    )
+    assert order_resp.status_code == 201
+    order = order_resp.json()
+    assert order["status"] in ("PENDING_PAYMENT", "CONFIRMED")
+    assert order["customer_id"] == user["id"]
+    assert len(order["items"]) > 0

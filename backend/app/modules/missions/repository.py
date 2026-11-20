@@ -275,3 +275,34 @@ class MissionRepository:
         stmt = select(Category).where(Category.is_active.is_(True))
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
+
+    async def get_valid_active_listing(
+        self, listing_id: uuid.UUID
+    ) -> ProductListing | None:
+        """Fetch listing verifying active status across listing, variant, product, retailer, and stock."""
+        stmt = (
+            select(ProductListing)
+            .join(Retailer, ProductListing.retailer_id == Retailer.id)
+            .join(ProductVariant, ProductListing.variant_id == ProductVariant.id)
+            .join(Product, ProductVariant.product_id == Product.id)
+            .join(StoreInventory, ProductListing.id == StoreInventory.listing_id)
+            .where(
+                ProductListing.id == listing_id,
+                ProductListing.is_active.is_(True),
+                ProductVariant.is_active.is_(True),
+                Product.is_active.is_(True),
+                Retailer.is_active.is_(True),
+                Retailer.verification_status == "VERIFIED",
+                (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                > 0,
+            )
+            .options(
+                selectinload(ProductListing.variant).selectinload(
+                    ProductVariant.product
+                ),
+                selectinload(ProductListing.retailer),
+                selectinload(ProductListing.inventory),
+            )
+        )
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
