@@ -20,6 +20,7 @@ import {
   CheckCheck,
   Scale,
   ShieldAlert,
+  Compass,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -187,6 +188,18 @@ export function Header() {
           >
             <Package className="h-4 w-4" />
             Orders
+          </Link>
+
+          {/* Basket Mission Link (Desktop) */}
+          <Link
+            href="/missions"
+            className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-emerald-700 dark:hover:text-emerald-400 group"
+          >
+            <Compass className="h-4 w-4 text-emerald-600 group-hover:rotate-45 transition-transform" />
+            <span>Missions</span>
+            <Badge variant="secondary" className="text-[10px] py-0 px-1.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold">
+              New
+            </Badge>
           </Link>
 
           {/* Compare Link (Desktop) */}
@@ -470,6 +483,19 @@ export function Header() {
             >
               <Package className="h-4 w-4 text-emerald-600" />
               My Orders & Tracking
+            </Link>
+            <Link
+              href="/missions"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md hover:bg-muted text-foreground flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <Compass className="h-4 w-4 text-emerald-600" />
+                Basket Mission
+              </div>
+              <Badge variant="secondary" className="text-[10px] py-0 px-1.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold">
+                New
+              </Badge>
             </Link>
             <Link
               href="/compare"

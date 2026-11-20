@@ -78,6 +78,16 @@ import type {
   RetailerOfferCreatePayload,
   RetailerOfferUpdatePayload,
   RetailerAnalyticsResponse,
+  MissionSummary,
+  MissionDetail,
+  MissionCreatePayload,
+  MissionUpdatePayload,
+  MissionItemAddPayload,
+  MissionItemUpdatePayload,
+  MissionItemReplacePayload,
+  MissionAlternativeItem,
+  MissionAddToCartResponse,
+  MissionPreviewResponse,
 } from "@/types";
 
 export class ApiClientError extends Error {
@@ -1059,6 +1069,100 @@ class ApiClient {
 
   public async getRetailerAnalytics(): Promise<RetailerAnalyticsResponse> {
     return this.get<RetailerAnalyticsResponse>("/api/v1/retailer/analytics");
+  }
+
+  // Basket Mission Methods
+  public async createMission(
+    payload: MissionCreatePayload
+  ): Promise<MissionDetail> {
+    return this.post<MissionDetail>("/api/v1/missions", payload);
+  }
+
+  public async previewMission(
+    payload: MissionCreatePayload
+  ): Promise<MissionPreviewResponse> {
+    return this.post<MissionPreviewResponse>("/api/v1/missions/preview", payload);
+  }
+
+  public async getMissions(): Promise<MissionSummary[]> {
+    return this.get<MissionSummary[]>("/api/v1/missions");
+  }
+
+  public async getMission(id: string): Promise<MissionDetail> {
+    return this.get<MissionDetail>(`/api/v1/missions/${encodeURIComponent(id)}`);
+  }
+
+  public async updateMission(
+    id: string,
+    payload: MissionUpdatePayload
+  ): Promise<MissionDetail> {
+    return this.patch<MissionDetail>(
+      `/api/v1/missions/${encodeURIComponent(id)}`,
+      payload
+    );
+  }
+
+  public async deleteMission(id: string): Promise<void> {
+    return this.delete<void>(`/api/v1/missions/${encodeURIComponent(id)}`);
+  }
+
+  public async addMissionItem(
+    missionId: string,
+    payload: MissionItemAddPayload
+  ): Promise<MissionDetail> {
+    return this.post<MissionDetail>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/items`,
+      payload
+    );
+  }
+
+  public async updateMissionItem(
+    missionId: string,
+    itemId: string,
+    payload: MissionItemUpdatePayload
+  ): Promise<MissionDetail> {
+    return this.patch<MissionDetail>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/items/${encodeURIComponent(itemId)}`,
+      payload
+    );
+  }
+
+  public async deleteMissionItem(
+    missionId: string,
+    itemId: string
+  ): Promise<MissionDetail> {
+    return this.delete<MissionDetail>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/items/${encodeURIComponent(itemId)}`
+    );
+  }
+
+  public async getMissionItemAlternatives(
+    missionId: string,
+    itemId: string
+  ): Promise<MissionAlternativeItem[]> {
+    return this.get<MissionAlternativeItem[]>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/items/${encodeURIComponent(itemId)}/alternatives`
+    );
+  }
+
+  public async replaceMissionItem(
+    missionId: string,
+    itemId: string,
+    payload: MissionItemReplacePayload
+  ): Promise<MissionDetail> {
+    return this.post<MissionDetail>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/items/${encodeURIComponent(itemId)}/replace`,
+      payload
+    );
+  }
+
+  public async addMissionToCart(
+    missionId: string
+  ): Promise<MissionAddToCartResponse> {
+    return this.post<MissionAddToCartResponse>(
+      `/api/v1/missions/${encodeURIComponent(missionId)}/add-to-cart`,
+      {}
+    );
   }
 }
 

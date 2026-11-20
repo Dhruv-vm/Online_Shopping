@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import type { Category, ProductSummary, Retailer } from "@/types";
-import { ArrowRight, Sparkles, Store, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, Sparkles, Store, ShieldCheck, Zap, Compass, Target } from "lucide-react";
 
 export const revalidate = 0; // Dynamic data
 
@@ -95,6 +95,32 @@ export default async function HomePage() {
         {/* Decorative background glows */}
         <div className="absolute -right-20 -bottom-20 h-96 w-96 rounded-full bg-emerald-500/20 blur-3xl" />
         <div className="absolute right-1/3 -top-20 h-72 w-72 rounded-full bg-teal-400/10 blur-2xl" />
+      </section>
+
+      {/* Basket Mission Highlight Banner */}
+      <section className="relative overflow-hidden rounded-2xl border bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent p-6 sm:p-8">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2 max-w-2xl">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950 px-3 py-1 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+              <Compass className="h-3.5 w-3.5 text-emerald-600" />
+              <span>Basket Mission • Guided Goal-Based Shopping</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+              Shop by Goal, not just by item.
+            </h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Tell us what you want to achieve — set up a kitchen under ₹15,000, buy apartment essentials, or prepare a home gym. We assemble a complete, budget-conscious plan using authentic marketplace inventory from verified retailers.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <Link href="/missions">
+              <Button size="lg" className="bg-emerald-600 text-white font-semibold hover:bg-emerald-700 shadow-md">
+                <Target className="h-4 w-4 mr-2" />
+                Start a Mission
+              </Button>
+            </Link>
+          </div>
+        </div>
       </section>
 
       {/* Categories Grid */}

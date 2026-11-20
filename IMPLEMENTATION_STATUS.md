@@ -2,11 +2,11 @@
 
 > **Status:** Code-Verified Implementation Status  
 > **Target Audience:** Engineering Leads, QA Inspectors, and System Auditors  
-> **Last Audited:** 2026-11-19T23:45:00+05:30  
-> **Base Branch:** `integration` (commit `615a4c5`)  
-> **Current Feature Branch:** `feature/phase1-master-core-marketplace`  
-> **Head Status:** Single Alembic head `0015_order_item_fulfillment`  
-> **Test Status:** 396 Backend Tests Passed (100%), 68 Frontend Tests Passed (100%), CI Green  
+> **Last Audited:** 2026-11-20T12:20:00+05:30  
+> **Base Branch:** `integration` (commit `8c5e212`)  
+> **Current Feature Branch:** `feature/phase-2a-basket-mission`  
+> **Head Status:** Single Alembic head `0016_basket_mission`  
+> **Test Status:** 412 Backend Tests Passed (100%), 77 Frontend Tests Passed (100%), CI Green  
 
 ---
 
@@ -46,7 +46,9 @@ All core features and fixes have been merged into `integration` through clean, r
 | **#21** | `feature/phase5b-retailer-catalogue-inventory` | Phase 5B Retailer Listings & Inventory | `cd7e38b` | 378 backend / 68 frontend | Retailer listings CRUD, independent variant pricing, tenant inventory management. |
 | **#22** | `feature/phase5c-admin-marketplace-moderation` | Phase 5C Admin Moderation & Deals | `cd7e38b` | 384 backend / 68 frontend | Admin catalogue moderation, retailer verification workflow, platform deals. |
 | **#23** | `feature/phase5c1-authentic-marketplace` | Phase 5C.1 Authentic Marketplace | `615a4c5` | 390 backend / 68 frontend | Multi-seller storefront offers, atomic inventory hold/deduction, sales analytics. |
-| **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | *Current* | 396 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, 3-tier image validation (50/50), multi-retailer single basket checkout, retailer order status isolation (migration 0015), accurate sales analytics, product comparison (`/compare`), E2E flow. |
+| **#24** | `feature/phase1-master-core-marketplace` | Phase 1 Master Core Marketplace | `321b0dc` | 396 backend / 68 frontend | 2 demo retailers, 10 top-level categories, 50 products, 3-tier image validation (50/50), multi-retailer single basket checkout, retailer order status isolation (migration 0015), accurate sales analytics, product comparison (`/compare`), E2E flow. |
+| **#26** | `fix/marketplace-data-and-live-sync` | Final Marketplace Cleanup & Live Sync | `8c5e212` | 403 backend / 68 frontend | Clean demo marketplace environment (2 verified demo retailers: Basket Mart & Basket Lifestyle, 10 categories, 50 products), zero dummy/orphaned listings, strict financial transaction protection. |
+| **#27** | `feature/phase-2a-basket-mission` | Phase 2A: Basket Mission (Guided Goal-Based Shopping) | *Current* | 412 backend / 77 frontend | Goal-based shopping wizard, transparent multi-product recommendation engine, thematic grouping, live budget & shortfall calculations, category alternative finder with price differences, add-to-cart integration, `/missions` & `/missions/[id]`. |
 
 ---
 
@@ -234,12 +236,38 @@ During Phase 4 testing, a critical issue was observed where customers completed 
   - Advancing Retailer 1 status does not overwrite or advance Retailer 2 status. Negative tests prove foreign order access and status regression fail with 404/422.
 - **3-Tier Product Image Validation (`validate_phase1_demo.py`):**
   - Upgraded validation script to check Format Validity (50/50), Network Reachability (50/50 via async HTTP probes), and Renderable Image Content-Types (50/50).
-- **Verification Evidence:**
-  - Backend test suite: 396 passed (100%).
-  - Frontend test suite: 68 passed (100%).
-  - TypeScript type-check (`tsc --noEmit`): 0 errors.
-  - Next.js production build: 27/27 static/dynamic routes compiled successfully.
-  - Ruff lint & format: 100% clean.
+### 3.12 Basket Mission (Phase 2A Guided Goal-Based Shopping)
+- **Source Files:**
+  - Backend: `backend/app/modules/missions/` (`models.py`, `schemas.py`, `repository.py`, `recommendation.py`, `service.py`, `router.py`), migration `backend/alembic/versions/0016_basket_mission.py`, test suite `backend/tests/test_basket_mission.py`.
+  - Frontend: `frontend/app/missions/page.tsx`, `frontend/app/missions/[id]/page.tsx`, `frontend/lib/api/missions.test.ts`, `frontend/lib/api/client.ts`, `frontend/types/index.ts`.
+- **Database Architecture:**
+  - `shopping_missions`: Stores customer goal, title, budget in paise, category scope, household user count, preferences, brand exclusions, and status (`ACTIVE`, `SAVED`, `COMPLETED`, `ARCHIVED`).
+  - `shopping_mission_items`: Links mission to products, variants, retailer listings, and retailers with quantity, captured unit price, selection flag, recommendation rationale, group name, and sort order.
+- **Recommendation Engine (`RecommendationEngine`):**
+  - Heuristic intent mapping and keyword extraction for common shopping goals (kitchen setup, apartment essentials, home gym, baby care, WFH desk, family groceries).
+  - Dynamic budget optimization knapsack algorithm allocating expenditure across priority tiers (Must-Haves, Secondary, Extras).
+  - Transparent recommendation rationales explaining why each product and quantity was suggested based on household size and preferences.
+  - Live stock verification against verified active marketplace retailers.
+  - Transparent budget surplus/shortfall calculation without price distortion.
+- **Interactive Editing & Cart Integration:**
+  - Customer can toggle item inclusion, change quantities with live subtotal recalculation, add new items, or delete items.
+  - Alternative discovery (`GET /api/v1/missions/{id}/items/{itemId}/alternatives`) surfaces similar in-stock products within the same category from competing retailers with price difference indicators.
+  - Item replacement (`POST /api/v1/missions/{id}/items/{itemId}/replace`) swaps out products with automatic plan rebalancing.
+  - Add-to-cart (`POST /api/v1/missions/{id}/add-to-cart`) transfers selected products into the customer's active universal basket via `CartService`, respecting retailer listings, checking stock, and reporting transparent warnings if items are skipped or prices have changed.
+- **Verified Capabilities:**
+  - 9/9 dedicated backend integration tests passing (`test_basket_mission.py`).
+  - 9/9 dedicated frontend API client tests passing (`missions.test.ts`).
+  - Strict customer tenant isolation: Customer A cannot view, update, delete, or modify items of Customer B's mission (enforced via 404/403).
+
+---
+
+## 4. Verification & Testing Evidence Summary
+
+- **Backend Test Suite:** 412 passed (100%), 0 failures, 7 warnings (Starlette deprecation notice).
+- **Frontend Test Suite:** 77 passed (100%), 0 failures.
+- **Frontend Type Check:** `tsc --noEmit` passed with 0 errors.
+- **Frontend Production Build:** Next.js 15 production build succeeded (28/28 routes compiled).
+- **Linter & Formatter:** `ruff check` and `ruff format --check` passed 100% clean on all modules, tests, and migrations.
 
 ---
 
@@ -267,7 +295,7 @@ The table below reconciles the finalized feature specification (`FEATURE_SPECIFI
 | **Admin Panel Dashboard** | Admin | Core | **Fully Implemented (Phase 5C)** | Overview KPIs, retailer compliance verification, canonical catalogue manager, promotional deals engine, `/admin/*`. |
 | **Retailer Panel Dashboard** | Retailer | Core | **Expanded (Phase 5A + 5B)** | Store profile, open/pause toggle, `/retailer/listings`, `/retailer/inventory`, overview metrics. |
 | **Role-Based Access Control (RBAC)** | Platform | Core | **Fully Implemented (Phase 5A)** | `users.role`, server-side `require_admin`, `require_retailer`, tenant isolation `get_current_retailer`. |
-| **Basket Mission & Intent Memory** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.2, §3.3. |
+| **Basket Mission & Guided Shopping** | Customer | Core Differentiator | **Fully Implemented (Phase 2A)** | Goal-based shopping plans, multi-product knapsack allocation, live stock & price validation, alternative product switching, one-click basket transfer. |
 | **Substitute & Price Intelligence** | Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.4, §3.10. |
 | **Demand Gap & Community Buying** | Admin / Retailer / Customer | Core Differentiator | **Planned (Phase 6)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.5, §3.6, §3.7. |
 | **AI Negotiator & Dukaan vs Dukaan**| Retailer / Customer | Core Differentiator | **Planned (Phase 7)** | Spec defined in `FEATURE_SPECIFICATION.md` §3.8, §3.9. |

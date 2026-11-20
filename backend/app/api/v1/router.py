@@ -6,6 +6,7 @@ from app.modules.cart.router import cart_router
 from app.modules.catalogue.router import router as catalogue_router
 from app.modules.identity.router import address_router, auth_router, user_router
 from app.modules.inventory.router import router as inventory_router
+from app.modules.missions.router import router as missions_router
 from app.modules.orders.router import router as orders_router
 from app.modules.payments.router import internal_router as internal_payments_router
 from app.modules.payments.router import router as payments_router
@@ -29,6 +30,9 @@ api_router.include_router(search_router)
 
 # Mount Cart endpoints
 api_router.include_router(cart_router)
+
+# Mount Basket Mission endpoints (Phase 2A)
+api_router.include_router(missions_router)
 
 # Mount Pricing & Quotes endpoints
 api_router.include_router(pricing_router)
