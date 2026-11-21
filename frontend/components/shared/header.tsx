@@ -8,7 +8,7 @@ import {
   Bell,
   CheckCheck,
   ChevronDown,
-  Globe,
+  CircleUserRound,
   Heart,
   LayoutDashboard,
   LogOut,
@@ -17,7 +17,7 @@ import {
   Search,
   ShieldCheck,
   ShoppingCart,
-  User,
+  Store,
   X,
 } from "lucide-react";
 import { BasketLogo } from "@/components/brand/logo";
@@ -356,34 +356,6 @@ function MoreMenu() {
   );
 }
 
-function PreferencesMenu() {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
-  const ref = useDismiss(open, close);
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-label={t("header.preferences")}
-        title={t("header.preferences")}
-        className="press flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/10"
-      >
-        <Globe className="h-5 w-5" />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-3 w-72 origin-top-right animate-scale-in space-y-3 rounded-2xl border bg-white p-4 text-ink shadow-card-hover">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("header.preferences")}</p>
-          <LocationPicker />
-          <LanguageSwitcher />
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Cart icon with a count that pops and a cart that bumps when items are added. */
 function CartButton() {
   const { t } = useI18n();
@@ -421,6 +393,20 @@ function WishlistButton() {
   );
 }
 
+/** Location & language controls, shown inside the account menu. */
+function PreferencesPanel() {
+  const { t } = useI18n();
+  return (
+    <div className="mt-1 space-y-2 border-t px-1 pb-1 pt-3">
+      <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("header.preferences")}</p>
+      <LocationPicker />
+      <div className="px-2">
+        <LanguageSwitcher compact />
+      </div>
+    </div>
+  );
+}
+
 function AccountMenu() {
   const router = useRouter();
   const { t } = useI18n();
@@ -429,14 +415,8 @@ function AccountMenu() {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const ref = useDismiss(open, close);
-  if (!isAuthenticated) {
-    return (
-      <Link href="/login" className="press flex h-10 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-yellow px-4 text-sm font-semibold text-ink hover:bg-brand-yellow-dark" aria-label={t("nav.signIn")}>
-        <User className="h-4 w-4" /> <span className="hidden sm:inline">{t("nav.signIn")}</span>
-      </Link>
-    );
-  }
   const item = "block rounded-xl px-3 py-2 text-sm transition-colors duration-base hover:bg-brand-light";
+  const initial = (user?.full_name || user?.email || "").trim().charAt(0);
   return (
     <div className="relative" ref={ref}>
       <button
@@ -444,41 +424,74 @@ function AccountMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="true"
-        aria-label={t("nav.account")}
-        className="press flex h-10 w-10 items-center justify-center rounded-full text-white ring-1 ring-white/25 hover:bg-white/10"
+        aria-label={isAuthenticated ? t("nav.account") : t("nav.signIn")}
+        title={isAuthenticated ? t("nav.account") : t("nav.signIn")}
+        className="press flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/10"
       >
-        <span className="text-sm font-bold uppercase">{(user?.full_name || user?.email || "?").trim().charAt(0)}</span>
+        {isAuthenticated && initial ? (
+          <span className="flex h-[26px] w-[26px] items-center justify-center rounded-full text-[13px] font-bold uppercase ring-[1.8px] ring-white">{initial}</span>
+        ) : (
+          <CircleUserRound className="h-[26px] w-[26px]" strokeWidth={1.8} />
+        )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-3 w-60 origin-top-right animate-scale-in rounded-2xl border bg-white p-2 text-ink shadow-card-hover">
-          <p className="truncate px-3 pb-2 pt-1 text-xs text-muted-foreground">{user?.email}</p>
-          <Link href={homeForRole(role)} onClick={close} className={`${item} font-semibold`}>
-            {role === "customer" ? t("nav.account") : role === "retailer" ? t("nav.retailerPortal") : t("nav.adminPanel")}
-          </Link>
-          {role === "customer" && (
+        <div className="absolute right-0 top-full z-50 mt-3 w-72 origin-top-right animate-scale-in rounded-2xl border bg-white p-2 text-ink shadow-card-hover">
+          {isAuthenticated ? (
             <>
-              <Link href="/orders" onClick={close} className={item}>{t("nav.orders")}</Link>
-              <Link href="/wishlist" onClick={close} className={item}>{t("nav.wishlist")}</Link>
-              <Link href="/account/price-alerts" onClick={close} className={item}>{t("nav.priceAlerts")}</Link>
-              <Link href="/account/requests" onClick={close} className={item}>{t("nav.myRequests")}</Link>
-              <Link href="/account/addresses" onClick={close} className={item}>{t("nav.addresses")}</Link>
+              <p className="truncate px-3 pb-2 pt-1 text-xs text-muted-foreground">{user?.email}</p>
+              <Link href={homeForRole(role)} onClick={close} className={`${item} font-semibold`}>
+                {role === "customer" ? t("nav.account") : role === "retailer" ? t("nav.retailerPortal") : t("nav.adminPanel")}
+              </Link>
+              {role === "customer" && (
+                <>
+                  <Link href="/orders" onClick={close} className={item}>{t("nav.orders")}</Link>
+                  <Link href="/wishlist" onClick={close} className={item}>{t("nav.wishlist")}</Link>
+                  <Link href="/account/price-alerts" onClick={close} className={item}>{t("nav.priceAlerts")}</Link>
+                  <Link href="/account/requests" onClick={close} className={item}>{t("nav.myRequests")}</Link>
+                  <Link href="/account/addresses" onClick={close} className={item}>{t("nav.addresses")}</Link>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  close();
+                  await logout();
+                  router.push("/");
+                }}
+                className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-700 transition-colors duration-base hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" /> {t("nav.logout")}
+              </button>
             </>
+          ) : (
+            <div className="grid gap-2 p-1">
+              <Link href="/login" onClick={close} className="press flex h-10 items-center justify-center rounded-full bg-brand-yellow text-sm font-bold text-ink hover:bg-brand-yellow-dark">
+                {t("nav.signIn")}
+              </Link>
+              <Link href="/register" onClick={close} className="press flex h-10 items-center justify-center rounded-full text-sm font-semibold ring-1 ring-ink/15 hover:ring-ink/40">
+                {t("nav.register")}
+              </Link>
+              <Link href="/register/retailer" onClick={close} className="flex items-center justify-center gap-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-ink">
+                <Store className="h-3.5 w-3.5" /> {t("nav.sellOnBasket")}
+              </Link>
+            </div>
           )}
-          <button
-            type="button"
-            onClick={async () => {
-              close();
-              await logout();
-              router.push("/");
-            }}
-            className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-red-700 transition-colors duration-base hover:bg-red-50"
-          >
-            <LogOut className="h-4 w-4" /> {t("nav.logout")}
-          </button>
+          <PreferencesPanel />
         </div>
       )}
     </div>
   );
+}
+
+/** "⌘K" on Apple platforms, "Ctrl K" elsewhere (decided after mount to avoid a hydration mismatch). */
+function useShortcutLabel() {
+  const [label, setLabel] = useState("⌘K");
+  useEffect(() => {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const platform = nav.userAgentData?.platform || nav.platform || nav.userAgent;
+    if (!/mac|iphone|ipad/i.test(platform)) setLabel("Ctrl K");
+  }, []);
+  return label;
 }
 
 export function Header() {
@@ -492,8 +505,27 @@ export function Header() {
   const scrolled = useScrolled();
   const role = user?.role ?? null;
   const shopper = canShop(role);
+  const shortcut = useShortcutLabel();
 
   useEffect(() => setMobile(false), [pathname]);
+
+  // ⌘K / Ctrl+K focuses search (desktop field, or the mobile drawer's field).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      const desktop = document.getElementById("hdr-search") as HTMLInputElement | null;
+      if (desktop && desktop.offsetParent !== null) {
+        desktop.focus();
+        desktop.select();
+        return;
+      }
+      setMobile(true);
+      requestAnimationFrame(() => (document.getElementById("hdr-search-m") as HTMLInputElement | null)?.focus());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const submitSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -504,18 +536,27 @@ export function Header() {
   const isActive = (n: (typeof NAV)[number]) => (n.match ? n.match(pathname, params) : false);
   const categoriesActive = pathname.startsWith("/categories") || (pathname === "/products" && !!params?.get("category_slug"));
 
-  const search = (id: string, extra = "") => (
+  const search = (id: string, extra = "", kbd = false) => (
     <form onSubmit={submitSearch} role="search" className={`group/s relative ${extra}`}>
       <label htmlFor={id} className="sr-only">{t("common.search")}</label>
-      <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55 transition-colors duration-base group-focus-within/s:text-brand-yellow" />
+      <Search className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-white/80 transition-colors duration-base group-focus-within/s:text-brand-yellow" />
       <input
         id={id}
         type="search"
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder={t("common.searchPlaceholder")}
-        className="h-10 w-full rounded-full border border-white/10 bg-white/[0.08] pl-10 pr-4 text-sm text-white placeholder:text-white/50 transition-[background-color,border-color,box-shadow] duration-base ease-out focus:border-brand-yellow/70 focus:bg-white/[0.12] focus:outline-none focus:ring-2 focus:ring-brand-yellow/25"
+        aria-keyshortcuts={kbd ? "Meta+K Control+K" : undefined}
+        className={`h-11 w-full truncate rounded-full border border-white/10 bg-white/[0.09] pl-11 text-[13px] text-white placeholder:text-white/55 transition-[background-color,border-color,box-shadow] duration-base ease-out focus:border-brand-yellow/70 focus:bg-white/[0.13] focus:outline-none focus:ring-2 focus:ring-brand-yellow/25 [&::-webkit-search-cancel-button]:hidden ${kbd ? "pr-16" : "pr-4"}`}
       />
+      {kbd && (
+        <kbd
+          title={t("header.searchShortcut", { key: shortcut })}
+          className="pointer-events-none absolute right-2 top-1/2 flex h-7 -translate-y-1/2 items-center rounded-lg bg-white/[0.12] px-2 font-sans text-[11px] font-semibold text-white/80 ring-1 ring-white/10 transition-opacity duration-base group-focus-within/s:opacity-0"
+        >
+          {shortcut}
+        </kbd>
+      )}
     </form>
   );
 
@@ -534,8 +575,7 @@ export function Header() {
           </button>
           <BasketLogo height={30} priority />
 
-          <nav className="ml-4 hidden items-center lg:flex xl:ml-8" aria-label={t("nav.primary")}>
-            <Link href="/" className={`nav-link ${isActive(NAV[0]) ? "is-active" : ""}`} aria-current={isActive(NAV[0]) ? "page" : undefined}>{t("nav.home")}</Link>
+          <nav className="ml-4 hidden items-center gap-1 lg:flex xl:ml-10" aria-label={t("nav.primary")}>
             <CategoriesMenu active={categoriesActive} />
             {NAV.slice(1).map((n) => (
               <Link key={n.href} href={n.href} className={`nav-link ${isActive(n) ? "is-active" : ""}`} aria-current={isActive(n) ? "page" : undefined}>
@@ -545,10 +585,9 @@ export function Header() {
             <MoreMenu />
           </nav>
 
-          {search("hdr-search", "ml-auto hidden w-full min-w-0 max-w-[13rem] md:block xl:max-w-[17rem] 2xl:max-w-xs")}
+          {search("hdr-search", "ml-auto hidden w-full min-w-0 max-w-[15rem] md:block lg:ml-6 xl:max-w-[21rem] 2xl:max-w-[24rem]", true)}
 
-          <div className="ml-auto flex items-center gap-0.5 md:ml-2">
-            <div className="hidden sm:block"><PreferencesMenu /></div>
+          <div className="ml-auto flex items-center gap-1 md:ml-4">
             {shopper && <WishlistButton />}
             {shopper && <CartButton />}
             {isAuthenticated && <Notifications dark />}

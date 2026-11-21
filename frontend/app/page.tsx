@@ -19,7 +19,8 @@ import {
 import { ProductCard } from "@/components/catalogue/product-card";
 import { ProductImage } from "@/components/catalogue/product-image";
 import { Rail, Section, SkeletonCards } from "@/components/home/section";
-import { BasketEdit, imageByCategory, ProductRow, PromoBanner, ServiceStrip, ShopByCategory, StorefrontHero } from "@/components/home/storefront";
+import { AppPromo } from "@/components/home/app-promo";
+import { BasketEdit, CampaignRow, DealsBanner, imageByCategory, ProductRow, ServiceStrip, ShopByCategory, StorefrontHero } from "@/components/home/storefront";
 import { CampaignCard } from "@/components/phase3/campaign-card";
 import { Countdown } from "@/components/phase3/kit";
 import { apiClient } from "@/lib/api/client";
@@ -93,38 +94,30 @@ export default function HomePage() {
   } : null;
   const offers = (d.stream ?? []).filter((e) => e.event_type === "FLASH_DEAL");
   const catImages = useMemo(() => imageByCategory(d.catalogue ?? []), [d.catalogue]);
-  const showcase = useMemo(() => {
-    const prefer = ["electronics", "fashion-clothing", "beauty-personal-care", "furniture-decor", "home-kitchen", "sports-fitness"];
-    const picks: ProductSummary[] = [];
-    for (const slug of prefer) {
-      const p = catImages.get(slug);
-      if (p && picks.length < 4) picks.push(p);
-    }
-    return picks;
-  }, [catImages]);
   // "Trending" only when the Sale Stream reports real hot sellers.
   const trending = useMemo(() => {
     const ids = new Set((d.stream ?? []).filter((e) => e.event_type === "HOT_SELLER").map((e) => e.product_id));
-    return (d.catalogue ?? []).filter((p) => ids.has(p.id)).slice(0, 10);
+    return (d.catalogue ?? []).filter((p) => ids.has(p.id)).slice(0, 5);
   }, [d.stream, d.catalogue]);
   const drops = (d.stream ?? []).filter((e) => e.event_type === "PRICE_DROP");
 
   return (
     <div>
-      <StorefrontHero showcase={showcase} stats={stats} />
-      <ServiceStrip />
+      <StorefrontHero products={d.catalogue} retailers={d.retailers} stats={stats} />
+      <ServiceStrip productCount={stats?.products} />
       {d.categories && d.catalogue ? (
         <ShopByCategory categories={d.categories} images={catImages} />
       ) : (
         <div className="container-page pt-12"><SkeletonCards /></div>
       )}
-      {d.catalogue && <PromoBanner deals={d.stream ?? []} products={d.catalogue} />}
+      {d.catalogue && <DealsBanner deals={d.stream ?? []} products={d.catalogue} />}
       {d.categories && d.catalogue && <BasketEdit categories={d.categories} images={catImages} />}
       {trending.length > 0 ? (
         <ProductRow id="trending" title={t("home.v2.trending")} subtitle={t("home.v2.trendingSub")} products={trending} href="/sale-stream" linkLabel={t("home.v2.viewAll")} />
       ) : (
-        <ProductRow id="new-arrivals" title={t("home.v2.newArrivals")} subtitle={t("home.v2.newArrivalsSub")} products={(d.featured ?? []).slice(0, 10)} href="/products?sort_by=newest" linkLabel={t("home.v2.viewAll")} />
+        <ProductRow id="new-arrivals" title={t("home.v2.newArrivals")} subtitle={t("home.v2.newArrivalsSub")} products={(d.featured ?? []).slice(0, 5)} href="/products?sort_by=newest" linkLabel={t("home.v2.viewAll")} />
       )}
+      {d.catalogue && <CampaignRow images={catImages} />}
       <div className="pt-8" />
 
       <Section id="brands" title={t("home.brands.title")} subtitle={t("home.brands.subtitle")}>
@@ -258,6 +251,8 @@ export default function HomePage() {
         </div>
         <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><Zap className="h-3.5 w-3.5" /> {t("home.trust.counts", { stores: number(stats?.stores ?? 0) })}</p>
       </Section>
+
+      <AppPromo />
     </div>
   );
 }

@@ -51,6 +51,8 @@ const config: Config = {
           green: "#009B70", // existing Basket brand green (success, positive)
           "green-logo": "#007E1C", // logo wheel green
         },
+        // Deep green for promotional surfaces (deals banner, app campaign)
+        forest: { DEFAULT: "#0E3B27", light: "#145A3A", dark: "#08291A" },
         ink: "#080808",
         charcoal: "#1A1A1A",
         surface: "#FAF8F4", // warm off-white page background (reference)
