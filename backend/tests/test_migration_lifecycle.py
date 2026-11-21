@@ -19,7 +19,7 @@ def test_migration_chain_is_linear_and_single_head():
     # Exactly one migration head
     heads = script.get_heads()
     assert len(heads) == 1, f"Expected exactly 1 migration head, found {heads}"
-    assert heads[0] == "0039_mission_completion"
+    assert heads[0] == "0040_auction_simulated_bids"
 
     # Walk from head to base verifying linear unbroken parent links
     current = script.get_revision(heads[0])
@@ -35,6 +35,7 @@ def test_migration_chain_is_linear_and_single_head():
         current = script.get_revision(down)
 
     expected_revisions = [
+        "0040_auction_simulated_bids",
         "0039_mission_completion",
         "0038_recurring_baskets",
         "0037_group_buy_invites",
