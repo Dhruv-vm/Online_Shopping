@@ -7,7 +7,7 @@ import datetime
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,10 +112,18 @@ async def list_users(
 async def set_user_status(
     user_id: uuid.UUID,
     payload: UserStatusRequest,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     admin: Annotated[User, Depends(require_admin)],
 ) -> AdminUserItem:
     """Suspend or reinstate an account. Suspension revokes all sessions."""
+    from app.modules.governance.audit import record_audit_details
+
+    record_audit_details(
+        request,
+        action="reinstate" if payload.is_active else "suspend",
+        reason=payload.reason,
+    )
     if user_id == admin.id:
         raise AppException(
             code="CANNOT_MODIFY_SELF",
@@ -242,6 +250,7 @@ class AuditItem(BaseModel):
     path: str
     entity_id: str | None
     status_code: int
+    details: dict = {}
     created_at: datetime.datetime
 
 
@@ -285,6 +294,7 @@ async def list_audit_logs(
                 path=r.path,
                 entity_id=r.entity_id,
                 status_code=r.status_code,
+                details=r.details or {},
                 created_at=r.created_at,
             )
             for r in rows

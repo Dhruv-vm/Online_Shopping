@@ -138,6 +138,8 @@ export const adminListOrders = (p: { status?: string; payment_status?: string; q
 export interface AuditEntry {
   id: UUID; actor_email: string | null; method: string; route: string; path: string;
   entity_id: string | null; status_code: number; created_at: string;
+  /** Structured context, e.g. { action: "suspend", reason: "…" }. */
+  details?: Record<string, unknown>;
 }
 export const adminAuditLogs = (p: { actor?: string; entity_id?: string; limit?: number; offset?: number } = {}) =>
   apiClient.get<{ items: AuditEntry[]; total: number }>(`/api/v1/admin/audit-logs${q(p)}`);

@@ -43,6 +43,9 @@ async def test_admin_mutations_are_audited_and_users_can_be_suspended(
     entry = logs["items"][0]
     assert entry["method"] == "POST"
     assert entry["route"].endswith("/admin/users/{user_id}/status")
+    # The reason the admin gave is kept with the audit entry.
+    assert entry["details"]["action"] == "suspend"
+    assert entry["details"]["reason"] == "fraud review"
     assert entry["actor_email"].endswith("@example.com")
 
     users = (
@@ -118,3 +121,12 @@ async def test_admin_orders_health_overview_and_rfq_moderation(
         json={"reason": "Spam / not a genuine request"},
     )
     assert mod.status_code == 200 and mod.json()["status"] == "CANCELLED"
+    audit = (
+        await async_client.get(
+            f"/api/v1/admin/audit-logs?entity_id={rfq.json()['id']}", headers=admin
+        )
+    ).json()
+    assert audit["items"][0]["details"] == {
+        "action": "cancel_rfq",
+        "reason": "Spam / not a genuine request",
+    }

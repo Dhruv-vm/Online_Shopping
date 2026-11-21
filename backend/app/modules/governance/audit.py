@@ -16,8 +16,31 @@ _UUID_RE = re.compile(
 )
 
 
+def record_audit_details(request, **details) -> None:
+    """Attach structured context to this request's admin audit entry."""
+    current = getattr(request.state, "audit_details", None) or {}
+    current.update({k: v for k, v in details.items() if v is not None})
+    request.state.audit_details = current
+
+
+def _details(request) -> dict:
+    out: dict = {}
+    if request.url.query:
+        out["query"] = str(request.url.query)[:500]
+    extra = getattr(request.state, "audit_details", None)
+    if isinstance(extra, dict):
+        out.update(
+            {k: (v[:500] if isinstance(v, str) else v) for k, v in extra.items()}
+        )
+    return out
+
+
 async def record_admin_mutation(request: Request, response: Response) -> None:
-    """Persist one audit row for a successful mutation performed by an admin."""
+    """Persist one audit row for a successful mutation performed by an admin.
+
+    Endpoints can add structured context (for example the reason an admin gave)
+    with ``record_audit_details(request, ...)``; it is stored in ``details``.
+    """
     if request.method not in _MUTATING or response.status_code >= 400:
         return
     if getattr(request.state, "auth_role", None) != "admin":
@@ -45,9 +68,7 @@ async def record_admin_mutation(request: Request, response: Response) -> None:
                     status_code=response.status_code,
                     request_id=getattr(request.state, "request_id", None),
                     ip_address=(request.client.host if request.client else None),
-                    details={"query": str(request.url.query)[:500]}
-                    if request.url.query
-                    else {},
+                    details=_details(request),
                 )
             )
             await session.commit()

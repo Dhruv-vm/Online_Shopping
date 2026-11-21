@@ -40,7 +40,14 @@ export default function AdminAuditLogsPage() {
               <tr key={a.id}>
                 <td className="whitespace-nowrap text-xs">{date(a.created_at, "datetime")}</td>
                 <td className="text-xs">{a.actor_email ?? "—"}</td>
-                <td><span className="font-mono text-xs"><strong>{a.method}</strong> {a.route.replace("/api/v1", "")}</span></td>
+                <td>
+                  <span className="font-mono text-xs"><strong>{a.method}</strong> {a.route.replace("/api/v1", "")}</span>
+                  {typeof a.details?.reason === "string" && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {typeof a.details.action === "string" ? `${a.details.action}: ` : ""}“{a.details.reason}”
+                    </div>
+                  )}
+                </td>
                 <td className="font-mono text-[11px] text-muted-foreground">{a.entity_id ?? "—"}</td>
                 <td><Pill tone="good">{a.status_code}</Pill></td>
               </tr>
