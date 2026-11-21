@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { retailerBid, retailerLiveAuctions, retailerRecentAuctions, type Auction } from "@/lib/api/phase3";
+import { retailerBid, retailerLiveAuctions, retailerRecentAuctions, retailerSimulateBid, type Auction } from "@/lib/api/phase3";
 import { useLiveState, useLiveUpdates } from "@/lib/realtime";
 import { formatPrice } from "@/lib/utils";
 import { Countdown, errorText, Notice, PageTitle, rupeesToPaise, Status, useLoad } from "@/components/phase3/kit";
@@ -27,12 +27,12 @@ export default function RetailerAuctionsPage() {
   const [form, setForm] = useState<Record<string, { price: string; eta: string; warranty: string }>>({});
   const [msg, setMsg] = useState<{ text: string; tone: "error" | "success" } | null>(null);
 
-  // New auctions, bids, closures and awards arrive as live notices; a 10s
-  // fallback keeps the page correct if the live connection drops.
-  useLiveUpdates(["auction."], () => {
+  // New auctions, bids, closures and awards arrive as live notices; a fast
+  // fallback keeps the page synchronized even if the live connection drops.
+  useLiveUpdates(["auction.", "retailer.auction"], () => {
     void live.refresh();
     void recent.refresh();
-  }, { fallbackMs: liveState === "live" ? 30000 : 10000 });
+  }, { fallbackMs: liveState === "live" ? 5000 : 2000 });
 
   // Refresh right after the soonest countdown reaches zero so closure shows promptly.
   const soonest = Math.min(...(live.data?.items.map((a) => a.seconds_remaining) ?? [Infinity]));
@@ -74,7 +74,8 @@ export default function RetailerAuctionsPage() {
               <input type="number" placeholder="Bid ₹" value={f.price} onChange={(e) => setForm({ ...form, [a.id]: { ...f, price: e.target.value } })} className="w-24 rounded border px-1" aria-label="Bid amount" />
               <input type="number" placeholder="ETA min" value={f.eta} onChange={(e) => setForm({ ...form, [a.id]: { ...f, eta: e.target.value } })} className="w-20 rounded border px-1" aria-label="ETA minutes" />
               <input placeholder="Warranty (optional)" value={f.warranty} onChange={(e) => setForm({ ...form, [a.id]: { ...f, warranty: e.target.value } })} className="w-40 rounded border px-1" aria-label="Warranty note" />
-              <button onClick={async () => { try { await retailerBid(a.id, { bid_price_paise: rupeesToPaise(f.price), delivery_eta_minutes: Number(f.eta), warranty_note: f.warranty || undefined }); setMsg({ text: "Bid placed.", tone: "success" }); setForm({ ...form, [a.id]: { ...f, price: "" } }); await live.refresh(); } catch (e) { setMsg({ text: errorText(e), tone: "error" }); } }} className="rounded bg-blue-600 px-3 text-white">Bid</button>
+              <button onClick={async () => { try { await retailerBid(a.id, { bid_price_paise: rupeesToPaise(f.price), delivery_eta_minutes: Number(f.eta), warranty_note: f.warranty || undefined }); setMsg({ text: "Bid placed.", tone: "success" }); setForm({ ...form, [a.id]: { ...f, price: "" } }); await live.refresh(); } catch (e) { setMsg({ text: errorText(e), tone: "error" }); } }} className="rounded bg-blue-600 px-3 text-white hover:bg-blue-700">Bid</button>
+              <button onClick={async () => { try { await retailerSimulateBid(a.id); setMsg({ text: "Simulated competitive bid placed.", tone: "success" }); await live.refresh(); } catch (e) { setMsg({ text: errorText(e), tone: "error" }); } }} className="rounded bg-amber-600 px-3 text-white hover:bg-amber-700" title="Simulate competitive offer for live auction">Simulate Bid</button>
             </div>
           </div>
         );
@@ -97,7 +98,18 @@ export default function RetailerAuctionsPage() {
         </div>
       )}
 
-      <AuctionDemoSimulation />
+      <AuctionDemoSimulation
+        activeAuctions={live.data?.items ?? []}
+        onSimulateBid={async (aid) => {
+          try {
+            await retailerSimulateBid(aid);
+            setMsg({ text: "Simulated competitive bid placed.", tone: "success" });
+            await live.refresh();
+          } catch (e) {
+            setMsg({ text: errorText(e), tone: "error" });
+          }
+        }}
+      />
     </div>
   );
 }

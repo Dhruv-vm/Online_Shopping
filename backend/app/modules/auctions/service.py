@@ -217,6 +217,31 @@ class AuctionService:
         )
         return a
 
+    async def get_active_for_customer(self, user_id: uuid.UUID) -> BasketAuction | None:
+        a = (
+            await self.session.execute(
+                select(BasketAuction)
+                .where(
+                    BasketAuction.user_id == user_id,
+                    BasketAuction.status.in_(
+                        [AuctionStatus.ACTIVE.value, AuctionStatus.COMPLETED.value]
+                    ),
+                )
+                .order_by(
+                    BasketAuction.starts_at.desc(), BasketAuction.created_at.desc()
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if a:
+            await self._close_if_ended(a)
+            if a.status not in (
+                AuctionStatus.ACTIVE.value,
+                AuctionStatus.COMPLETED.value,
+            ):
+                return None
+        return a
+
     async def get_own(
         self, auction_id: uuid.UUID, user_id: uuid.UUID, *, lock: bool = False
     ) -> BasketAuction:
@@ -265,6 +290,66 @@ class AuctionService:
             raise AppException(
                 code="BID_NOT_FOUND", message="Bid not found.", status_code=404
             )
+        is_sim = bool(
+            getattr(bid, "is_simulated", False)
+            or (
+                isinstance(bid.line_allocation, list)
+                and any(
+                    isinstance(ln, dict) and ln.get("is_simulated")
+                    for ln in bid.line_allocation
+                )
+            )
+        )
+        if is_sim:
+            a.status = AuctionStatus.AWARDED.value
+            a.winning_bid_id = bid.id
+            from app.core.notify import notify_retailer_users
+
+            await notify_retailer_users(
+                self.session,
+                retailer_ids=[bid.retailer_id],
+                title="You won the auction (Demo Simulation)",
+                message=(
+                    f"The shopper in PIN {a.pincode} chose your simulated bid."
+                ),
+                event_type="retailer.auction_won",
+            )
+            others = (
+                await self.session.execute(
+                    select(BasketAuctionBid.retailer_id)
+                    .where(
+                        BasketAuctionBid.auction_id == a.id,
+                        BasketAuctionBid.retailer_id != bid.retailer_id,
+                    )
+                    .distinct()
+                )
+            ).scalars()
+            await notify_retailer_users(
+                self.session,
+                retailer_ids=list(others),
+                title="Auction result: not selected",
+                message=f"The shopper in PIN {a.pincode} chose another store's bid.",
+                event_type="retailer.auction_lost",
+            )
+            await enqueue_marketplace_event(
+                self.session,
+                event_type="auction.awarded",
+                aggregate_type="basket_auction",
+                aggregate_id=a.id,
+                payload={
+                    "auction_id": a.id,
+                    "bid_id": bid.id,
+                    "retailer_id": bid.retailer_id,
+                    "price_paise": bid.bid_price_paise,
+                    "is_simulated": True,
+                },
+            )
+            repo = CartRepository(self.session)
+            cart = await repo.get_active_cart_by_customer_id(user_id)
+            await self.session.flush()
+            a.winning_bid_is_simulated = True
+            return a, cart
+
         lines = bid.line_allocation
         list_total = sum(ln["list_unit_price_paise"] * ln["quantity"] for ln in lines)
         # Allocate the bid across lines in proportion to the retailer's list prices.
@@ -496,6 +581,95 @@ class AuctionService:
         await self.session.flush()
         return b
 
+    async def simulate_bid(
+        self, auction_id: uuid.UUID, retailer: Retailer
+    ) -> BasketAuctionBid:
+        if not retailer.is_active or retailer.verification_status != "VERIFIED":
+            raise AppException(
+                code="RETAILER_NOT_VERIFIED",
+                message="Only verified retailers can bid.",
+                status_code=403,
+            )
+        a = await self.session.get(BasketAuction, auction_id, with_for_update=True)
+        if a is None:
+            raise AppException(
+                code="AUCTION_NOT_FOUND", message="Auction not found.", status_code=404
+            )
+        await self._close_if_ended(a)
+        if a.status != AuctionStatus.ACTIVE.value:
+            raise AppException(
+                code="AUCTION_CLOSED", message="Bidding has closed.", status_code=409
+            )
+
+        current_best = (
+            await self.session.execute(
+                select(func.min(BasketAuctionBid.bid_price_paise)).where(
+                    BasketAuctionBid.auction_id == a.id
+                )
+            )
+        ).scalar()
+        base_price = (
+            current_best if current_best is not None else a.reference_total_paise
+        )
+
+        prev = (
+            await self.session.execute(
+                select(func.min(BasketAuctionBid.bid_price_paise)).where(
+                    BasketAuctionBid.auction_id == a.id,
+                    BasketAuctionBid.retailer_id == retailer.id,
+                )
+            )
+        ).scalar()
+
+        # Competitive simulated undercut: ~4% to 8% below base
+        drop = max(5000, int(base_price * 0.05))
+        sim_price = max(1000, base_price - drop)
+        if prev is not None and sim_price >= prev:
+            sim_price = max(1000, prev - 2000)
+
+        lines = await self._retailer_lines(a, retailer)
+        if lines is None:
+            lines = [
+                {
+                    "variant_id": s["variant_id"],
+                    "listing_id": s.get("reference_listing_id", str(uuid.uuid4())),
+                    "quantity": s["quantity"],
+                    "list_unit_price_paise": s.get("reference_unit_price_paise", 0),
+                    "is_simulated": True,
+                }
+                for s in a.cart_snapshot
+            ]
+        else:
+            for ln in lines:
+                ln["is_simulated"] = True
+
+        b = BasketAuctionBid(
+            id=uuid.uuid4(),
+            auction_id=a.id,
+            retailer_id=retailer.id,
+            bid_price_paise=sim_price,
+            delivery_eta_minutes=25,
+            warranty_note="[SIMULATED] Demo Offer · 7-day replacement",
+            line_allocation=lines,
+            is_simulated=True,
+        )
+        self.session.add(b)
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="auction.bid_placed",
+            aggregate_type="basket_auction",
+            aggregate_id=a.id,
+            payload={
+                "auction_id": a.id,
+                "bid_id": b.id,
+                "retailer_id": retailer.id,
+                "price_paise": sim_price,
+                "is_simulated": True,
+            },
+        )
+        await self.session.flush()
+        return b
+
     # ----------------------------------------------------------- views
     async def view(
         self,
@@ -557,6 +731,16 @@ class AuctionService:
                     savings_paise=a.reference_total_paise - b.bid_price_paise,
                     delivery_eta_minutes=b.delivery_eta_minutes,
                     warranty_note=b.warranty_note,
+                    is_simulated=bool(
+                        getattr(b, "is_simulated", False)
+                        or (
+                            isinstance(b.line_allocation, list)
+                            and any(
+                                isinstance(ln, dict) and ln.get("is_simulated")
+                                for ln in b.line_allocation
+                            )
+                        )
+                    ),
                     created_at=b.created_at,
                 )
                 for i, (b, r) in enumerate(ranked)

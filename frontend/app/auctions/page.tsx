@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { acceptAuctionBid, getAuctionLive, startAuction, type Auction } from "@/lib/api/phase3";
+import { acceptAuctionBid, getActiveAuction, getAuctionLive, startAuction, type Auction } from "@/lib/api/phase3";
+import { useLiveUpdates } from "@/lib/realtime";
 import { useI18n } from "@/lib/i18n/i18n-context";
 import { formatPrice } from "@/lib/utils";
 import { Countdown, errorText, Notice, PageTitle } from "@/components/phase3/kit";
@@ -14,7 +15,24 @@ export default function AuctionsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  // Poll every 2s while live (EventSource is also available: auctionEventStreamPath).
+  // Restore active or awaiting-choice auction on mount or refresh
+  useEffect(() => {
+    let mounted = true;
+    void getActiveAuction().then((a) => {
+      if (mounted && a) setAuction(a);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  // Real-time synchronization: incoming bids, closures, and awards update instantly
+  useLiveUpdates(["auction."], async () => {
+    if (!auction?.id) return;
+    try {
+      setAuction(await getAuctionLive(auction.id));
+    } catch {}
+  }, { fallbackMs: 2000, enabled: Boolean(auction && auction.status === "ACTIVE") });
+
+  // Fallback 2-second polling while live to guarantee prompt updates
   useEffect(() => {
     if (!auction || auction.status !== "ACTIVE") return;
     const id = setInterval(async () => {
@@ -25,7 +43,19 @@ export default function AuctionsPage() {
       }
     }, 2000);
     return () => clearInterval(id);
-  }, [auction]);
+  }, [auction?.id, auction?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Synchronized countdown expiry: refresh promptly when backend deadline expires
+  useEffect(() => {
+    if (!auction || auction.status !== "ACTIVE") return;
+    const ms = (auction.seconds_remaining + 1) * 1000;
+    const id = setTimeout(async () => {
+      try {
+        setAuction(await getAuctionLive(auction.id));
+      } catch {}
+    }, ms);
+    return () => clearTimeout(id);
+  }, [auction?.id, auction?.seconds_remaining, auction?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="container mx-auto max-w-3xl px-4 py-8">
@@ -48,7 +78,14 @@ export default function AuctionsPage() {
             {(auction.bids ?? []).map((b) => (
               <li key={b.id} className={`flex items-center justify-between rounded border p-3 ${b.rank === 1 ? "border-emerald-400 bg-emerald-50" : ""}`}>
                 <div>
-                  <p className="font-medium">#{b.rank} {b.retailer_name} <span className="text-xs text-gray-500">★{b.retailer_rating.toFixed(1)}</span></p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium">#{b.rank} {b.retailer_name} <span className="text-xs text-gray-500">★{b.retailer_rating.toFixed(1)}</span></p>
+                    {b.is_simulated && (
+                      <span className="rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800" title="Demonstration simulated quote">
+                        SIMULATED
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-500">ETA {b.delivery_eta_minutes} min{b.warranty_note ? ` · ${b.warranty_note}` : ""}</p>
                 </div>
                 <div className="text-right">
@@ -63,7 +100,14 @@ export default function AuctionsPage() {
           </ul>
           {auction.status === "ACTIVE" && (auction.bids ?? []).length === 0 && <p className="mt-4 text-sm text-gray-500">Waiting for shops to bid…</p>}
           {auction.status === "NO_BIDS" && <p className="mt-4 text-sm">No shop bid this time. Your basket is unchanged.</p>}
-          {done && <><Notice text={done} tone="success" /><Link href="/checkout" className="text-sm text-emerald-700 underline">Proceed to checkout</Link></>}
+          {done && (
+            <div className="mt-3">
+              <Notice text={done} tone="success" />
+              {!done.includes("simulation") && !done.includes("Simulation") && (
+                <Link href="/checkout" className="mt-1 inline-block text-sm text-emerald-700 underline">Proceed to checkout</Link>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

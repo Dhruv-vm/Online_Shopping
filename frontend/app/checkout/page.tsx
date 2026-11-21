@@ -60,6 +60,7 @@ function CheckoutContent() {
       setOrder(fetched);
       if (fetched.status === "CONFIRMED") {
         setAmbiguousState(false);
+        setError(null);
       } else if (fetched.payment_status === "REQUIRES_RECONCILIATION") {
         setAmbiguousState(true);
       }
@@ -148,6 +149,7 @@ function CheckoutContent() {
       if (latest) {
         if (latest.status === "CONFIRMED") {
           setIsPolling(false);
+          setError(null);
           return;
         }
         if (latest.payment_status === "REQUIRES_RECONCILIATION") {
@@ -165,6 +167,11 @@ function CheckoutContent() {
         pollTimerRef.current = setTimeout(poll, pollIntervalMs);
       } else {
         setIsPolling(false);
+        if (latest && latest.status !== "CONFIRMED") {
+          setError(
+            "Payment confirmation is taking longer than expected. Please check your orders page or click 'Check Status Now' before retrying."
+          );
+        }
       }
     };
 
@@ -218,6 +225,7 @@ function CheckoutContent() {
   const handlePaymentSuccess = (result: PaymentVerifyResponse) => {
     setVerifyResponse(result);
     setAmbiguousState(false);
+    setError(null);
     if (order) {
       setOrder({
         ...order,
@@ -229,7 +237,19 @@ function CheckoutContent() {
   };
 
   const handlePaymentError = (err: Error) => {
-    setError(err.message || "Payment verification failed");
+    const isTransientOrInternal =
+      err.message.includes("unexpected internal error") ||
+      err.message.includes("Failed to fetch") ||
+      err.message.includes("Network error") ||
+      err.message.includes("timeout");
+
+    if (isTransientOrInternal) {
+      setError(
+        "Payment was submitted to Razorpay. Verifying confirmation with server..."
+      );
+    } else {
+      setError(err.message || "Payment verification failed");
+    }
     // Immediately start server-side status refresh in case gateway completed asynchronously
     startPollingFallback();
   };
@@ -253,7 +273,7 @@ function CheckoutContent() {
         </Link>
       </div>
 
-      {error && (
+      {error && order?.status !== "CONFIRMED" && verifyResponse?.status !== "CONFIRMED" && (
         <div className="mb-6 p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300 flex items-start gap-2.5">
           <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
