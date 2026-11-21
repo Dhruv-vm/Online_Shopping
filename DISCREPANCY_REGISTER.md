@@ -7,6 +7,18 @@
 
 ---
 
+## V2A. Version 2.0 Phase A (P0 correctness) — 2026-11-21
+
+Branch `feature/version-2-development`. Defects found by `VERSION_1_FUNCTIONAL_AUDIT.md`; details in `VERSION_2_PHASE_A_REPORT.md`.
+
+| ID | Severity | Summary | Fix |
+| :--- | :---: | :--- | :--- |
+| V2A-F1 (audit D1) | Critical | Accepting a Dukaan vs Dukaan bid returned 500 (`uq_cart_listing`) when the winning listing was already in the basket; a listing repeated in List to Basket did the same | Update kept lines in place; never insert twice; residual conflict → 409 `CART_CONFLICT` (`dfed80a`) |
+| V2A-F2 (audit D4) | High | Each "Pay" press without an `Idempotency-Key` created a new Razorpay order | Keyless requests reuse the open PENDING attempt under the order lock; checkout sends one key per order (`bf6919e`) |
+| V2A-F3 (audit D5) | High | Search read the OpenSearch index while Kafka/outbox delivery was down (stale or foreign data) | PostgreSQL fallback with a reason, reported in `/ready` and admin system health (`654343c`). MC-12's per-database index prefix is still open (P1-2) |
+
+Open from the audit (not in Phase A): D2/D3 discount codes, stacking and minimum order (Phase B, needs policy decisions); D6 periodic-job locks; D7 retailer notifications; D8 SQL echo.
+
 ## MC. Marketplace Completion — 2026-11-21
 
 Branch `feature/marketplace-completion`. "Fixed" items have a commit and a test; "Open" items are known and not done.
