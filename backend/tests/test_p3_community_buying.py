@@ -62,9 +62,11 @@ async def test_full_group_buy_to_order_flow(async_client: AsyncClient):
             f"/api/v1/community-buying/campaigns/{camp['id']}/share", headers=c1
         )
     ).json()
+    # Final cycle: the link is a secure invite token, not the campaign id + user ref.
     assert (
         share["whatsapp_url"].startswith("https://wa.me/?text=")
-        and camp["id"] in share["url"]
+        and "/community-buying/invite/" in share["url"]
+        and "ref=" not in share["url"]
     )
 
     async with get_session_factory()() as s:

@@ -18,7 +18,7 @@ export function CampaignCard({ c, onChange }: { c: GroupBuyCampaign; onChange: (
   const [qty, setQty] = useState(1);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [share, setShare] = useState<{ whatsapp_url: string; sms_url: string; url: string } | null>(null);
+  const [share, setShare] = useState<{ whatsapp_url: string; sms_url: string; url: string; expires_at?: string } | null>(null);
   const pct = Math.min(100, Math.round((c.current_participants / Math.max(1, c.min_participants)) * 100));
   const joined = c.my_membership?.status === "JOINED";
   const awarded = c.my_membership?.status === "AWARDED";
@@ -111,6 +111,7 @@ export function CampaignCard({ c, onChange }: { c: GroupBuyCampaign; onChange: (
               <a href={share.whatsapp_url} target="_blank" rel="noopener noreferrer" className="text-brand underline">WhatsApp</a>
               <a href={share.sms_url} className="underline">SMS</a>
               <button type="button" onClick={() => navigator.clipboard?.writeText(share.url)} className="underline">{t("group.copyLink")}</button>
+              {share.expires_at && <span className="text-xs text-muted-foreground">Link valid until {new Date(share.expires_at).toLocaleString()}</span>}
             </div>
           )}
           {c.status === "SUCCESSFUL" && awarded && (

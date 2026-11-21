@@ -108,3 +108,36 @@ class CustomerStartRequest(BaseModel):
     template_id: uuid.UUID
     quantity: int = Field(1, ge=1, le=10)
     title: str | None = Field(None, min_length=3, max_length=160)
+
+
+class InviteResponse(BaseModel):
+    """A new invitation. ``token`` is shown once; only its hash is stored."""
+
+    token: str
+    url: str
+    expires_at: datetime.datetime
+    message: str
+    whatsapp_url: str
+    sms_url: str
+
+
+class InvitePreview(BaseModel):
+    """Public view of an invitation: campaign facts only, never who sent it."""
+
+    campaign_id: uuid.UUID
+    title: str
+    product_name: str
+    list_price_paise: int
+    group_price_paise: int
+    discount_bps: int
+    current_participants: int
+    min_participants: int
+    max_participants: int
+    campaign_expires_at: datetime.datetime
+    invite_expires_at: datetime.datetime
+    can_join: bool
+    reason: str | None = None
+
+
+class InviteJoinRequest(BaseModel):
+    quantity: int = Field(default=1, ge=1, le=50)

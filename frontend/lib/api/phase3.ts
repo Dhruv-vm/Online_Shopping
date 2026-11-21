@@ -102,8 +102,17 @@ export const listCampaigns = (p: { limit?: number; offset?: number } = {}) =>
 export const getCampaign = (id: UUID) => apiClient.get<GroupBuyCampaign>(`/api/v1/community-buying/campaigns/${id}`);
 export const joinCampaign = (id: UUID, quantity = 1) => apiClient.post<GroupBuyCampaign>(`/api/v1/community-buying/campaigns/${id}/join`, { quantity });
 export const leaveCampaign = (id: UUID) => apiClient.post<GroupBuyCampaign>(`/api/v1/community-buying/campaigns/${id}/leave`);
-export const shareCampaign = (id: UUID) =>
-  apiClient.get<{ url: string; message: string; whatsapp_url: string; sms_url: string }>(`/api/v1/community-buying/campaigns/${id}/share`);
+export type CampaignInvite = { token: string; url: string; expires_at: string; message: string; whatsapp_url: string; sms_url: string };
+/** Creates a secure, expiring invitation (campaign facts only, nothing about the sender). */
+export const shareCampaign = (id: UUID) => apiClient.post<CampaignInvite>(`/api/v1/community-buying/campaigns/${id}/invites`);
+export type InvitePreview = {
+  campaign_id: UUID; title: string; product_name: string; list_price_paise: number; group_price_paise: number; discount_bps: number;
+  current_participants: number; min_participants: number; max_participants: number;
+  campaign_expires_at: string; invite_expires_at: string; can_join: boolean; reason: string | null;
+};
+export const previewInvite = (token: string) => apiClient.get<InvitePreview>(`/api/v1/community-buying/invites/${encodeURIComponent(token)}`);
+export const joinViaInvite = (token: string, quantity = 1) =>
+  apiClient.post<GroupBuyCampaign>(`/api/v1/community-buying/invites/${encodeURIComponent(token)}/join`, { quantity });
 export const retailerCampaigns = (status?: string) =>
   apiClient.get<{ items: GroupBuyCampaign[]; total: number }>(`/api/v1/retailer/community-buying/campaigns${q({ status })}`);
 export const retailerCreateCampaign = (body: CampaignCreate) => apiClient.post<GroupBuyCampaign>("/api/v1/retailer/community-buying/campaigns", body);
