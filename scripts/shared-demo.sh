@@ -63,7 +63,14 @@ start_web() {
   wait_http "http://127.0.0.1:$WEB_PORT/" && echo "Frontend ready on port $WEB_PORT" || { echo "Frontend failed; see $STATE/web.log"; exit 1; }
 }
 
-stop_pid() { [[ -f "$STATE/$1.pid" ]] && { kill "$(cat "$STATE/$1.pid")" 2>/dev/null || true; rm -f "$STATE/$1.pid"; }; }
+stop_pid() {
+  # Always succeeds (the script runs with `set -e`), even if nothing was running.
+  if [[ -f "$STATE/$1.pid" ]]; then
+    kill "$(cat "$STATE/$1.pid")" 2>/dev/null || true
+    rm -f "$STATE/$1.pid"
+  fi
+  return 0
+}
 
 urls() {
   echo "Laptop A (customer) and Laptop B (retailer) open the SAME address:"
@@ -96,6 +103,9 @@ case "${1:-status}" in
     echo $! > "$STATE/tunnel.pid"
     for i in {1..30}; do u=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$STATE/tunnel.log" | head -1); [[ -n "$u" ]] && break; sleep 1; done
     [[ -n "${u:-}" ]] && { echo "$u" > "$STATE/tunnel.url"; urls; } || { echo "Tunnel did not start; see $STATE/tunnel.log"; exit 1; } ;;
+  restart)
+    # Rebuilds the frontend so code changes are served; data is kept.
+    "$0" down; REBUILD=1 "$0" up ;;
   urls) urls ;;
-  *) echo "usage: $0 up|down|status|reset-db|tunnel|urls"; exit 2 ;;
+  *) echo "usage: $0 up|down|restart|status|reset-db|tunnel|urls"; exit 2 ;;
 esac

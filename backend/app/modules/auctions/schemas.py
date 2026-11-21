@@ -49,6 +49,14 @@ class AuctionBidView(BaseModel):
     created_at: datetime.datetime
 
 
+class BidLadderEntry(BaseModel):
+    """One bid as other stores may see it: price and time only, never the store."""
+
+    price_paise: int
+    at: datetime.datetime
+    mine: bool
+
+
 class AuctionView(BaseModel):
     id: uuid.UUID
     status: str
@@ -65,6 +73,14 @@ class AuctionView(BaseModel):
     bids: list[AuctionBidView] | None = None
     my_best_bid_paise: int | None = None
     my_list_total_paise: int | None = None
+    # Retailer view only (Dukaan vs Dukaan):
+    my_rank: int | None = None
+    competing_stores: int | None = None
+    is_winning: bool | None = None
+    outbid: bool | None = None
+    bid_ladder: list[BidLadderEntry] | None = None
+    # WON | NOT_SELECTED | AWAITING_CHOICE | CLOSED (only once bidding has ended)
+    my_outcome: str | None = None
 
 
 class AuctionList(BaseModel):

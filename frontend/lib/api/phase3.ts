@@ -162,6 +162,10 @@ export interface Auction {
   reference_total_paise: number; duration_seconds: number; starts_at: string; ends_at: string; seconds_remaining: number;
   bid_count: number; best_bid_paise: number | null; winning_bid_id: UUID | null; bids: AuctionBid[] | null;
   my_best_bid_paise: number | null; my_list_total_paise: number | null;
+  // Retailer view only: own position, outbid state, anonymised price ladder, outcome.
+  my_rank?: number | null; competing_stores?: number | null; is_winning?: boolean | null; outbid?: boolean | null;
+  bid_ladder?: { price_paise: number; at: string; mine: boolean }[] | null;
+  my_outcome?: "WON" | "NOT_SELECTED" | "AWAITING_CHOICE" | "CLOSED" | null;
 }
 export const startAuction = (pincode: string) => apiClient.post<Auction>("/api/v1/auctions/start", { pincode });
 export const getAuctionLive = (id: UUID) => apiClient.get<Auction>(`/api/v1/auctions/${id}/live`);
@@ -171,6 +175,7 @@ export const acceptAuctionBid = (id: UUID, bidId: UUID) =>
   apiClient.post<{ auction: Auction; cart_id: UUID; message: string }>(`/api/v1/auctions/${id}/accept`, { bid_id: bidId });
 export const cancelAuction = (id: UUID) => apiClient.post<Auction>(`/api/v1/auctions/${id}/cancel`);
 export const retailerLiveAuctions = () => apiClient.get<{ items: Auction[]; total: number }>("/api/v1/retailer/auctions");
+export const retailerRecentAuctions = () => apiClient.get<{ items: Auction[]; total: number }>("/api/v1/retailer/auctions/recent");
 export const retailerBid = (id: UUID, body: { bid_price_paise: number; delivery_eta_minutes: number; warranty_note?: string }) =>
   apiClient.post<AuctionBid>(`/api/v1/retailer/auctions/${id}/bid`, body);
 

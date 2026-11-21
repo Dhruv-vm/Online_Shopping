@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,7 +14,12 @@ from app.core.exceptions import AppException
 from app.core.notify import notify_customer
 from app.core.pincode import retailer_serves
 from app.modules.auctions.models import AuctionStatus, BasketAuction, BasketAuctionBid
-from app.modules.auctions.schemas import AuctionBidView, AuctionView, SnapshotItem
+from app.modules.auctions.schemas import (
+    AuctionBidView,
+    AuctionView,
+    BidLadderEntry,
+    SnapshotItem,
+)
 from app.modules.cart.integration import set_customer_cart_lines
 from app.modules.cart.repository import CartRepository
 from app.modules.catalogue.models import ProductListing, ProductVariant, Retailer
@@ -43,9 +48,26 @@ class AuctionService:
                     .where(BasketAuctionBid.auction_id == a.id)
                 )
             ).scalar() or 0
-            a.status = (
+            new_status = (
                 AuctionStatus.COMPLETED.value if n else AuctionStatus.NO_BIDS.value
             )
+            # Close atomically: when the job and a live view race, only the request
+            # that actually flips the status emits the event and the notices.
+            flipped = (
+                await self.session.execute(
+                    update(BasketAuction)
+                    .where(
+                        BasketAuction.id == a.id,
+                        BasketAuction.status == AuctionStatus.ACTIVE.value,
+                    )
+                    .values(status=new_status)
+                    .returning(BasketAuction.id)
+                    .execution_options(synchronize_session=False)
+                )
+            ).scalar()
+            await self.session.refresh(a, ["status"])
+            if flipped is None:
+                return
             await enqueue_marketplace_event(
                 self.session,
                 event_type="auction.closed",
@@ -160,11 +182,32 @@ class AuctionService:
                 "ends_at": a.ends_at.isoformat(),
             },
         )
-        from app.core.notify import notify_retailers_serving
+        from app.core.notify import notify_retailer_users
 
-        await notify_retailers_serving(
+        # Only stores that serve the PIN *and* can supply every line are told.
+        candidates = (
+            (
+                await self.session.execute(
+                    select(Retailer).where(
+                        Retailer.is_active.is_(True),
+                        Retailer.verification_status == "VERIFIED",
+                        Retailer.user_id.is_not(None),
+                        Retailer.user_id != user_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        eligible = [
+            r.id
+            for r in candidates
+            if retailer_serves(r.service_pincodes, pincode)
+            and await self._retailer_lines(a, r) is not None
+        ]
+        await notify_retailer_users(
             self.session,
-            pincode=pincode,
+            retailer_ids=eligible,
             title="New Dukaan vs Dukaan auction",
             message=(
                 f"A basket of {len(snapshot)} item(s) in PIN {pincode} is open for bids "
@@ -533,7 +576,77 @@ class AuctionService:
                 if retailer_lines
                 else None
             ),
+            **(self._retailer_extras(a, rows, ranked, retailer) if retailer else {}),
         )
+
+    @staticmethod
+    def _retailer_extras(a, rows, ranked, retailer) -> dict:
+        """Position, outbid state, anonymised price ladder and outcome for one store."""
+        mine = retailer.id
+        rank = next(
+            (i + 1 for i, (b, _r) in enumerate(ranked) if b.retailer_id == mine), None
+        )
+        ladder = sorted(rows, key=lambda br: br[0].created_at)
+        winner_retailer = next(
+            (b.retailer_id for b, _r in rows if b.id == a.winning_bid_id), None
+        )
+        bid_any = rank is not None
+        outcome = None
+        if a.status == AuctionStatus.AWARDED.value and bid_any:
+            outcome = "WON" if winner_retailer == mine else "NOT_SELECTED"
+        elif a.status == AuctionStatus.COMPLETED.value and bid_any:
+            outcome = "AWAITING_CHOICE"
+        elif a.status in (
+            AuctionStatus.NO_BIDS.value,
+            AuctionStatus.CANCELLED.value,
+        ) or (a.status == AuctionStatus.AWARDED.value and not bid_any):
+            outcome = "CLOSED"
+        return {
+            "my_rank": rank,
+            "competing_stores": len(ranked),
+            "is_winning": rank == 1,
+            "outbid": bool(bid_any and rank != 1),
+            "bid_ladder": [
+                BidLadderEntry(
+                    price_paise=b.bid_price_paise,
+                    at=b.created_at,
+                    mine=b.retailer_id == mine,
+                )
+                for b, _r in ladder
+            ],
+            "my_outcome": outcome,
+        }
+
+    async def recent_for_retailer(
+        self, retailer: Retailer, hours: int = 24
+    ) -> list[BasketAuction]:
+        """Auctions this store bid in whose bidding has ended (for outcomes)."""
+        since = datetime.now(UTC) - timedelta(hours=hours)
+        rows = (
+            (
+                await self.session.execute(
+                    select(BasketAuction)
+                    .where(
+                        BasketAuction.ends_at > since,
+                        BasketAuction.id.in_(
+                            select(BasketAuctionBid.auction_id).where(
+                                BasketAuctionBid.retailer_id == retailer.id
+                            )
+                        ),
+                    )
+                    .order_by(BasketAuction.ends_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        out = []
+        for a in rows:
+            await self._close_if_ended(a)
+            if a.status != AuctionStatus.ACTIVE.value:
+                out.append(a)
+        return out
 
     async def list_admin(self, status, limit, offset):
         conds = [BasketAuction.status == status] if status else []
