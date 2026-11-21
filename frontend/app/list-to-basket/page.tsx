@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { buildCartFromList, parseShoppingList, type ParsedListItem } from "@/lib/api/phase3";
+import { buildCartFromList, parseShoppingList, type ParsedListItem, type ParseListResult } from "@/lib/api/phase3";
+import { getVisionStatus } from "@/lib/api/marketplace";
 import { useCart } from "@/lib/cart/cart-context";
 import { useI18n } from "@/lib/i18n/i18n-context";
 import { formatPrice } from "@/lib/utils";
-import { errorText, Notice, PageTitle } from "@/components/phase3/kit";
+import { errorText, Notice, PageTitle, useLoad } from "@/components/phase3/kit";
+
+const pct = (c: number | null | undefined) => (c == null ? null : `${Math.round(c * 100)}%`);
 
 type Row = ParsedListItem & { chosen: string | null; qty: number };
 
@@ -16,12 +19,16 @@ export default function ListToBasketPage() {
   const [text, setText] = useState("");
   const [rows, setRows] = useState<Row[] | null>(null);
   const [msg, setMsg] = useState<{ text: string; tone: "error" | "success" | "info" } | null>(null);
+  const [meta, setMeta] = useState<Pick<ParseListResult, "source" | "provider" | "ocr_confidence" | "manual_entry"> | null>(null);
+  const vision = useLoad(() => getVisionStatus());
+  const ocrOn = vision.data?.ocr_available ?? false;
 
   const parse = async (body: Parameters<typeof parseShoppingList>[0]) => {
     setMsg(null);
     try {
       const res = await parseShoppingList(body);
       setText(res.raw_text);
+      setMeta({ source: res.source, provider: res.provider, ocr_confidence: res.ocr_confidence, manual_entry: res.manual_entry });
       setRows(res.items.map((i) => ({ ...i, chosen: i.suggested_listing_id, qty: i.quantity })));
     } catch (e) {
       setMsg({ text: errorText(e), tone: "error" });
@@ -46,22 +53,46 @@ export default function ListToBasketPage() {
     <div className="container mx-auto max-w-3xl px-4 py-8">
       <PageTitle title={t("nav.listToBasket")} subtitle="Upload a photo of your shopping list or type it. Review the matches before anything is added." />
       <div className="space-y-3 rounded-lg border bg-white p-4">
-        <label className="block text-sm">
-          Photo of list
-          <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(e) => onPhoto(e.target.files?.[0])} className="mt-1 block text-sm" />
-        </label>
+        {vision.data && (
+          <p className={`rounded-lg border px-3 py-2 text-xs ${ocrOn ? "border-brand/30 bg-brand-light text-brand-dark" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+            {ocrOn
+              ? `Photo reading is on (${vision.data.provider}). Each line shows how confident the reader was — always check the matches.`
+              : "Manual entry: photo reading is not configured on this server, so type or paste your list below. Nothing is guessed from photos."}
+          </p>
+        )}
+        {ocrOn && (
+          <label className="block text-sm">
+            Photo of list
+            <input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(e) => onPhoto(e.target.files?.[0])} className="mt-1 block text-sm" />
+          </label>
+        )}
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} placeholder={"1kg Aashirvaad atta\n500g Amul butter\nDettol soap 3pc"} className="w-full rounded border p-2 text-sm" aria-label="Shopping list text" />
         <button disabled={text.trim().length < 2} onClick={() => parse({ text })} className="rounded bg-emerald-600 px-4 py-1 text-sm text-white disabled:opacity-40">Find products</button>
         {msg && <Notice text={msg.text} tone={msg.tone} />}
       </div>
       {rows && (
         <div className="mt-6">
+          {meta && (
+            <p className="mb-2 text-xs text-muted-foreground">
+              {meta.source === "OCR"
+                ? `Read from photo by ${meta.provider ?? "OCR"}${pct(meta.ocr_confidence) ? ` · overall confidence ${pct(meta.ocr_confidence)}` : " · provider reported no confidence"}. Edit the text above and search again if a line is wrong.`
+                : meta.manual_entry ? "Manual entry — matched from the text you typed." : "Matched from the text you typed."}
+            </p>
+          )}
           <table className="w-full text-sm">
             <thead><tr className="text-left text-xs text-gray-500"><th>Your list</th><th>Match</th><th>Qty</th></tr></thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="border-t align-top">
-                  <td className="py-2">{r.line}<div className="text-xs text-gray-400">→ {r.interpreted_as}</div></td>
+                  <td className="py-2">
+                    {r.line}
+                    <div className="text-xs text-gray-400">→ {r.interpreted_as}</div>
+                    {pct(r.ocr_confidence) && (
+                      <div className={`text-xs ${r.needs_review ? "font-semibold text-amber-700" : "text-gray-400"}`}>
+                        Read confidence {pct(r.ocr_confidence)}{r.needs_review ? " · please check" : ""}
+                      </div>
+                    )}
+                  </td>
                   <td className="py-2">
                     {r.candidates.length === 0 ? <span className="text-xs text-gray-500">{t("feature.noResults")}</span> : (
                       <select value={r.chosen ?? ""} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, chosen: e.target.value || null } : x)))} className="w-full rounded border px-1 py-1 text-xs" aria-label={`Match for ${r.name}`}>

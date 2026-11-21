@@ -179,8 +179,18 @@ export interface ParsedListItem {
   line: string; name: string; interpreted_as: string; size: string | null; quantity: number;
   candidates: { listing_id: UUID; product_id: UUID; product_name: string; retailer_name: string; price_paise: number; in_stock: boolean }[];
   suggested_listing_id: UUID | null;
+  /** Provider-reported recognition confidence for this line, 0–1 (photo uploads only). */
+  ocr_confidence?: number | null;
+  /** True when the line was read with low confidence and should be checked. */
+  needs_review?: boolean;
+}
+export interface ParseListResult {
+  source: "OCR" | "TEXT"; provider: string | null; raw_text: string; items: ParsedListItem[]; unmatched_count: number;
+  ocr_confidence?: number | null;
+  /** True when no OCR provider is configured and the text must be typed. */
+  manual_entry?: boolean;
 }
 export const parseShoppingList = (body: { text: string } | { image_base64: string; content_type: "image/jpeg" | "image/png" | "image/webp" }) =>
-  apiClient.post<{ source: "OCR" | "TEXT"; provider: string | null; raw_text: string; items: ParsedListItem[]; unmatched_count: number }>("/api/v1/vision/parse-list", body);
+  apiClient.post<ParseListResult>("/api/v1/vision/parse-list", body);
 export const buildCartFromList = (items: { listing_id: UUID; quantity: number }[]) =>
   apiClient.post<{ cart_id: UUID; added: number; skipped: { listing_id: UUID; reason: string; available?: number }[] }>("/api/v1/vision/build-cart", { items });

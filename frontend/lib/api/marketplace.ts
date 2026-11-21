@@ -105,6 +105,9 @@ export const removeListingImage = (listingId: UUID) =>
 export const uploadProductImage = (productId: UUID, content_base64: string, content_type: string, make_primary = false) =>
   apiClient.post<{ id: UUID; url: string; is_primary: boolean }>(`/api/v1/admin/catalogue/products/${encodeURIComponent(productId)}/images`, { content_base64, content_type, make_primary });
 
+export const deleteProductImage = (imageId: UUID) =>
+  apiClient.delete<void>(`/api/v1/admin/catalogue/images/${encodeURIComponent(imageId)}`);
+
 /** Read a File as base64 (without the data: prefix). */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

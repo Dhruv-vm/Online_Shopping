@@ -260,7 +260,10 @@ export interface RetailerListingItem {
   gst_rate_basis_points: number | null;
   is_tax_verified: boolean;
   is_active: boolean;
+  /** Canonical catalogue image for the product. */
   image_url: string | null;
+  /** Store's own photo for this listing, shown in preference to the catalogue image. */
+  listing_image_url?: string | null;
   inventory: RetailerListingInventory;
   created_at: string;
   updated_at: string;
