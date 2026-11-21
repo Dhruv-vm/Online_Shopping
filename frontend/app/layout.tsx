@@ -6,6 +6,7 @@ import { Footer } from "@/components/shared/footer";
 import { AuthProvider } from "@/lib/auth/auth-context";
 import { CartProvider } from "@/lib/cart/cart-context";
 import { CompareProvider } from "@/lib/compare/compare-context";
+import { WishlistProvider } from "@/lib/wishlist/wishlist-context";
 import { I18nProvider } from "@/lib/i18n/i18n-context";
 import { LanguageAccountSync } from "@/lib/i18n/account-sync";
 import { DEFAULT_LANGUAGE, LANG_COOKIE, isLanguageCode, languageMeta } from "@/lib/i18n/languages";
@@ -50,11 +51,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <LanguageAccountSync />
             <CartProvider>
               <CompareProvider>
+               <WishlistProvider>
                 <LoaderReady />
                 <RouteLoader />
                 <Header />
                 <main className="flex-1">{children}</main>
                 <Footer />
+               </WishlistProvider>
               </CompareProvider>
             </CartProvider>
           </AuthProvider>

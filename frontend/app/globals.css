@@ -94,6 +94,15 @@
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 480ms var(--ease-out), transform 480ms var(--ease-out); transition-delay: var(--reveal-delay, 0ms); }
 .reveal.is-visible { opacity: 1; transform: none; }
 
+/* Header navigation: white text, yellow indicator that grows in (reference). */
+.nav-link { position: relative; white-space: nowrap; border-radius: 9999px; padding: 0.5rem 0.7rem; font-size: 0.875rem; font-weight: 600; color: rgb(255 255 255 / 0.72); transition: color var(--dur-base) var(--ease-out); }
+.nav-link:hover, .nav-link[aria-expanded="true"] { color: #fff; }
+.nav-link::after { content: ""; position: absolute; left: 0.7rem; right: 0.7rem; bottom: 0.15rem; height: 3px; border-radius: 9999px; background: #FDCD1E; transform: scaleX(0); transform-origin: left; transition: transform var(--dur-base) var(--ease-out); }
+.nav-link:hover::after { transform: scaleX(0.35); }
+.nav-link.is-active { color: #fff; }
+.nav-link.is-active::after { transform: scaleX(1); }
+.nav-link:focus-visible { outline: 2px solid #FDCD1E; outline-offset: 2px; }
+
 /* Interactive press feedback shared by buttons and tappable cards. */
 .press { transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
 .press:active:not(:disabled) { transform: scale(0.97); }

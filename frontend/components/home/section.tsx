@@ -19,20 +19,20 @@ export function Section({
   children: ReactNode;
   tone?: "plain" | "tint" | "dark";
 }) {
-  const bg = tone === "tint" ? "bg-brand-light/50" : tone === "dark" ? "bg-brand-dark text-white" : "";
+  const bg = tone === "tint" ? "bg-cream/70" : tone === "dark" ? "bg-ink text-white" : "";
   return (
     <section id={id} className={`py-10 sm:py-12 ${bg}`} aria-labelledby={id ? `${id}-title` : undefined}>
       <div className="container-page">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 id={id ? `${id}-title` : undefined} className={`text-2xl font-bold tracking-tight ${tone === "dark" ? "text-white" : "text-charcoal"}`}>
+            <h2 id={id ? `${id}-title` : undefined} className={`text-2xl font-extrabold tracking-tight ${tone === "dark" ? "text-white" : "text-ink"}`}>
               {title}
             </h2>
             {subtitle && <p className={`mt-1 max-w-2xl text-sm ${tone === "dark" ? "text-white/75" : "text-muted-foreground"}`}>{subtitle}</p>}
           </div>
           {href && linkLabel && (
-            <Link href={href} className={`inline-flex items-center gap-1 text-sm font-semibold ${tone === "dark" ? "text-brand-yellow" : "text-brand-dark"} hover:underline`}>
-              {linkLabel} <ArrowRight className="h-4 w-4" />
+            <Link href={href} className={`group inline-flex items-center gap-1.5 text-sm font-bold ${tone === "dark" ? "text-brand-yellow" : "text-ink"}`}>
+              {linkLabel} <ArrowRight className="h-4 w-4 transition-transform duration-base ease-out group-hover:translate-x-1" />
             </Link>
           )}
         </div>
