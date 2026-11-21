@@ -5,6 +5,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.2.0-mc] — 2026-11-21 — Marketplace completion (local branch `feature/marketplace-completion`)
+
+Base `integration` @ `2610a1e`. Not pushed, merged or deployed. Detailed report: [`docs/MARKETPLACE_COMPLETION.md`](docs/MARKETPLACE_COMPLETION.md).
+
+### Added
+- Storefront homepage (18 sections driven by live data), BASKET brand palette, role-aware header/footer, policy pages.
+- Twelve-language interface (en, hi, kn, ta, te, ml, bn, mr, gu, pa, or, ur; Urdu right-to-left) with cookie, localStorage and account persistence; locale-aware money, numbers and dates. 290 core keys translated per language; the rest falls back to English. Coverage is partial: ≈32 % of visible page strings are translated (shell, sign-in, homepage and new portal pages); core shopping and retailer operations pages remain English.
+- Common login with backend-role redirects and expired-session handling; retailer onboarding (GSTIN, documents, resubmission) with a restricted portal until approval.
+- Retailer: real dashboard KPIs, analytics definitions (gross sales, settled revenue, paid/fulfilled orders, units dispatched, pending payment), listing photos, group-buy templates, price insights.
+- Admin: user management (suspend/reinstate with session revocation), orders, audit log of admin mutations, system health, RFQ moderation, group-buying, auctions, price-data quality, verification desk, canonical product images.
+- Phase 3: customer-started group buys (3B); rule-based deal assistant (3D); price comparison, alerts, retailer insights and demo-labelled history (3F); OCR confidence and labelled manual fallback (3I).
+- Reversible data quarantine for test fixtures; demonstration marketplace seed and `*_demo`-only reset script.
+- Migrations `0031`–`0034`; `scripts/verify-migrations.sh`; `scripts/audit-features.sh`; E2E API journeys A–F.
+
+### Fixed
+- Offers saved as 0 % (percentages now stored in basis points).
+- Unpaid orders could be packed/shipped; analytics counted unpaid orders.
+- Tests wrote to the development database (now always a `*_test` database).
+- Retailer and admin sessions could add to cart, quote, reserve, order and start payment through the API (`403 BUSINESS_ACCOUNT_CANNOT_SHOP`).
+- Store links pointed at a non-existent `/retailers/<slug>` page.
+- A stale saved language overrode the server-rendered one.
+- Checkout: blank when opened directly, developer copy shown to shoppers, raw address-ID field, refresh lost the payment step.
+- Eight foreign-key columns without an index (`0034`).
+- Intermittent `test_budget_shortfall_handling` and `test_mission_recommendation_personalized_by_intent` failures caused by shared test-database state.
+- List to Basket offered search matches the database could not sell.
+- Admin suspension and RFQ-moderation reasons were discarded; now stored in the audit log.
+- Retailer RFQ bid could be submitted empty.
+
+### Known limitations
+See `DISCREPANCY_REGISTER.md` §MC (open items MC-01…MC-09).
+
+---
+
 ## [1.1.0-phase3] — 2026-11-20 — Phase 3 marketplace (local branch `feature/phase-3-advanced-marketplace`)
 
 ### Added

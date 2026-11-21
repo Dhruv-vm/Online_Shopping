@@ -10,6 +10,58 @@
 
 ---
 
+## Marketplace Completion — 2026-11-21 (local branch `feature/marketplace-completion`)
+
+Base `integration` @ `2610a1e` (Phase 3, PR #32). Commits are local only — not pushed, no PR, not merged, not deployed. Author `Dhruv-vm`, no co-author or session trailers.
+
+### Commits
+| Commit | Scope |
+| --- | --- |
+| `6100eaa` | Test-DB isolation; payment-gated fulfilment; analytics definitions; discount units |
+| `ac19553` | Migration `0031`; reversible data quarantine |
+| `df50a53` | 3B customer-started group buys; 3F comparison, alerts, insights, data quality |
+| `1bd46fa` | Migration `0032`; admin audit log, users, orders, system health, honest KPIs; OCR confidence |
+| `9d38dcd` | 3D rule-based deal assistant |
+| `8cf4ff9` | Demo marketplace seed; `*_demo`-only reset script |
+| `116a07c` | Backend support for 12 languages |
+| `da73b57` | Migration `0033`; GSTIN, verification documents, validated media uploads |
+| `769a8a5` | Frontend i18n (12 languages) |
+| `fbdacf6` | Common login, role-safe redirects, shopper-only checkout guard |
+| `8cabb39` | Brand palette, shell, shared components |
+| `ec48909` | Homepage and customer Phase 3 pages |
+| `c10b3f7` | Retailer onboarding, verified-only portal, price insights |
+| `64fe28c` | Admin governance console |
+| `23d23c5` | Demand empty states, OCR confidence UI, listing and catalogue image upload |
+| `b1a8995` | Server-side shopper-only basket and checkout |
+| `6a252e3` | E2E API journeys A–F |
+| `c34b39b` | Store links; language precedence |
+| `0e48dcf`, `ee9165b` | Screenshots |
+| `10a90c4` | Checkout copy, address picker, resumable payment step |
+| `ed02080` | `scripts/verify-migrations.sh`; migration `0034` (FK indexes) |
+| `f280d8e` | Flaky mission test made independent of shared state |
+| `ccc466d` | Intent-personalisation test made independent of shared state |
+| `d63ed26` | `scripts/audit-features.sh` |
+| `ea556d4` | List to Basket only offers matches the database can sell |
+| `6b8bc5a` | Admin audit log keeps the reason given |
+| `8de5111` | RFQ bid button disabled until an item is offered |
+| `2931e74` | E2E journey tests ruff-formatted |
+| *(docs)* | Documentation and configuration guide (this update) |
+
+### Migrations
+| Revision | Contents | Verified |
+| --- | --- | --- |
+| `0031_marketplace_completion` | `data_quarantine`; `price_history_ticks.source`; `price_alerts`; `group_buy_templates`; `group_buy_campaigns.template_id` | up / down / re-up ✅ |
+| `0032_admin_audit_log` | `admin_audit_logs` (3 indexes) | up / down / re-up ✅ |
+| `0033_retailer_onboarding_media` | `retailers.gstin`, `retailer_verification_documents.document_number`, `product_listings.image_url` | up / down / re-up ✅ |
+| `0034_foreign_key_indexes` | 8 FK indexes | up / down / re-up ✅ |
+
+Sequential rollback `0034 → 0030` and re-apply: schema identical (pg_dump diff). No NOT VALID constraints; every FK on the touched tables indexed; no model drift on these tables. Run: `scripts/verify-migrations.sh`.
+
+Database state: `basket_demo` at `0034`; **`basket_db` at `0033`** (not modified by the release audit; run `alembic upgrade head`); `basket_db` backup `backups/mc/basket_db_20261120_224926.dump`; quarantine batch `q-20261120171941` applied to `basket_db` (reversible with `--restore`).
+
+---
+
+
 ## P3. Phase 3 Milestone — Implemented & Verified (2026-11-20)
 
 | Feature | Status | Verification | Remaining |

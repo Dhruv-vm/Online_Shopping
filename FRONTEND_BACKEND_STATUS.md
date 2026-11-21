@@ -8,6 +8,38 @@
 
 ---
 
+## Marketplace Completion — page status (2026-11-21)
+
+Production build: 63 routes. All pages read live API data; nothing is simulated in the browser. Commerce rules are enforced on the server (retailer/admin sessions get `403 BUSINESS_ACCOUNT_CANNOT_SHOP` on basket and checkout mutations), with matching UI guards.
+
+### Translation coverage — measured
+Measured on 2026-11-21 by scanning each `page.tsx` / `layout.tsx` for labels passed through `t()` versus hard-coded visible text (JSX text, `placeholder`, `title`, `aria-label`, `label`). Shared components (header, footer, cards, portal kit) are translated and not counted. Overall: **501 translated vs 1,043 hard-coded strings in pages (≈32 %)**. The Hindi…Urdu dictionaries hold 290 of 633 keys (46 %); untranslated keys fall back to English.
+
+| Coverage | Pages |
+| --- | --- |
+| **90–100 %** (translated) | `/`, `/login`, `/register`, `/register/retailer`, `/assistant`, `/community-buying`, `/account/price-alerts`, `/account/requests`, `/policies/[slug]`; retailer layout, `/retailer`, `/retailer/onboarding`, `/retailer/price-insights`, `/retailer/community-buying`; admin layout, `/admin`, `/admin/users`, `/orders`, `/audit-logs`, `/settings`, `/rfqs`, `/group-buying`, `/auctions`, `/price-intelligence` |
+| **30–75 %** (partly) | `/sale-stream` 71 %, `/community-buying/[id]` 50 %, `/admin/demand` 43 %, `/list-to-basket` 33 % |
+| **0–10 %** (English only) | Customer: `/products`, `/products/[id]`, `/search`, `/categories`, `/retailers`, `/compare`, `/cart`, `/checkout` (5 %), `/orders`, `/orders/[id]`, `/orders/[id]/track`, `/account`, `/account/addresses`, `/account/intent`, `/missions`, `/missions/[id]`, `/exchange` (5 %), `/auctions` (10 %). Retailer: `/listings`, `/listings/new`, `/listings/[id]/passport`, `/inventory`, `/orders`, `/offers`, `/analytics`, `/profile`, `/settings`, `/demand-gaps`, `/exchange`, `/auctions`, `/negotiation`. Admin: `/catalogue`, `/deals`, `/retailers`, `/retailers/[id]`, `/passport` |
+
+So: the shell (header, navigation, footer), sign-in, the homepage and the new portal pages switch language; the core shopping and retailer operations pages are still English (DISCREPANCY_REGISTER MC-01).
+
+### What changed on this branch
+| Area | Routes |
+| --- | --- |
+| New customer pages | `/assistant`, `/account/price-alerts`, `/account/requests`, `/policies/[slug]` |
+| Rewritten customer pages | `/`, `/login`, `/register`, `/register/retailer`, `/community-buying`, `/community-buying/[id]`; `/cart`, `/checkout` (shopper guard; checkout copy, address picker, resumable payment step); `/list-to-basket` (OCR status and confidence) |
+| New retailer pages | `/retailer/onboarding`, `/retailer/price-insights` |
+| Rewritten retailer pages | layout, `/retailer`, `/retailer/community-buying`, `/retailer/analytics`; `/retailer/listings` gained photo upload |
+| New admin pages | `/admin/users`, `/orders`, `/audit-logs`, `/settings`, `/rfqs`, `/group-buying`, `/auctions`, `/price-intelligence` |
+| Rewritten admin pages | layout, `/admin`, `/admin/demand`; `/admin/catalogue` gained canonical image upload |
+
+### Known UI gaps
+- No public store page; store links open `/products?retailer_id=…` (MC-05).
+- Lint: one pre-existing `<img>` warning in `/retailer/listings/new`.
+
+---
+
+
 ## P3. Phase 3 Frontend Status & Redesign Readiness — 2026-11-20
 
 | Area | Status |

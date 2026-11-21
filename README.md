@@ -1,5 +1,35 @@
 # BASKET — Multi-Category Indian Retail Platform
 
+> **Latest work (local, unpublished):** branch `feature/marketplace-completion` — storefront, 12-language interface (partial coverage), retailer onboarding, admin governance and Phase 3 completion. Migration head `0034_foreign_key_indexes`.
+> Start with [`docs/MARKETPLACE_COMPLETION.md`](docs/MARKETPLACE_COMPLETION.md) (status, test results, limitations) and [`docs/EXTERNAL_CONFIGURATION.md`](docs/EXTERNAL_CONFIGURATION.md) (Razorpay, OCR, AI, storage). The version banner below describes the Phase 2D baseline.
+
+## Running the marketplace-completion build
+
+```bash
+# Backend (from backend/) — demo database; OPENSEARCH_URL="" because the shared index belongs to basket_db
+DATABASE_URL="$(grep -E '^DATABASE_URL=' .env | cut -d= -f2- | sed -E 's#/basket_db(\?|$)#/basket_demo\1#')" \
+  OPENSEARCH_URL="" \
+  .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# Frontend (from frontend/)
+npm run build && npx next start -p 3000      # or: npm run dev
+```
+
+Demo accounts (`basket_demo` only, password `Basket@123`): `customer@basket.demo`, `retailer1…4@basket.demo`, `admin@basket.demo`. One sign-in page for all roles; the backend role decides where you land.
+
+| Check | Command |
+| --- | --- |
+| Backend tests (isolated `*_test` DB) | `cd backend && unset DATABASE_URL && .venv/bin/python -m pytest -q -p no:cacheprovider` |
+| Feature-by-feature API audit | `scripts/audit-features.sh` |
+| Migration up/down verification | `scripts/verify-migrations.sh` |
+| Lint | `cd backend && .venv/bin/ruff check .` · `cd frontend && npm run lint` |
+| Frontend tests / types / build | `cd frontend && npm test && npm run type-check && npm run build` |
+| Reset demo data | `scripts/reset-demo-db.sh` |
+| Test-fixture quarantine | `cd backend && .venv/bin/python -m app.seeds.quarantine_test_data [--apply \| --list \| --restore BATCH]` |
+
+---
+
+
 > **Current Version:** `2.0.0` (Phase 2D Complete — Developer Handoff Baseline)  
 > **Target Base Branch:** `integration`  
 > **Active Feature Branch:** `feature/phase-2d-product-passport` (Commit: `026f801`, PR #31)  

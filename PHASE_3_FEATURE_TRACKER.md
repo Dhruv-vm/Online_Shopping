@@ -3,9 +3,28 @@
 > **Document Version:** 2.0.0  
 > **Source Specification:** `docs/product/ONLINE_SHOPPING_FEATURES.md`  
 > **Target Audience:** Engineering Leads, System Architects, Claude Development Team  
-> **Last Updated:** 2026-11-20  
+> **Last Updated:** 2026-11-21  
 
 ---
+
+## 0. Marketplace Completion status — 2026-11-21
+
+What the marketplace-completion branch added on top of the Phase 3 implementation, and what is still open. Evidence: `scripts/audit-features.sh` (API tests per feature), `backend/tests/test_mc_e2e_journeys.py`, and browser screenshots in `docs/screenshots/marketplace-completion/`.
+
+| Feature | Completion work | Status | Open items |
+| :--- | :--- | :---: | :--- |
+| 3A Demand Gap | Admin page: KPIs, explained empty trend, empty-state table | ✅ | — |
+| 3B Community Buying | Retailer-published terms (templates); customers start and join groups; real member initials only; stock-safe settlement; group-price checkout | ✅ | — |
+| 3C Community Exchange (RFQ) | Admin moderation (cancel) and RFQ list | ✅ | — |
+| 3D AI Negotiator / Deal Assistant | `POST /assistant/chat` rule-based assistant over live catalogue; transparent `mode=rule_based` | ✅ rule-based | No LLM integration (MC-07) |
+| 3E Dukaan vs Dukaan | Admin auctions view | ✅ | — |
+| 3F Price Intelligence | Cross-store comparison, price alerts (triggered on price change), retailer price insights, admin data-quality report; seeded history tagged `DEMO_SEED` and labelled in UI | ✅ | — |
+| 3G Sale Stream | Homepage section; no Rewind (unchanged) | ✅ | — |
+| 3H Bharat Multilingual | 12 languages incl. Malayalam, Punjabi, Odia, Urdu (RTL); cookie + localStorage + account persistence | ⚠ partial | Infrastructure complete; ≈32 % of visible page strings translated — core shopping and retailer operations pages still English (MC-01) |
+| 3I List to Basket (OCR) | Provider-reported confidence (overall and per line), "please check" flags, labelled manual entry when no provider | ✅ manual / ⚠ OCR | OCR needs a configured provider; adapter unverified live (MC-08) |
+
+---
+
 
 ## 1. Executive Summary
 
