@@ -1,166 +1,105 @@
 "use client";
 
-import React from "react";
+import { useEffect } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  ShieldAlert,
-  BarChart3,
-  Store,
-  LayoutGrid,
-  Tag,
-  ChevronRight,
+  Activity,
   ArrowLeft,
-  ExternalLink,
+  BarChart3,
+  FileClock,
+  FileSearch,
+  Gavel,
+  IndianRupee,
+  LayoutGrid,
+  Package,
+  ShieldAlert,
+  ShieldCheck,
+  Store,
+  Tag,
+  TrendingUp,
+  Users,
+  UsersRound,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { BasketLoader } from "@/components/brand/basket-loader";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useI18n } from "@/lib/i18n/i18n-context";
 
-export default function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+const NAV = [
+  { href: "/admin", key: "admin.nav.overview", icon: BarChart3 },
+  { href: "/admin/retailers", key: "admin.nav.retailers", icon: Store },
+  { href: "/admin/catalogue", key: "admin.nav.catalogue", icon: LayoutGrid },
+  { href: "/admin/deals", key: "admin.nav.deals", icon: Tag },
+  { href: "/admin/demand", key: "admin.nav.demand", icon: FileSearch },
+  { href: "/admin/rfqs", key: "admin.nav.rfqs", icon: IndianRupee },
+  { href: "/admin/group-buying", key: "admin.nav.groupBuying", icon: UsersRound },
+  { href: "/admin/auctions", key: "admin.nav.auctions", icon: Gavel },
+  { href: "/admin/price-intelligence", key: "admin.nav.priceIntel", icon: TrendingUp },
+  { href: "/admin/users", key: "admin.nav.users", icon: Users },
+  { href: "/admin/orders", key: "admin.nav.orders", icon: Package },
+  { href: "/admin/audit-logs", key: "admin.nav.audit", icon: FileClock },
+  { href: "/admin/settings", key: "admin.nav.settings", icon: Activity },
+];
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "/admin";
   const { user, isAuthenticated, isLoading } = useAuth();
+  const { t } = useI18n();
 
-  if (isLoading) {
-    return (
-      <div className="container mx-auto px-4 py-16 text-center">
-        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-purple-600 border-r-transparent align-[-0.125em]" />
-        <p className="mt-4 text-sm text-muted-foreground">Authenticating administrator access...</p>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
+  }, [isLoading, isAuthenticated, pathname, router]);
 
-  // Not authenticated -> redirect to login
-  if (!isAuthenticated) {
-    router.push("/login?redirect=/admin");
-    return null;
-  }
-
-  // Authenticated but not an admin -> 403 Forbidden screen
+  if (isLoading) return <BasketLoader label={t("admin.loading")} className="min-h-[50vh]" />;
+  if (!isAuthenticated) return null;
   if (user?.role !== "admin") {
     return (
-      <div className="container mx-auto px-4 py-16 max-w-xl text-center">
-        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 text-red-600 dark:bg-red-950/50 mb-6">
+      <div className="container-page max-w-xl py-16 text-center">
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 text-red-700">
           <ShieldAlert className="h-8 w-8" />
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground mb-2">
-          403 — Administrator Access Restricted
-        </h1>
-        <p className="text-sm text-muted-foreground mb-6">
-          You are currently signed in as <strong className="text-foreground">{user?.email}</strong> with role{" "}
-          <Badge variant="outline" className="capitalize text-xs">{user?.role || "customer"}</Badge>.
-          Platform administration features are strictly restricted to authorized platform operators.
-        </p>
-        <div className="flex justify-center gap-3">
-          <Link href="/">
-            <Button variant="outline" className="gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              Return to Storefront
-            </Button>
-          </Link>
-          <Link href="/account">
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white">
-              My Customer Account
-            </Button>
-          </Link>
-        </div>
+        <h1 className="text-2xl font-bold">{t("admin.denied.title")}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t("admin.denied.body", { email: user?.email ?? "" })}</p>
+        <Link href="/" className="mt-6 inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold">
+          <ArrowLeft className="h-4 w-4" /> {t("common.backToStore")}
+        </Link>
       </div>
     );
   }
 
-  const navLinks = [
-    { href: "/admin", label: "Overview & KPIs", icon: BarChart3, exact: true },
-    { href: "/admin/retailers", label: "Retailers & Compliance", icon: Store },
-    { href: "/admin/catalogue", label: "Platform Catalogue", icon: LayoutGrid },
-    { href: "/admin/deals", label: "Deals & Promotions", icon: Tag },
-    { href: "/admin/demand", label: "Demand Intelligence", icon: BarChart3 },
-  ];
-
   return (
-    <div className="min-h-screen bg-muted/20">
-      {/* Top Banner */}
-      <div className="bg-purple-950 text-purple-100 border-b border-purple-900/60 px-4 py-2 text-xs flex items-center justify-between">
-        <div className="container mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-purple-400" />
-            <span className="font-semibold tracking-wide">BASKET PLATFORM ADMIN CONTROLLER</span>
-            <Badge className="bg-purple-800 text-[10px] px-1.5 py-0 text-purple-200 border-0">
-              Internal Clearance
-            </Badge>
-          </div>
-          <div className="flex items-center gap-4 text-purple-300">
-            <span>Operator: <strong>{user?.full_name}</strong></span>
-            <Link href="/" className="hover:text-white underline flex items-center gap-1">
-              Public Storefront <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
+    <div className="min-h-screen bg-surface">
+      <div className="bg-charcoal text-white">
+        <div className="container-page flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+          <span className="flex items-center gap-2 font-semibold tracking-wide">
+            <ShieldCheck className="h-4 w-4 text-brand-yellow" /> {t("admin.banner.title")}
+          </span>
+          <span className="flex items-center gap-4 text-white/75">
+            <span>{t("admin.banner.operator")}: <strong className="text-white">{user.full_name}</strong></span>
+            <Link href="/" className="underline">{t("common.backToStore")}</Link>
+          </span>
         </div>
       </div>
-
-      <div className="container mx-auto px-4 sm:px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-          {/* Admin Sidebar Navigation */}
-          <aside className="lg:col-span-1 space-y-2">
-            <div className="rounded-xl border bg-card p-4 shadow-xs">
-              <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 px-2">
-                Operations Desk
-              </div>
-              <nav className="space-y-1 text-sm font-medium">
-                {navLinks.map((item) => {
-                  const isActive = item.exact
-                    ? pathname === item.href
-                    : pathname.startsWith(item.href);
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                        isActive
-                          ? "bg-purple-50 text-purple-700 font-semibold dark:bg-purple-950/50 dark:text-purple-300"
-                          : "hover:bg-muted text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Icon className={`h-4 w-4 ${isActive ? "text-purple-600 dark:text-purple-400" : ""}`} />
-                        {item.label}
-                      </div>
-                      {isActive && <ChevronRight className="h-4 w-4 text-purple-400" />}
-                    </Link>
-                  );
-                })}
-              </nav>
-
-              <div className="pt-4 mt-4 border-t text-xs font-bold text-muted-foreground uppercase tracking-wider px-2">
-                Quick Navigation
-              </div>
-              <div className="space-y-1 mt-2 text-sm font-medium">
+      <div className="container-page grid gap-6 py-6 lg:grid-cols-[15rem_1fr]">
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <nav aria-label={t("admin.banner.title")} className="no-scrollbar flex gap-1 overflow-x-auto rounded-xl border bg-white p-2 lg:block lg:space-y-0.5 lg:p-3">
+            {NAV.map(({ href, key, icon: Icon }) => {
+              const active = href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+              return (
                 <Link
-                  href="/products"
-                  className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  key={href}
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-md px-2.5 py-2 text-sm ${active ? "bg-brand-light font-semibold text-brand-dark" : "text-charcoal/80 hover:bg-muted"}`}
                 >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Storefront Catalogue
+                  <Icon className="h-4 w-4" /> {t(key)}
                 </Link>
-                <Link
-                  href="/retailer"
-                  className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Retailer Portal View
-                </Link>
-              </div>
-            </div>
-          </aside>
-
-          {/* Admin Main Viewport */}
-          <main className="lg:col-span-4">{children}</main>
-        </div>
+              );
+            })}
+          </nav>
+        </aside>
+        <section className="min-w-0">{children}</section>
       </div>
     </div>
   );
