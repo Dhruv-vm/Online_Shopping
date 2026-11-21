@@ -21,14 +21,94 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
+import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
+from sqlalchemy import func, select
+
 from app.core.config import Settings, settings
-from app.core.search.index_health import register_outbox_publisher
+from app.core.logging import redact_secrets
+from app.core.search.index_health import (
+    register_outbox_publisher,
+    set_search_indexer_running,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def job_lock_key(name: str) -> int:
+    """Stable signed 64-bit advisory-lock key for a job name."""
+    digest = hashlib.sha256(f"basket-job:{name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def _log_job(record: dict) -> None:
+    line = "job_run " + json.dumps(record, sort_keys=True, default=str)
+    if record["status"] == "failed":
+        logger.warning(line)
+    else:
+        logger.info(line)
+
+
+async def run_job(
+    session_factory,
+    name: str,
+    body: Callable[[], Awaitable[object]],
+) -> dict:
+    """Run one background job at most once at a time across all API instances.
+
+    A dedicated "lock session" holds ``pg_try_advisory_xact_lock(<job key>)`` for
+    the whole run, so the guarantee covers jobs that open and commit their own
+    sessions. If another instance holds the lock, the run is skipped (the next
+    cycle picks the work up). Exactly one structured ``job_run`` log line is
+    written per run; a failure is logged and re-raised so callers keep their
+    error handling.
+    """
+    run_id = uuid.uuid4().hex[:12]
+    started = datetime.now(UTC)
+    t0 = time.monotonic()
+    record: dict = {
+        "job": name,
+        "run_id": run_id,
+        "started_at": started.isoformat(),
+        "status": "ok",
+        "rows": None,
+        "duration_ms": None,
+        "error": None,
+    }
+    async with session_factory() as lock_session:
+        got = (
+            await lock_session.execute(
+                select(func.pg_try_advisory_xact_lock(job_lock_key(name)))
+            )
+        ).scalar()
+        if not got:
+            record["status"] = "skipped"
+            record["error"] = "lock held by another worker"
+            record["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
+            await lock_session.rollback()
+            _log_job(record)
+            return record
+        try:
+            result = await body()
+            if isinstance(result, int) and not isinstance(result, bool):
+                record["rows"] = result
+        except Exception as exc:
+            record["status"] = "failed"
+            record["error"] = redact_secrets(f"{type(exc).__name__}: {exc}")[:500]
+            raise
+        finally:
+            record["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
+            with contextlib.suppress(Exception):
+                await lock_session.rollback()  # releases the advisory lock
+            _log_job(record)
+    return record
+
 
 # Last-run status per periodic job, exposed on the admin operational-health page.
 JOB_STATUS: dict[str, dict] = {}
@@ -74,11 +154,13 @@ async def reconcile_payments(session_factory) -> None:
         )
 
 
-async def escalate_payment_sla(session_factory) -> None:
+async def escalate_payment_sla(session_factory) -> int:
     from app.modules.payments.reconciliation import ReconciliationService
 
     async with session_factory() as session:
-        await ReconciliationService(session).execute_75m_sla_escalation_job(limit=50)
+        return await ReconciliationService(session).execute_75m_sla_escalation_job(
+            limit=50
+        )
 
 
 async def run_in_txn(session_factory, fn) -> object:
@@ -108,9 +190,13 @@ async def phase3_fast_jobs(session_factory) -> None:
         expire_sale_stream,
     ):
         try:
-            await run_in_txn(session_factory, job)
-        except Exception as exc:
-            logger.warning("Phase 3 job %s failed: %s", job.__name__, exc)
+            await run_job(
+                session_factory,
+                f"phase3.{job.__name__}",
+                lambda job=job: run_in_txn(session_factory, job),
+            )
+        except Exception:
+            pass  # already logged by run_job; the next job still runs
 
 
 async def phase3_slow_jobs(session_factory) -> None:
@@ -121,9 +207,13 @@ async def phase3_slow_jobs(session_factory) -> None:
 
     for job in (detect_hot_sellers, snapshot_all_active_listings, expire_idle_pools):
         try:
-            await run_in_txn(session_factory, job)
-        except Exception as exc:
-            logger.warning("Phase 3 job %s failed: %s", job.__name__, exc)
+            await run_job(
+                session_factory,
+                f"phase3.{job.__name__}",
+                lambda job=job: run_in_txn(session_factory, job),
+            )
+        except Exception:
+            pass  # already logged by run_job; the next job still runs
 
 
 class BackgroundWorkerSupervisor:
@@ -154,7 +244,8 @@ class BackgroundWorkerSupervisor:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning("Background job %s failed: %s", name, exc)
+                    # run_job already wrote the structured failure line.
+                    logger.debug("Background job %s failed: %s", name, exc)
                     JOB_STATUS[name] = {
                         "last_run_at": started.isoformat(),
                         "last_ok": False,
@@ -202,6 +293,84 @@ class BackgroundWorkerSupervisor:
                     await asyncio.wait_for(self._stopping.wait(), timeout=delay)
                 delay = min(delay * 2, KAFKA_RECONNECT_MAX_SECONDS)
 
+    async def _run_direct_dispatcher(self) -> None:
+        """OUTBOX_DISPATCH=direct: deliver outbox events to the in-process consumer
+        handlers through the normal publisher (claims, leases, retries)."""
+        from app.core.events.direct_dispatch import (
+            DirectDispatchProducer,
+            direct_consumer_kwargs,
+        )
+        from app.core.events.outbox_publisher import OutboxPublisherWorker
+        from app.modules.orders.consumer import OrderProjectionConsumer
+
+        cfg, sf = self._settings, self._session_factory
+        consumers = [
+            OrderProjectionConsumer(
+                session_factory=sf, config_settings=cfg, **direct_consumer_kwargs()
+            )
+        ]
+        search_consumer = None
+        if cfg.has_opensearch:
+            from app.core.search.consumer import OpenSearchConsumer
+
+            search_consumer = OpenSearchConsumer(
+                session_factory=sf, config_settings=cfg, **direct_consumer_kwargs()
+            )
+            consumers.append(search_consumer)
+        producer = DirectDispatchProducer(consumers)
+        worker = OutboxPublisherWorker(
+            session_factory=sf,
+            producer=producer,
+            config_settings=cfg,
+            batch_size=cfg.OUTBOX_BATCH_SIZE,
+            lease_seconds=cfg.OUTBOX_LEASE_SECONDS,
+            poll_interval_seconds=cfg.OUTBOX_POLL_INTERVAL_SECONDS,
+            max_retries=cfg.OUTBOX_MAX_RETRIES,
+        )
+        await worker.start()
+        self._outbox_worker = worker
+        register_outbox_publisher(worker)
+        logger.info(
+            "Outbox dispatcher running in DIRECT mode (topics: %s).",
+            ", ".join(producer.topics) or "none",
+        )
+        if search_consumer is not None:
+            await self._bootstrap_search_index(search_consumer)
+
+    async def _bootstrap_search_index(self, search_consumer) -> None:
+        """Build this database's index from PostgreSQL before search may trust it
+        (until then the Phase A health check keeps search on PostgreSQL)."""
+        from app.core.search.index import IndexManager, resolve_index_prefix
+
+        delay = KAFKA_RECONNECT_INITIAL_SECONDS
+        prefix = resolve_index_prefix(self._settings)
+        while not self._stopping.is_set():
+            try:
+                manager = IndexManager(search_consumer._search_client, prefix=prefix)
+                await manager.ensure_index_and_aliases()
+                async with self._session_factory() as session:
+                    count = await manager.reconcile_from_database(session)
+                set_search_indexer_running(True)
+                logger.info(
+                    "Search index '%s' rebuilt from PostgreSQL (%d products); "
+                    "direct indexing active.",
+                    manager.write_alias,
+                    count,
+                )
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Search index bootstrap failed (%s); search stays on PostgreSQL. "
+                    "Retrying in %.0fs.",
+                    redact_secrets(str(exc))[:300],
+                    delay,
+                )
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._stopping.wait(), timeout=delay)
+                delay = min(delay * 2, KAFKA_RECONNECT_MAX_SECONDS)
+
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> None:
         cfg = self._settings
@@ -213,17 +382,21 @@ class BackgroundWorkerSupervisor:
         self._periodic(
             "reservation-expiry",
             cfg.RESERVATION_CLEANUP_INTERVAL_SECONDS,
-            lambda: expire_stale_reservations(sf),
+            lambda: run_job(
+                sf, "reservation-expiry", lambda: expire_stale_reservations(sf)
+            ),
         )
         self._periodic(
             "payment-reconcile",
             cfg.PAYMENT_RECONCILE_INTERVAL_SECONDS,
-            lambda: reconcile_payments(sf),
+            lambda: run_job(sf, "payment-reconcile", lambda: reconcile_payments(sf)),
         )
         self._periodic(
             "payment-sla-escalation",
             cfg.PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS,
-            lambda: escalate_payment_sla(sf),
+            lambda: run_job(
+                sf, "payment-sla-escalation", lambda: escalate_payment_sla(sf)
+            ),
         )
         self._periodic(
             "phase3-fast",
@@ -235,7 +408,16 @@ class BackgroundWorkerSupervisor:
             cfg.PHASE3_SLOW_JOB_INTERVAL_SECONDS,
             lambda: phase3_slow_jobs(sf),
         )
-        if cfg.has_kafka and cfg.OUTBOX_PUBLISHER_ENABLED:
+        if cfg.OUTBOX_DISPATCH == "direct" and cfg.OUTBOX_PUBLISHER_ENABLED:
+            if cfg.has_kafka:
+                logger.warning(
+                    "OUTBOX_DISPATCH=direct: KAFKA_BOOTSTRAP_SERVERS is ignored by "
+                    "this instance (no Kafka publishing or consuming)."
+                )
+            self._tasks.append(
+                asyncio.create_task(self._run_direct_dispatcher(), name="bg-outbox")
+            )
+        elif cfg.has_kafka and cfg.OUTBOX_PUBLISHER_ENABLED:
             self._tasks.append(
                 asyncio.create_task(self._run_outbox_publisher(), name="bg-outbox")
             )
@@ -256,6 +438,8 @@ class BackgroundWorkerSupervisor:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._tasks.clear()
+        if self._settings.OUTBOX_DISPATCH == "direct":
+            set_search_indexer_running(False)
         if self._outbox_worker is not None:
             register_outbox_publisher(None)
             with contextlib.suppress(Exception):

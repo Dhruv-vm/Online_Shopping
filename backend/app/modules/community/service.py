@@ -782,6 +782,8 @@ async def settle_expired_campaigns(session: AsyncSession, limit: int = 50) -> in
                     GroupBuyCampaign.expires_at <= datetime.now(UTC),
                 )
                 .limit(limit)
+                # Claim rows; ones being settled elsewhere wait for the next cycle.
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()

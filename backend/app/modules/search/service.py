@@ -21,7 +21,7 @@ from app.core.search.client import (
     get_opensearch_client,
 )
 from app.core.search.document import build_product_document
-from app.core.search.index import DEFAULT_SEARCH_ALIAS
+from app.core.search.index import get_search_alias_name, resolve_index_prefix
 from app.core.search.index_health import SearchEngineStatus, current_search_engine
 from app.modules.catalogue.models import (
     Category,
@@ -59,7 +59,7 @@ class SearchService:
         search_client: BaseSearchClient | None = None,
         circuit_breaker: SearchCircuitBreaker | None = None,
         config_settings: Settings | None = None,
-        search_alias: str = DEFAULT_SEARCH_ALIAS,
+        search_alias: str | None = None,
         index_health: Callable[[AsyncSession], Awaitable[SearchEngineStatus]]
         | None = None,
     ) -> None:
@@ -88,7 +88,10 @@ class SearchService:
             failure_threshold=self.settings.OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             recovery_seconds=self.settings.OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS,
         )
-        self.search_alias = search_alias
+        # Default: this database's search alias (Version 2.0 C2).
+        self.search_alias = search_alias or get_search_alias_name(
+            resolve_index_prefix(self.settings)
+        )
 
     async def search(
         self,

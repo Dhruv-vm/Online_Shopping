@@ -420,14 +420,19 @@ class MockOpenSearchClient(BaseSearchClient):
         self.simulated_exception: Exception | None = None
         self._closed = False
 
-        # Pre-wire default index and aliases so mock operates out of the box in test/CI
-        default_idx = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_v1"
-        self._indices[default_idx] = {}
-        self._documents[default_idx] = {}
-        search_alias = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_search"
-        write_alias = f"{self._settings.OPENSEARCH_INDEX_PREFIX}_products_write"
-        self._aliases[search_alias] = {default_idx}
-        self._aliases[write_alias] = {default_idx}
+        # Pre-wire default index and aliases so mock operates out of the box in
+        # test/CI: both the plain prefix and this database's prefix (C2).
+        from app.core.search.index import resolve_index_prefix
+
+        for prefix in {
+            self._settings.OPENSEARCH_INDEX_PREFIX,
+            resolve_index_prefix(self._settings),
+        }:
+            default_idx = f"{prefix}_products_v1"
+            self._indices[default_idx] = {}
+            self._documents[default_idx] = {}
+            self._aliases[f"{prefix}_products_search"] = {default_idx}
+            self._aliases[f"{prefix}_products_write"] = {default_idx}
 
     def _resolve_index_names(self, target: str) -> list[str]:
         if target in self._aliases:

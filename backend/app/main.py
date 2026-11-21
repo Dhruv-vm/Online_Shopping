@@ -61,7 +61,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     order_consumer = None
     opensearch_consumer = None
 
-    if settings.has_kafka:
+    # With OUTBOX_DISPATCH=direct the same handlers run in-process (background
+    # supervisor), so Kafka consumers are never started alongside (C2).
+    if settings.has_kafka and settings.OUTBOX_DISPATCH == "kafka":
         try:
             from app.core.database import get_session_factory
             from app.core.search.consumer import OpenSearchConsumer
@@ -212,7 +214,16 @@ def create_app() -> FastAPI:
         kafka_check: dict[str, object] = {"status": "unconfigured"}
         supervisor = getattr(request.app.state, "background_supervisor", None)
         worker = getattr(supervisor, "_outbox_worker", None) if supervisor else None
-        if settings.has_kafka:
+        if settings.OUTBOX_DISPATCH == "direct":
+            # Events are delivered in-process; Kafka is not used by this instance.
+            kafka_check = {
+                "status": "not_used",
+                "dispatch": "direct",
+                "dispatcher": "running"
+                if worker is not None and worker.is_running
+                else "stopped",
+            }
+        elif settings.has_kafka:
             kafka_check = {
                 "status": "connected"
                 if worker is not None and worker.producer.is_connected

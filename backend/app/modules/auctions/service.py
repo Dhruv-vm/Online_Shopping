@@ -129,7 +129,6 @@ class AuctionService:
             aggregate_id=a.id,
             payload={
                 "auction_id": a.id,
-                "pincode": pincode,
                 "items": len(snapshot),
                 "ends_at": a.ends_at.isoformat(),
             },
@@ -492,6 +491,8 @@ class AuctionService:
 
 
 async def close_ended_auctions(session: AsyncSession) -> int:
+    # Claim ended auctions with FOR UPDATE SKIP LOCKED: rows another worker (or a
+    # customer request) is closing right now are left for the next cycle.
     ids = (
         (
             await session.execute(
@@ -501,6 +502,7 @@ async def close_ended_auctions(session: AsyncSession) -> int:
                     BasketAuction.ends_at <= datetime.now(UTC),
                 )
                 .limit(200)
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()
@@ -511,14 +513,16 @@ async def close_ended_auctions(session: AsyncSession) -> int:
         a = await session.get(
             BasketAuction, aid, with_for_update=True, populate_existing=True
         )
-        if a is not None:
-            await svc._close_if_ended(a)
-            if a.status == AuctionStatus.COMPLETED.value:
-                notify_customer(
-                    session,
-                    customer_id=a.user_id,
-                    title="Your Dukaan vs Dukaan auction ended",
-                    message="Shops have bid on your basket. Choose the best offer.",
-                    event_type="AUCTION_COMPLETED",
-                )
+        if a is None or a.status != AuctionStatus.ACTIVE.value:
+            continue  # already closed elsewhere: do not notify twice
+        await svc._close_if_ended(a)
+        # Only this run's ACTIVE → COMPLETED transition notifies the customer.
+        if a.status == AuctionStatus.COMPLETED.value:
+            notify_customer(
+                session,
+                customer_id=a.user_id,
+                title="Your Dukaan vs Dukaan auction ended",
+                message="Shops have bid on your basket. Choose the best offer.",
+                event_type="AUCTION_COMPLETED",
+            )
     return len(ids)

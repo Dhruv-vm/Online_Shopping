@@ -19,6 +19,7 @@ from app.core.search.client import (
     get_opensearch_client,
 )
 from app.core.search.document import build_product_document
+from app.core.search.index import get_write_alias_name, resolve_index_prefix
 from app.core.search.versioning import snapshot_version
 from app.modules.catalogue.models import (
     Product,
@@ -56,7 +57,7 @@ class OpenSearchConsumer(BaseKafkaConsumer):
         config_settings: Settings | None = None,
         consumer_group: str = DEFAULT_OPENSEARCH_CONSUMER_GROUP,
         topics: list[str] | None = None,
-        index_alias: str = DEFAULT_OPENSEARCH_WRITE_ALIAS,
+        index_alias: str | None = None,
         consumer_impl: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -74,7 +75,10 @@ class OpenSearchConsumer(BaseKafkaConsumer):
         )
 
         self._search_client = search_client or get_opensearch_client(cfg)
-        self._index_alias = index_alias
+        # Default: this database's write alias, never a shared one (C2).
+        self._index_alias = index_alias or get_write_alias_name(
+            resolve_index_prefix(cfg)
+        )
 
     async def handle_event(
         self, envelope: EventEnvelope, session: AsyncSession

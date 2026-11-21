@@ -49,6 +49,16 @@ def register_outbox_publisher(worker: Any | None) -> None:
     reset_search_engine_cache()
 
 
+def outbox_dispatch_status(config: Settings | None = None) -> dict[str, Any]:
+    """Dispatch mode and whether this process's outbox dispatcher is delivering."""
+    cfg = config or settings
+    return {
+        "mode": cfg.OUTBOX_DISPATCH,
+        "dispatcher_running": _publisher_connected(),
+        "search_indexer_running": bool(_SYNC_STATE.get("indexer_running")),
+    }
+
+
 def set_search_indexer_running(running: bool) -> None:
     """Record whether the OpenSearch indexing consumer runs in this process."""
     _SYNC_STATE["indexer_running"] = bool(running)
@@ -95,13 +105,20 @@ async def evaluate_search_engine(
         return SearchEngineStatus(
             "postgres", "OPENSEARCH_NOT_CONFIGURED", "Search uses PostgreSQL"
         )
-    if not cfg.has_kafka:
+    direct = getattr(cfg, "OUTBOX_DISPATCH", "kafka") == "direct"
+    if not direct and not cfg.has_kafka:
         return SearchEngineStatus(
             "postgres_fallback",
             "KAFKA_NOT_CONFIGURED",
             "Index cannot be kept in sync without Kafka; search uses PostgreSQL",
         )
     if not _publisher_connected():
+        if direct:
+            return SearchEngineStatus(
+                "postgres_fallback",
+                "OUTBOX_DISPATCHER_NOT_RUNNING",
+                "Direct outbox dispatcher is not running; search uses PostgreSQL",
+            )
         return SearchEngineStatus(
             "postgres_fallback",
             "OUTBOX_PUBLISHER_NOT_CONNECTED",
@@ -111,7 +128,8 @@ async def evaluate_search_engine(
         return SearchEngineStatus(
             "postgres_fallback",
             "SEARCH_INDEXER_NOT_RUNNING",
-            "OpenSearch indexing consumer is not running; search uses PostgreSQL",
+            "OpenSearch indexer is not running (or this database's index is not "
+            "built yet); search uses PostgreSQL",
         )
     if session is not None:
         try:

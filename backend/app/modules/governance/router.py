@@ -320,6 +320,8 @@ class SystemHealth(BaseModel):
     checked_at: datetime.datetime
     # Active search engine and the reason for any fallback (Version 2.0 A3).
     search_engine: dict = Field(default_factory=dict)
+    # Outbox dispatch mode and dispatcher state (Version 2.0 C2).
+    outbox_dispatch: dict = Field(default_factory=dict)
 
 
 @router.get("/system/health", response_model=SystemHealth)
@@ -353,7 +355,15 @@ async def system_health(db: Annotated[AsyncSession, Depends(get_db)]) -> SystemH
     oldest_s = int((now - oldest).total_seconds()) if oldest else None
 
     kafka = (settings.KAFKA_BOOTSTRAP_SERVERS or "").strip()
-    if not kafka:
+    if settings.OUTBOX_DISPATCH == "direct":
+        comps.append(
+            ComponentHealth(
+                name="Kafka",
+                status="degraded" if (oldest_s or 0) > 300 else "not_configured",
+                detail=f"Not used: events delivered in-process; {pending} awaiting delivery",
+            )
+        )
+    elif not kafka:
         comps.append(
             ComponentHealth(
                 name="Kafka",
@@ -369,7 +379,10 @@ async def system_health(db: Annotated[AsyncSession, Depends(get_db)]) -> SystemH
                 detail=f"{pending} event(s) awaiting publish",
             )
         )
-    from app.core.search.index_health import evaluate_search_engine
+    from app.core.search.index_health import (
+        evaluate_search_engine,
+        outbox_dispatch_status,
+    )
 
     search_status = await evaluate_search_engine(db)
     if search_status.engine == "postgres":
@@ -416,4 +429,5 @@ async def system_health(db: Annotated[AsyncSession, Depends(get_db)]) -> SystemH
         quarantined_test_records=int(quarantined),
         checked_at=now,
         search_engine=search_status.as_dict(),
+        outbox_dispatch=outbox_dispatch_status(),
     )
