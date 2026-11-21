@@ -67,8 +67,44 @@ from app.main import create_app
 _catalogue_seeded = False
 
 
+_PROTECTED_DATABASES = {"basket_db", "basket_shared_demo", "postgres"}
+_run_lock = None  # held for the whole session (see _acquire_run_lock)
+
+
+def _acquire_run_lock(db_name: str) -> None:
+    """Refuse to start while another pytest session uses the same test database.
+
+    Two overlapping runs share one database and break each other's fixtures
+    (seen in Phase C as spurious price-sync and reservation failures).
+    """
+    global _run_lock
+    import fcntl
+    import tempfile
+
+    path = Path(tempfile.gettempdir()) / f"basket-pytest-{db_name}.lock"
+    fh = open(path, "w")  # noqa: SIM115 - kept open for the session
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.close()
+        raise SystemExit(
+            f"Another test run is using {db_name}. Wait for it to finish "
+            "(overlapping runs on one test database give false failures)."
+        ) from None
+    fh.write(str(os.getpid()))
+    fh.flush()
+    _run_lock = fh
+
+
 def _prepare_test_database() -> None:
-    """Create the isolated test database if missing and migrate it to head."""
+    """Version 2.0 D3: every session starts from a clean, migrated, seeded test DB.
+
+    * Drops and recreates the dedicated ``*_test`` database (never basket_db or
+      the shared demo database), migrates it to head and seeds the baseline
+      catalogue once, so results do not depend on earlier runs or test order.
+    * ``BASKET_TEST_SKIP_MIGRATE=1`` keeps the existing test database as it is
+      (quick local iteration); the full gate never sets it.
+    """
     import asyncio
 
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -79,30 +115,50 @@ def _prepare_test_database() -> None:
     parts = _urlsplit(url)
     db_name = parts.path.lstrip("/")
     assert "test" in db_name.lower(), f"refusing to use non-test database {db_name}"
+    assert db_name not in _PROTECTED_DATABASES, f"refusing to use {db_name}"
+    _acquire_run_lock(db_name)
+    reuse = os.environ.get("BASKET_TEST_SKIP_MIGRATE") == "1"
     admin_url = _urlunsplit(parts._replace(path="/postgres"))
 
-    async def _ensure() -> None:
+    async def _recreate() -> None:
         engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
         try:
             async with engine.connect() as conn:
                 exists = await conn.scalar(
                     text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": db_name}
                 )
+                if exists and not reuse:
+                    await conn.execute(text(f'DROP DATABASE "{db_name}" WITH (FORCE)'))
+                    exists = None
                 if not exists:
                     await conn.execute(text(f'CREATE DATABASE "{db_name}"'))
         finally:
             await engine.dispose()
 
-    asyncio.run(_ensure())
-    if os.environ.get("BASKET_TEST_SKIP_MIGRATE") != "1":
-        from alembic.config import Config
+    asyncio.run(_recreate())
+    if reuse:
+        return
+    from alembic.config import Config
 
-        from alembic import command
+    from alembic import command
 
-        backend_dir = Path(__file__).resolve().parent.parent
-        cfg = Config(str(backend_dir / "alembic.ini"))
-        cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-        command.upgrade(cfg, "head")
+    backend_dir = Path(__file__).resolve().parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+
+    async def _seed() -> None:
+        from app.seeds.seed_catalogue import seed_database
+
+        try:
+            await seed_database()
+        finally:
+            engine = get_engine()
+            if engine is not None:
+                await engine.dispose()
+            reset_engine()
+
+    asyncio.run(_seed())
 
 
 def pytest_sessionstart(session):  # noqa: ARG001
