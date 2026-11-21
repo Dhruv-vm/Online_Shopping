@@ -152,8 +152,13 @@ class ApiClient {
     // "same-origin": call /api/v1 on the page's own host; the Next.js server
     // proxies it to the backend (shared two-laptop demo, one public URL).
     const configured = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "");
+    // Server-rendered pages have no page host, so they call the proxy target directly.
+    const serverTarget =
+      typeof window === "undefined"
+        ? process.env.BASKET_API_PROXY_TARGET?.replace(/\/+$/, "")
+        : undefined;
     this.baseUrl =
-      configured === "same-origin" ? "" : configured || "http://localhost:8000";
+      configured === "same-origin" ? serverTarget || "" : configured || "http://localhost:8000";
   }
 
   private async request<T>(
