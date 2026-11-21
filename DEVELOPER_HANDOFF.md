@@ -1,6 +1,6 @@
-# BASKET — Comprehensive Developer Handoff Guide for Claude
+# BASKET — Comprehensive Developer Handoff Guide
 
-> **Target Agent:** Claude (Principal Full-Stack Engineer & Architect)  
+> **Target Audience:** Engineering Leads, Full-Stack Developers & System Architects  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Workspace Path:** `/Users/dhruv/dhruv files/basket/Online_Shopping`  
 > **Current Feature Branch:** `feature/phase-3-advanced-marketplace` (local; Phase 3 on top of `audit/stabilisation-and-repair` @ `95a5de1`)  
@@ -109,9 +109,9 @@ Both backend and frontend test suites are fully automated, completely isolated, 
 
 ---
 
-## 3. What Claude Must Audit First & Critical Checklists
+## 3. What Developers Must Audit First & Critical Checklists
 
-Before writing new features, Claude should complete these three verification checks:
+Before writing new features, developers should complete these three verification checks:
 
 ### 3.1 PR #31 Merge Verification
 - **Branch:** `feature/phase-2d-product-passport` is up-to-date with remote (`026f801`).
@@ -163,7 +163,7 @@ flowchart TD
 
 ## 5. Frontend Redesign Specifications (Blinkit-Inspired Quick-Commerce UI)
 
-Following Phase 3 feature integration, Claude is tasked with executing a comprehensive UI refresh:
+Following Phase 3 feature integration, the development team is tasked with executing a comprehensive UI refresh:
 
 ### 5.1 Design Tokens & Palette
 - **Primary Yellow:** `#F8CB46` / `#FFDE59` (Hero sections, accent badges, delivery tags, quick CTAs).

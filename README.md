@@ -43,7 +43,8 @@ BASKET is an enterprise-grade, multi-category hyper-local e-commerce marketplace
 
 | Document | Description & Purpose |
 |---|---|
-| [`CLAUDE_DEVELOPER_HANDOFF.md`](CLAUDE_DEVELOPER_HANDOFF.md) | **Developer Handoff Guide:** Master takeover guide for Claude with Phase 3 roadmap and redesign specs. |
+| [`RELEASE_NOTES_V1.0.md`](RELEASE_NOTES_V1.0.md) | **Version 1.0 Release Notes:** Official Round 1 submission report, platform capabilities, test results, and documented limitations. |
+| [`DEVELOPER_HANDOFF.md`](DEVELOPER_HANDOFF.md) | **Developer Handoff Guide:** Master takeover guide with Phase 3 roadmap and redesign specs. |
 | [`PROJECT_ARCHITECTURE.md`](PROJECT_ARCHITECTURE.md) | **System Architecture:** Detailed system topology, security layers, HMAC quotes, outbox pattern, and data flows. |
 | [`BACKEND_AUDIT.md`](BACKEND_AUDIT.md) | **Backend Module Audit:** Audit of all 13 business modules, ORM models, transaction safety, and test coverage. |
 | [`API_INVENTORY.md`](API_INVENTORY.md) | **API Reference:** Comprehensive catalogue of all 145 FastAPI endpoints under `/api/v1`. |

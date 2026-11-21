@@ -2,7 +2,7 @@
 
 > **Document Version:** 2.0.0  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
-> **Target Audience:** Engineering Leads, System Auditors, Claude Development Team  
+> **Target Audience:** Engineering Leads, System Auditors, Development Team  
 > **Last Updated:** 2026-11-21  
 
 ---
@@ -142,7 +142,7 @@ This register tracks architectural discrepancies, contract gaps between frontend
 ### 3.1 DISC-01: Media & Asset Storage Architecture
 - **Current State:** The database stores `image_url` as `VARCHAR(1024)` in `products`, `product_variants`, and `document_url` in `retailer_documents`. The frontend and tests pass placeholder or external static URLs (e.g. Unsplash or Cloudinary URLs).
 - **Risk:** No validation that uploaded files are genuine images, no antivirus scanning, and retailers can submit broken external links.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   1. Add an S3-compatible client in `backend/app/core/storage.py` (supporting AWS S3, Cloudflare R2, or MinIO).
   2. Expose `POST /api/v1/media/presigned-url` granting time-limited presigned PUT URLs.
   3. Validate image dimensions, content type (`image/jpeg`, `image/png`, `image/webp`), and file size ($\le 5\text{ MB}$).
@@ -150,13 +150,13 @@ This register tracks architectural discrepancies, contract gaps between frontend
 ### 3.2 DISC-02: Razorpay Production Safeguards
 - **Current State:** `backend/app/modules/payments/service.py` provides fallback sandbox verification for automated testing.
 - **Risk:** Accidental deployment to production with mock payments enabled could allow orders to be marked paid without financial settlement.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   1. In `PaymentService.__init__()`, assert that if `settings.is_production` is `True`, `settings.RAZORPAY_KEY_ID` and `settings.RAZORPAY_KEY_SECRET` are non-empty and do not match test prefix `rzp_test_mock`.
   2. Mandate webhook signature verification in production, raising `PaymentVerificationError` if the signature is missing or invalid.
 
 ### 3.3 DISC-05: Kafka & Search Event Idempotency
 - **Current State:** `consumer_inbox` deduplicates duplicate message deliveries by storing `message_id`. However, if event updates for the same listing are processed concurrently across different worker threads, older data could overwrite newer data.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   - In `OpenSearchConsumer`, include `updated_at` or `entity_version` in the OpenSearch document.
   - Use OpenSearch's `version_type=external_gte` to prevent out-of-order overwrites.
 
@@ -175,4 +175,4 @@ To avoid regression or architectural confusion during handoff, the following 9 f
 8. **Bharat Multilingual (Regional Indian languages)**
 9. **Handwritten List to Basket (OCR / vision to cart - optional)**
 
-*None of the above features have database tables, API routes, or backend logic yet.* Claude will implement them starting in Phase 3.
+*None of the above features have database tables, API routes, or backend logic yet.* Planned for implementation starting in Phase 3.

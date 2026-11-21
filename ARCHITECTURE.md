@@ -394,7 +394,7 @@ Comprehensive audit reports and developer handoff specifications are maintained 
 - [DISCREPANCY_REGISTER.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/DISCREPANCY_REGISTER.md): Register of known discrepancies, edge cases, and technical debt.
 - [PHASE_3_FEATURE_TRACKER.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/PHASE_3_FEATURE_TRACKER.md): Approved Phase 3 feature specifications and implementation roadmap.
 - [FRONTEND_BACKEND_STATUS.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/FRONTEND_BACKEND_STATUS.md): Page-by-page audit of all 36 Next.js routes and integration status.
-- [CLAUDE_DEVELOPER_HANDOFF.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/CLAUDE_DEVELOPER_HANDOFF.md): Master developer handoff guide and execution checklist for Claude.
+- [DEVELOPER_HANDOFF.md](file:///Users/dhruv/dhruv%20files/basket/Online_Shopping/DEVELOPER_HANDOFF.md): Master developer handoff guide and execution checklist.
 
 
 

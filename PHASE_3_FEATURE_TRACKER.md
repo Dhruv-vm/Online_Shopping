@@ -2,7 +2,7 @@
 
 > **Document Version:** 2.0.0  
 > **Source Specification:** `docs/product/ONLINE_SHOPPING_FEATURES.md`  
-> **Target Audience:** Engineering Leads, System Architects, Claude Development Team  
+> **Target Audience:** Engineering Leads, System Architects, Development Team  
 > **Last Updated:** 2026-11-21  
 
 ---
@@ -46,7 +46,7 @@ This tracker documents the 9 approved **Phase 3 advanced marketplace capabilitie
 
 > [!IMPORTANT]
 > **Explicit Architectural Scope Boundary:**  
-> The specification previously mentioned "Sale Stream Rewind". This feature has been **permanently cancelled and removed** from the product requirements. Claude must NOT implement Sale Stream Rewind.
+> The specification previously mentioned "Sale Stream Rewind". This feature has been **permanently cancelled and removed** from the product requirements. Do NOT implement Sale Stream Rewind.
 
 ---
 
@@ -188,7 +188,7 @@ This tracker documents the 9 approved **Phase 3 advanced marketplace capabilitie
 
 ---
 
-## 3. Recommended Phased Implementation Sequence for Claude
+## 3. Recommended Phased Implementation Sequence
 
 ```mermaid
 flowchart TD
