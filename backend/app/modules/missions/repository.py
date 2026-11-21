@@ -224,7 +224,9 @@ class MissionRepository:
                     for c in candidates
                     if not (
                         c.variant.product.brand
-                        and any(ex in c.variant.product.brand.lower() for ex in excl_set)
+                        and any(
+                            ex in c.variant.product.brand.lower() for ex in excl_set
+                        )
                     )
                 ]
 

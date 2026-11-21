@@ -1,4 +1,5 @@
 import uuid
+
 import pytest
 from httpx import AsyncClient
 
@@ -73,7 +74,10 @@ async def test_regression_scenario_1_exact_screenshot_inputs(async_client: Async
     assert len(data["groups"]) > 0
     assert len(data["items"]) > 0
     assert data["is_over_budget"] is False
-    assert "Work-from-home productivity desk" in data["summary_explanation"] or "Planned" in data["summary_explanation"]
+    assert (
+        "Work-from-home productivity desk" in data["summary_explanation"]
+        or "Planned" in data["summary_explanation"]
+    )
 
 
 @pytest.mark.asyncio
@@ -99,7 +103,9 @@ async def test_regression_scenario_2_custom_budget_limits(async_client: AsyncCli
         "preferences": [],
         "excluded_brands": [],
     }
-    resp_tight = await async_client.post("/api/v1/missions", json=tight_payload, headers=headers)
+    resp_tight = await async_client.post(
+        "/api/v1/missions", json=tight_payload, headers=headers
+    )
     assert resp_tight.status_code == 201
     tight_data = resp_tight.json()
     assert tight_data["budget_paise"] == 10000
@@ -112,7 +118,9 @@ async def test_regression_scenario_2_custom_budget_limits(async_client: AsyncCli
         "preferences": ["premium"],
         "excluded_brands": [],
     }
-    resp_gen = await async_client.post("/api/v1/missions", json=generous_payload, headers=headers)
+    resp_gen = await async_client.post(
+        "/api/v1/missions", json=generous_payload, headers=headers
+    )
     assert resp_gen.status_code == 201
     gen_data = resp_gen.json()
     assert gen_data["is_over_budget"] is False
@@ -160,7 +168,9 @@ async def test_regression_scenario_4_missing_optional_fields(async_client: Async
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_5_large_and_small_household_counts(async_client: AsyncClient):
+async def test_regression_scenario_5_large_and_small_household_counts(
+    async_client: AsyncClient,
+):
     """Scenario 5: Large and small household counts correctly scaled."""
     user, token = await register_customer(async_client, "family_shopper")
     headers = {"Authorization": f"Bearer {token}"}
@@ -168,7 +178,11 @@ async def test_regression_scenario_5_large_and_small_household_counts(async_clie
     # Small household (1 person)
     resp1 = await async_client.post(
         "/api/v1/missions",
-        json={"title": "Household 1 Person", "budget_paise": 2000000, "people_count": 1},
+        json={
+            "title": "Household 1 Person",
+            "budget_paise": 2000000,
+            "people_count": 1,
+        },
         headers=headers,
     )
     assert resp1.status_code == 201
@@ -177,7 +191,11 @@ async def test_regression_scenario_5_large_and_small_household_counts(async_clie
     # Large household (5 people)
     resp5 = await async_client.post(
         "/api/v1/missions",
-        json={"title": "Household 5 People", "budget_paise": 2000000, "people_count": 5},
+        json={
+            "title": "Household 5 People",
+            "budget_paise": 2000000,
+            "people_count": 5,
+        },
         headers=headers,
     )
     assert resp5.status_code == 201
@@ -185,7 +203,9 @@ async def test_regression_scenario_5_large_and_small_household_counts(async_clie
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_6_sparse_category_fallback(async_client: AsyncClient):
+async def test_regression_scenario_6_sparse_category_fallback(
+    async_client: AsyncClient,
+):
     """Scenario 6: Categories with sparse products fall back gracefully without failure."""
     user, token = await register_customer(async_client, "sparse_shopper")
     headers = {"Authorization": f"Bearer {token}"}
@@ -210,7 +230,9 @@ async def test_regression_scenario_6_sparse_category_fallback(async_client: Asyn
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_7_deterministic_ai_fallback(async_client: AsyncClient):
+async def test_regression_scenario_7_deterministic_ai_fallback(
+    async_client: AsyncClient,
+):
     """Scenario 7: Generates valid plan deterministically even when external AI is unconfigured."""
     user, token = await register_customer(async_client, "no_ai_shopper")
     headers = {"Authorization": f"Bearer {token}"}
@@ -232,7 +254,9 @@ async def test_regression_scenario_7_deterministic_ai_fallback(async_client: Asy
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_8_unauthenticated_and_invalid_inputs(async_client: AsyncClient):
+async def test_regression_scenario_8_unauthenticated_and_invalid_inputs(
+    async_client: AsyncClient,
+):
     """Scenario 8: Unauthenticated requests and invalid inputs return clean HTTP 401 / 400 / 422."""
     # 1. Unauthenticated
     resp_unauth = await async_client.post(
@@ -264,7 +288,11 @@ async def test_regression_scenario_8_unauthenticated_and_invalid_inputs(async_cl
     fake_cat_id = str(uuid.uuid4())
     resp_fake_cat = await async_client.post(
         "/api/v1/missions",
-        json={"title": "Fake Category", "budget_paise": 100000, "category_id": fake_cat_id},
+        json={
+            "title": "Fake Category",
+            "budget_paise": 100000,
+            "category_id": fake_cat_id,
+        },
         headers=headers,
     )
     assert resp_fake_cat.status_code == 400
@@ -272,7 +300,9 @@ async def test_regression_scenario_8_unauthenticated_and_invalid_inputs(async_cl
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_9_empty_brand_or_filter_matches(async_client: AsyncClient):
+async def test_regression_scenario_9_empty_brand_or_filter_matches(
+    async_client: AsyncClient,
+):
     """Scenario 9: When brand exclusions filter out all candidates, returns clean mission without 500."""
     user, token = await register_customer(async_client, "all_excluded_shopper")
     headers = {"Authorization": f"Bearer {token}"}
@@ -281,7 +311,15 @@ async def test_regression_scenario_9_empty_brand_or_filter_matches(async_client:
     payload = {
         "title": "Excluding all possible brands",
         "budget_paise": 1000000,
-        "excluded_brands": ["Logitech", "Apple", "Dell", "BudgetBrand", "Partner", "Store", "Brand"],
+        "excluded_brands": [
+            "Logitech",
+            "Apple",
+            "Dell",
+            "BudgetBrand",
+            "Partner",
+            "Store",
+            "Brand",
+        ],
     }
     resp = await async_client.post("/api/v1/missions", json=payload, headers=headers)
     assert resp.status_code == 201
@@ -293,7 +331,9 @@ async def test_regression_scenario_9_empty_brand_or_filter_matches(async_client:
 
 
 @pytest.mark.asyncio
-async def test_regression_scenario_10_e2e_plan_generation_and_retrieval(async_client: AsyncClient):
+async def test_regression_scenario_10_e2e_plan_generation_and_retrieval(
+    async_client: AsyncClient,
+):
     """Scenario 10: End-to-end plan generation, item persistence, and detail retrieval."""
     user, token = await register_customer(async_client, "e2e_mission_shopper")
     headers = {"Authorization": f"Bearer {token}"}

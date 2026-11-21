@@ -309,9 +309,7 @@ class AuctionService:
                 self.session,
                 retailer_ids=[bid.retailer_id],
                 title="You won the auction (Demo Simulation)",
-                message=(
-                    f"The shopper in PIN {a.pincode} chose your simulated bid."
-                ),
+                message=(f"The shopper in PIN {a.pincode} chose your simulated bid."),
                 event_type="retailer.auction_won",
             )
             others = (

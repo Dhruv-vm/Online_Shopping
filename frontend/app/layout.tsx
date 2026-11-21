@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Montserrat } from "next/font/google";
 import { cookies } from "next/headers";
 import { Header } from "@/components/shared/header";
 import { Footer } from "@/components/shared/footer";
@@ -16,14 +15,6 @@ import { RouteLoader } from "@/components/loader/route-loader";
 import "@/components/loader/basket-loader.css";
 import "./globals.css";
 
-// Montserrat: the Hack UI loader's typeface and a close match to the logo wordmark.
-const sans = Montserrat({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  display: "swap",
-  variable: "--font-sans",
-});
-
 export const viewport: Viewport = { themeColor: "#080808" };
 
 export const metadata: Metadata = {
@@ -37,9 +28,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const lang = isLanguageCode(cookieLang) ? cookieLang : DEFAULT_LANGUAGE;
   const { dir } = languageMeta(lang);
   return (
-    <html lang={lang} dir={dir} className={sans.variable} suppressHydrationWarning>
+    <html lang={lang} dir={dir} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: LOADING_CLASS_SCRIPT }} />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="preload" as="image" href="/brand/basket-logo.webp" type="image/webp" />
         <link rel="preload" as="image" href="/brand/cart-body.webp" type="image/webp" />
         <link rel="preload" as="image" href="/brand/cart-wheels.webp" type="image/webp" />

@@ -63,9 +63,9 @@ async def test_dukaan_two_way_simulation_and_genuine_bids(async_client: AsyncCli
     assert active is not None and active["id"] == aid
 
     # 3. Retailer sees active auction
-    live_b = (
-        await async_client.get("/api/v1/retailer/auctions", headers=bh)
-    ).json()["items"]
+    live_b = (await async_client.get("/api/v1/retailer/auctions", headers=bh)).json()[
+        "items"
+    ]
     mine = next((x for x in live_b if x["id"] == aid), None)
     assert mine is not None, "Retailer B must see the active auction"
     assert mine["reference_total_paise"] == 100000
@@ -92,7 +92,10 @@ async def test_dukaan_two_way_simulation_and_genuine_bids(async_client: AsyncCli
     gen_resp = await async_client.post(
         f"/api/v1/retailer/auctions/{aid}/bid",
         headers=ch,
-        json={"bid_price_paise": sim_bid["bid_price_paise"] - 2000, "delivery_eta_minutes": 20},
+        json={
+            "bid_price_paise": sim_bid["bid_price_paise"] - 2000,
+            "delivery_eta_minutes": 20,
+        },
     )
     assert gen_resp.status_code == 201
     gen_bid = gen_resp.json()
@@ -119,4 +122,7 @@ async def test_dukaan_two_way_simulation_and_genuine_bids(async_client: AsyncCli
     acc_data = acc_sim.json()
     assert acc_data["auction"]["status"] == "AWARDED"
     assert acc_data["auction"]["winning_bid_id"] == sim_bid["id"]
-    assert "simulation" in acc_data["message"].lower() or "demo" in acc_data["message"].lower()
+    assert (
+        "simulation" in acc_data["message"].lower()
+        or "demo" in acc_data["message"].lower()
+    )

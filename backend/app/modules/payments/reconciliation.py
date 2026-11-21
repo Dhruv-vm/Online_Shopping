@@ -266,10 +266,8 @@ class ReconciliationService:
                             )
                             if locked_order:
                                 if locked_order.fulfilling_capture_id:
-                                    fulfilling_refunds_sum = (
-                                        await self.repo.get_processed_refunds_sum_for_capture(
-                                            locked_order.fulfilling_capture_id
-                                        )
+                                    fulfilling_refunds_sum = await self.repo.get_processed_refunds_sum_for_capture(
+                                        locked_order.fulfilling_capture_id
                                     )
                                     if (
                                         fulfilling_refunds_sum
@@ -287,10 +285,8 @@ class ReconciliationService:
                                             PaymentStatus.SUCCEEDED.value
                                         )
                                 else:
-                                    order_processed_sum = (
-                                        await self.repo.get_processed_refunds_sum_for_order(
-                                            refund.order_id
-                                        )
+                                    order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
+                                        refund.order_id
                                     )
                                     if (
                                         order_processed_sum
