@@ -58,9 +58,8 @@ export function CampaignBanner({
       <svg aria-hidden className="absolute inset-0 -z-10 h-full w-full" viewBox="0 0 1000 300" preserveAspectRatio="none">
         {wide ? (
           <>
-            <path d="M600 0 L1000 0 L1000 300 L470 300 C 560 220, 590 120, 600 0 Z" fill={c.band2} />
-            <path d="M700 0 L1000 0 L1000 300 L560 300 C 650 215, 690 110, 700 0 Z" fill={c.band} />
-            <path d="M905 0 L1000 0 L1000 300 L800 300 C 860 210, 895 110, 905 0 Z" fill={c.band2} opacity="0.92" />
+            <path d="M470 300 C 560 250, 540 130, 640 60 C 690 25, 720 10, 760 0 L1000 0 L1000 300 Z" fill={c.band2} />
+            <path d="M540 300 C 630 250, 610 140, 700 70 C 745 35, 780 14, 830 0 L1000 0 L1000 300 Z" fill={c.band} />
           </>
         ) : (
           <>

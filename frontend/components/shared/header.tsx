@@ -286,6 +286,7 @@ function useDismiss(open: boolean, close: () => void) {
 
 function CategoriesMenu({ active }: { active: boolean }) {
   const { t } = useI18n();
+  const { compareCount } = useCompare();
   const [open, setOpen] = useState(false);
   const [cats, setCats] = useState<Category[] | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -306,7 +307,8 @@ function CategoriesMenu({ active }: { active: boolean }) {
         <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-base ease-out ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute left-1/2 top-full z-50 mt-4 w-[34rem] -translate-x-1/2 origin-top animate-scale-in rounded-2xl border bg-white p-3 text-ink shadow-card-hover">
+        <div className="absolute left-0 top-full z-50 mt-4 grid w-[46rem] origin-top-left animate-scale-in grid-cols-[1.5fr_1fr] gap-3 rounded-2xl border bg-white p-3 text-ink shadow-card-hover xl:-left-6">
+          <div>
           <div className="grid grid-cols-2 gap-1">
             {(cats ?? []).map((c) => (
               <Link key={c.id} href={`/products?category_slug=${c.slug}`} onClick={close} className="group/c flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors duration-base hover:bg-brand-light">
@@ -319,37 +321,16 @@ function CategoriesMenu({ active }: { active: boolean }) {
           <Link href="/categories" onClick={close} className="mt-2 flex items-center justify-center gap-1.5 rounded-xl bg-ink px-3 py-2.5 text-sm font-semibold text-white">
             {t("header.allCategories")} <ArrowRight className="h-4 w-4" />
           </Link>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MoreMenu() {
-  const { t } = useI18n();
-  const { compareCount } = useCompare();
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
-  const ref = useDismiss(open, close);
-  return (
-    <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="true" className="nav-link flex items-center gap-1">
-        {t("nav.more")}
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-base ease-out ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
-        <div className="absolute left-1/2 top-full z-50 mt-4 grid w-80 -translate-x-1/2 origin-top animate-scale-in gap-0.5 rounded-2xl border bg-white p-2 text-ink shadow-card-hover">
-          {MORE.map((m) => (
-            <Link key={m.href} href={m.href} onClick={close} className="rounded-xl px-3 py-2 transition-colors duration-base hover:bg-brand-light">
-              <span className="flex items-center gap-2 text-sm font-semibold">
+          </div>
+          <div className="rounded-xl bg-surface p-2">
+            <p className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("nav.more")}</p>
+            {MORE.map((m) => (
+              <Link key={m.href} href={m.href} onClick={close} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-semibold transition-colors duration-base hover:bg-white">
                 {t(m.key)}
                 {m.href === "/compare" && compareCount > 0 && <span className="rounded-full bg-ink px-1.5 text-[10px] text-white">{compareCount}</span>}
-              </span>
-              {m.key !== "nav.catalogue" && m.key !== "nav.retailers" && m.key !== "nav.compare" && (
-                <span className="block text-xs text-muted-foreground">{t(`${m.key}.hint`)}</span>
-              )}
-            </Link>
-          ))}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -547,12 +528,12 @@ export function Header() {
         onChange={(e) => setQ(e.target.value)}
         placeholder={t("common.searchPlaceholder")}
         aria-keyshortcuts={kbd ? "Meta+K Control+K" : undefined}
-        className={`h-11 w-full truncate rounded-full border border-white/10 bg-white/[0.09] pl-11 text-[13px] text-white placeholder:text-white/55 transition-[background-color,border-color,box-shadow] duration-base ease-out focus:border-brand-yellow/70 focus:bg-white/[0.13] focus:outline-none focus:ring-2 focus:ring-brand-yellow/25 [&::-webkit-search-cancel-button]:hidden ${kbd ? "pr-16" : "pr-4"}`}
+        className={`h-11 w-full truncate rounded-full border border-white/10 bg-white/[0.09] pl-11 text-[13px] text-white placeholder:text-white/55 transition-[background-color,border-color,box-shadow] duration-base ease-out focus:border-brand-yellow/70 focus:bg-white/[0.13] focus:outline-none focus:ring-2 focus:ring-brand-yellow/25 [&::-webkit-search-cancel-button]:hidden ${kbd ? "pr-4 xl:pr-16" : "pr-4"}`}
       />
       {kbd && (
         <kbd
           title={t("header.searchShortcut", { key: shortcut })}
-          className="pointer-events-none absolute right-2 top-1/2 flex h-7 -translate-y-1/2 items-center rounded-lg bg-white/[0.12] px-2 font-sans text-[11px] font-semibold text-white/80 ring-1 ring-white/10 transition-opacity duration-base group-focus-within/s:opacity-0"
+          className="pointer-events-none absolute right-2 top-1/2 hidden h-7 xl:flex -translate-y-1/2 items-center rounded-lg bg-white/[0.12] px-2 font-sans text-[11px] font-semibold text-white/80 ring-1 ring-white/10 transition-opacity duration-base group-focus-within/s:opacity-0"
         >
           {shortcut}
         </kbd>
@@ -575,29 +556,29 @@ export function Header() {
           </button>
           <BasketLogo height={30} priority />
 
-          <nav className="ml-4 hidden items-center gap-1 lg:flex xl:ml-10" aria-label={t("nav.primary")}>
+          <nav className="ml-3 hidden items-center lg:flex xl:ml-10 xl:gap-1 max-xl:[&_.nav-link]:px-2" aria-label={t("nav.primary")}>
+            <Link href="/" className={`nav-link ${isActive(NAV[0]) ? "is-active" : ""}`} aria-current={isActive(NAV[0]) ? "page" : undefined}>{t("nav.home")}</Link>
             <CategoriesMenu active={categoriesActive} />
             {NAV.slice(1).map((n) => (
               <Link key={n.href} href={n.href} className={`nav-link ${isActive(n) ? "is-active" : ""}`} aria-current={isActive(n) ? "page" : undefined}>
                 {t(n.key)}
               </Link>
             ))}
-            <MoreMenu />
           </nav>
 
-          {search("hdr-search", "ml-auto hidden w-full min-w-0 max-w-[15rem] md:block lg:ml-6 xl:max-w-[21rem] 2xl:max-w-[24rem]", true)}
+          {search("hdr-search", "ml-auto hidden w-full min-w-0 max-w-[15rem] md:block lg:ml-3 xl:ml-6 xl:max-w-[21rem] 2xl:max-w-[24rem]", true)}
 
           <div className="ml-auto flex items-center gap-1 md:ml-4">
             {shopper && <WishlistButton />}
             {shopper && <CartButton />}
             {isAuthenticated && <Notifications dark />}
             {role === "retailer" && (
-              <Link href="/retailer" className="press mx-1 hidden h-9 items-center gap-1.5 rounded-full bg-brand-yellow px-3 text-xs font-semibold text-ink xl:flex">
+              <Link href="/retailer" className="press mx-1 hidden h-9 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-yellow px-3 text-xs font-semibold text-ink xl:flex">
                 <LayoutDashboard className="h-4 w-4" /> {t("nav.retailerPortal")}
               </Link>
             )}
             {role === "admin" && (
-              <Link href="/admin" className="press mx-1 hidden h-9 items-center gap-1.5 rounded-full bg-brand-yellow px-3 text-xs font-semibold text-ink xl:flex">
+              <Link href="/admin" className="press mx-1 hidden h-9 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-yellow px-3 text-xs font-semibold text-ink xl:flex">
                 <ShieldCheck className="h-4 w-4" /> {t("nav.adminPanel")}
               </Link>
             )}

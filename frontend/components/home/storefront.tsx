@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Leaf, Package, ShieldCheck, Star, Tag, Truck } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, Headset, RotateCcw, ShieldCheck, Truck } from "lucide-react";
 import { ProductCard } from "@/components/catalogue/product-card";
 import { ProductImage } from "@/components/catalogue/product-image";
 import { Reveal } from "@/components/motion/reveal";
@@ -100,20 +100,27 @@ export function SectionHead({
 
 /* ------------------------------------------------------------------ hero */
 
-function Laurel({ flip = false }: { flip?: boolean }) {
-  return (
-    <svg viewBox="0 0 20 40" aria-hidden className={`h-9 w-[18px] text-brand-yellow ${flip ? "-scale-x-100" : ""}`} fill="currentColor">
-      <path d="M15 38c-6-4-9-11-8-19 .2-2 .6-4 1.3-6l1.2.4c-.6 1.9-1 3.8-1.2 5.7-.9 7.4 1.9 13.9 7.4 17.7z" />
-      <ellipse cx="6.2" cy="30" rx="2.2" ry="4.2" transform="rotate(-40 6.2 30)" />
-      <ellipse cx="4.2" cy="22.5" rx="2" ry="4" transform="rotate(-15 4.2 22.5)" />
-      <ellipse cx="4.6" cy="15" rx="1.9" ry="3.8" transform="rotate(10 4.6 15)" />
-      <ellipse cx="7.2" cy="8.2" rx="1.7" ry="3.4" transform="rotate(30 7.2 8.2)" />
-      <ellipse cx="11.8" cy="33.5" rx="2" ry="3.6" transform="rotate(-80 11.8 33.5)" />
-    </svg>
-  );
+/** Hero composition slots. A slot is shown only when the catalogue has a matching product. */
+const HERO_SLOTS = {
+  headphones: /headphone|airpods|earbud|earphone|neckband/i,
+  phone: /\biphone|galaxy s|smartphone|pixel \d|oneplus|\bphone\b/i,
+  sneakers: /sneaker|running shoe|\bshoes?\b|trainer/i,
+  perfume: /perfume|fragrance|eau de|parfum|cologne|attar/i,
+  watch: /smartwatch|\bwatch\b|fitness band/i,
+} as const;
+type HeroSlot = keyof typeof HERO_SLOTS;
+
+function heroCandidates(products: ProductSummary[]) {
+  const out = {} as Record<HeroSlot, ProductSummary[]>;
+  const used = new Set<string>();
+  (Object.keys(HERO_SLOTS) as HeroSlot[]).forEach((slot) => {
+    out[slot] = products.filter((p) => p.primary_image && !used.has(p.id) && HERO_SLOTS[slot].test(p.name));
+    out[slot].forEach((p) => used.add(p.id));
+  });
+  return out;
 }
 
-function LeafSpray({ className = "" }: { className?: string }) {
+function LeafCluster({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 160 220" aria-hidden className={className}>
       <path d="M120 220 C 112 160, 96 110, 60 60" stroke="#2F7A3B" strokeWidth="3" fill="none" />
@@ -126,18 +133,53 @@ function LeafSpray({ className = "" }: { className?: string }) {
   );
 }
 
-function Arch({ p, className, delay, rounded = "arch", eager = false }: { p?: ProductSummary; className: string; delay: number; rounded?: "arch" | "circle"; eager?: boolean }) {
-  const shape = rounded === "circle" ? "rounded-full" : "rounded-t-[999px] rounded-b-[1.4rem]";
+/** Potted plant at the right of the composition (as in the reference). */
+function PottedPlant({ className = "" }: { className?: string }) {
   return (
-    <Reveal delay={delay} className={`absolute ${className}`}>
-      {p ? (
-        <Link href={`/products/${p.slug}`} aria-label={p.name} className={`group block h-full w-full overflow-hidden bg-white shadow-card-hover ring-[5px] ring-white ${shape}`}>
-          <ProductImage src={p.primary_image} alt={p.name} eager={eager} sizes="(min-width: 1024px) 16vw, 30vw" className="transition-transform duration-slow ease-out group-hover:scale-[1.07]" />
-        </Link>
-      ) : (
-        <span className={`block h-full w-full animate-pulse bg-cream ring-[5px] ring-white ${shape}`} />
-      )}
-    </Reveal>
+    <svg viewBox="0 0 200 300" aria-hidden className={className}>
+      <path d="M100 190 C 96 140, 80 96, 40 60" stroke="#2F7A3B" strokeWidth="4" fill="none" />
+      <path d="M100 190 C 104 130, 128 84, 170 54" stroke="#2F7A3B" strokeWidth="4" fill="none" />
+      <path d="M40 60 C 10 50, -2 20, 8 0 C 40 10, 58 36, 40 60 Z" fill="#3E9443" />
+      <path d="M170 54 C 196 40, 204 12, 194 -4 C 164 8, 152 32, 170 54 Z" fill="#4FA84D" />
+      <path d="M70 120 C 34 124, 8 104, 0 78 C 34 74, 62 92, 70 120 Z" fill="#2F7A3B" />
+      <path d="M128 110 C 150 80, 180 72, 200 76 C 194 106, 164 120, 128 110 Z" fill="#3E9443" />
+      <path d="M96 150 C 70 140, 58 112, 62 92 C 88 100, 102 124, 96 150 Z" fill="#4FA84D" />
+      <path d="M108 160 C 130 146, 156 146, 172 156 C 156 176, 128 178, 108 160 Z" fill="#2F7A3B" />
+      <path d="M56 190 H144 L134 292 Q 100 302 66 292 Z" fill="#ECE8E1" />
+      <path d="M56 190 H144 L142 210 H58 Z" fill="#DDD8CF" />
+    </svg>
+  );
+}
+
+/** White cylindrical podium. */
+function Podium({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 400 110" preserveAspectRatio="none" aria-hidden className={className}>
+      <defs>
+        <linearGradient id="podium-side" x1="0" x2="1">
+          <stop offset="0" stopColor="#E6E1D8" />
+          <stop offset="0.45" stopColor="#FBFAF7" />
+          <stop offset="1" stopColor="#E2DDD4" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="200" cy="96" rx="196" ry="12" fill="rgba(8,8,8,0.10)" />
+      <path d="M2 34 V84 A198 22 0 0 0 398 84 V34 Z" fill="url(#podium-side)" />
+      <ellipse cx="200" cy="34" rx="198" ry="30" fill="#FFFFFF" />
+    </svg>
+  );
+}
+
+function HeroPiece({ p, className, shape, sizes, eager = false }: { p?: ProductSummary; className: string; shape: string; sizes: string; eager?: boolean }) {
+  if (!p) return null;
+  return (
+    <Link
+      key={p.id}
+      href={`/products/${p.slug}`}
+      aria-label={p.name}
+      className={`group absolute block animate-fade-in overflow-hidden bg-white shadow-[0_22px_40px_-22px_rgba(8,8,8,0.55)] ring-[5px] ring-white transition-transform duration-slow ease-out hover:-translate-y-1 ${shape} ${className}`}
+    >
+      <ProductImage src={p.primary_image} alt={p.name} eager={eager} sizes={sizes} className="transition-transform duration-slow ease-out group-hover:scale-[1.06]" />
+    </Link>
   );
 }
 
@@ -151,110 +193,107 @@ export function StorefrontHero({
   stats: { products: number; stores: number } | null;
 }) {
   const { t, number } = useI18n();
-  const [headphones, phone, shoes, beauty, gadget] = products
-    ? pickProducts(products, [/headphone|airpods|earbud|audio/i, /iphone|galaxy|smartphone|phone|mobile/i, /shoe|sneaker|boot|footwear/i, /cream|perfume|serum|beauty/i, /watch|macbook|laptop/i])
-    : [];
-  const rated = (retailers ?? []).filter((r) => r.rating > 0);
-  const avgRating = rated.length ? rated.reduce((s, r) => s + r.rating, 0) / rated.length : 0;
-  const faces = (retailers ?? []).filter((r) => r.logo_url).slice(0, 4);
+  const [look, setLook] = useState(0);
+  const cands = products ? heroCandidates(products) : null;
+  const looks = cands ? Math.max(1, ...Object.values(cands).map((c) => c.length)) : 1;
+  const at = (slot: HeroSlot) => {
+    const c = cands?.[slot] ?? [];
+    return c.length ? c[look % c.length] : undefined;
+  };
+  const faces = (retailers ?? []).filter((r) => r.logo_url).slice(0, 3);
+  const arrow =
+    "press flex h-9 w-9 items-center justify-center rounded-full bg-white/80 text-ink ring-1 ring-ink/25 hover:bg-white hover:ring-ink/50";
 
   return (
     <section className="relative overflow-hidden" aria-labelledby="hero-title">
-      <div className="container-page grid items-center gap-8 pb-8 pt-8 lg:grid-cols-[1fr_1.05fr] lg:gap-4 lg:pb-10 lg:pt-10">
-        <div className="relative z-10">
+      <div className="container-page grid items-center gap-6 pb-6 pt-6 lg:grid-cols-[46fr_54fr] lg:gap-2 lg:pb-8 lg:pt-4">
+        <div className="relative z-10 lg:py-10">
           <Reveal>
-            <p className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.2em] text-ink/80 sm:text-xs">
+            <p className="flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.14em] text-ink/80 sm:text-[13px]">
               {t("home.v2.eyebrow")}
               <span aria-hidden className="h-[3px] w-9 rounded-full bg-brand-yellow" />
             </p>
           </Reveal>
           <Reveal delay={80}>
-            <h1 id="hero-title" className="mt-4 text-[2.7rem] font-extrabold leading-[1.04] tracking-[-0.035em] text-ink sm:text-6xl xl:text-[4.4rem]">
+            <h1 id="hero-title" className="mt-4 text-[2.55rem] font-extrabold leading-[1.04] tracking-[-0.04em] text-ink min-[400px]:text-[2.8rem] sm:text-[4rem] lg:text-[3.65rem] xl:text-[4.15rem]">
               {t("home.v2.title1")}
               <br />
-              {t("home.v2.title2")}{" "}
-              <span className="relative inline-block whitespace-nowrap px-[0.18em]">
-                <span aria-hidden className="absolute inset-x-0 bottom-[0.04em] top-[0.14em] -z-10 -skew-x-6 rounded-[0.32em] bg-brand-yellow" />
-                {t("home.v2.title3")}
+              <span className="whitespace-nowrap">
+              <span className="relative -ml-[0.18em] inline-block px-[0.18em]">
+                <span aria-hidden className="absolute inset-x-0 bottom-[0.02em] top-[0.12em] -z-10 rounded-full bg-brand-yellow" />
+                {t("home.v2.title2")}
+              </span>{" "}
+              {t("home.v2.title3")}
               </span>
             </h1>
           </Reveal>
           <Reveal delay={160}>
-            <p className="mt-5 max-w-[26rem] text-[15px] leading-relaxed text-ink/75 sm:text-base">{t("home.v2.subtitle")}</p>
+            <p className="mt-5 max-w-[25rem] text-[15px] leading-relaxed text-ink/80 sm:text-[17px]">{t("home.v2.subtitle")}</p>
           </Reveal>
-          <Reveal delay={240} className="mt-7 flex items-center gap-3">
-            <Link href="/products" className="press group inline-flex h-12 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-brand-yellow pl-5 pr-4 sm:flex-none sm:pl-6 sm:pr-5 text-[15px] font-bold text-ink shadow-[0_8px_20px_-10px_rgba(232,184,0,0.9)] hover:bg-brand-yellow-dark">
+          <Reveal delay={240} className="mt-7">
+            <Link
+              href="/products?sort_by=newest"
+              className="press group inline-flex h-12 items-center gap-2.5 rounded-full bg-brand-yellow pl-6 pr-5 text-[15px] font-bold text-ink shadow-[0_10px_22px_-12px_rgba(232,184,0,0.95)] hover:bg-brand-yellow-dark"
+            >
               {t("home.v2.cta")}
-              <ArrowRight className="h-4 w-4 transition-transform duration-base ease-out group-hover:translate-x-1" />
-            </Link>
-            <Link href="/sale-stream" className="press inline-flex h-12 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-white px-5 sm:flex-none sm:px-6 text-[15px] font-bold text-ink ring-1 ring-ink/15 hover:ring-ink/40">
-              <Tag className="h-4 w-4" aria-hidden />
-              {t("home.v2.viewDeals")}
+              <ArrowRight className="h-[18px] w-[18px] transition-transform duration-base ease-out group-hover:translate-x-1 rtl:rotate-180" />
             </Link>
           </Reveal>
-          {(stats || avgRating > 0) && (
-            <Reveal delay={320}>
-              <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
-                {stats && (
-                  <Link href="/retailers" className="group flex items-center gap-3">
+          <Reveal delay={320}>
+            <ul className="mt-8 flex flex-wrap items-center gap-x-3.5 gap-y-3 text-[12px] font-semibold text-ink">
+              {stats && (
+                <li>
+                  <Link href="/retailers" className="group flex items-center gap-2.5">
                     {faces.length > 0 && (
-                      <span className="flex -space-x-2.5">
+                      <span className="flex -space-x-2">
                         {faces.map((r) => (
-                          <span key={r.id} className="relative block h-9 w-9 overflow-hidden rounded-full bg-cream ring-2 ring-surface">
-                            <ProductImage src={r.logo_url} alt={r.name} sizes="36px" />
+                          <span key={r.id} className="relative block h-7 w-7 overflow-hidden rounded-full bg-cream ring-2 ring-surface">
+                            <ProductImage src={r.logo_url} alt="" sizes="32px" />
                           </span>
                         ))}
                       </span>
                     )}
-                    <span className="text-[13px] font-bold text-ink group-hover:underline">{t("home.v2.trustStores", { n: number(stats.stores) })}</span>
+                    <span className="group-hover:underline">{t("home.v2.trustStores", { n: number(stats.stores) })}</span>
                   </Link>
-                )}
-                {stats && avgRating > 0 && <span aria-hidden className="hidden h-9 w-px bg-ink/15 sm:block" />}
-                {avgRating > 0 && (
-                  <span className="flex items-center gap-1">
-                    <Laurel />
-                    <span className="text-center leading-none">
-                      <span className="flex items-center justify-center gap-0.5 text-[15px] font-extrabold text-ink">
-                        {avgRating.toFixed(1)}
-                        <Star className="h-3.5 w-3.5 fill-ink" aria-hidden />
-                      </span>
-                      <span className="mt-1 block text-[10.5px] font-semibold text-ink/60">{t("home.v2.storeRating")}</span>
-                    </span>
-                    <Laurel flip />
-                  </span>
-                )}
-              </div>
-            </Reveal>
-          )}
-        </div>
-
-        {/* Editorial product composition: real catalogue products on a podium */}
-        <div className="relative mx-auto aspect-[1.18] w-full max-w-[24rem] sm:max-w-[34rem] lg:mr-[-2rem] lg:max-w-[40rem]">
-          <Reveal className="absolute inset-0" delay={40}>
-            <svg viewBox="0 0 600 510" aria-hidden className="h-full w-full">
-              <defs>
-                <radialGradient id="hero-glow" cx="55%" cy="45%" r="55%">
-                  <stop offset="0" stopColor="#FFF3C4" />
-                  <stop offset="1" stopColor="#FAF8F4" stopOpacity="0" />
-                </radialGradient>
-              </defs>
-              <ellipse cx="320" cy="250" rx="300" ry="240" fill="url(#hero-glow)" />
-              <path d="M10 470 C 120 300, 330 120, 590 70" stroke="#FDCD1E" strokeWidth="46" strokeLinecap="round" fill="none" />
-              <path d="M60 500 C 190 340, 380 170, 600 130" stroke="#FDE58A" strokeWidth="10" strokeLinecap="round" fill="none" opacity="0.8" />
-            </svg>
+                </li>
+              )}
+              {stats && <li aria-hidden className="hidden h-7 w-px bg-ink/15 sm:block" />}
+              <li className="flex items-center gap-2">
+                <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden /> {t("home.v2.trustPayments")}
+              </li>
+              <li aria-hidden className="hidden h-7 w-px bg-ink/15 sm:block" />
+              <li className="flex items-center gap-2">
+                <Truck className="h-[18px] w-[18px]" strokeWidth={1.8} aria-hidden /> {t("home.v2.trustTracking")}
+              </li>
+            </ul>
           </Reveal>
-          {/* Podium */}
-          <span aria-hidden className="absolute bottom-[3%] left-[34%] right-[-4%] h-[22%] rounded-t-2xl bg-gradient-to-b from-white to-[#F1EEE8] shadow-[0_24px_40px_-24px_rgba(8,8,8,0.35)]" />
-          <span aria-hidden className="absolute bottom-0 left-[8%] right-[30%] h-[13%] rounded-t-2xl bg-gradient-to-b from-white to-[#EFEBE4] shadow-[0_24px_40px_-24px_rgba(8,8,8,0.35)]" />
-
-          <Arch p={headphones} className="bottom-[12%] left-[6%] h-[50%] w-[30%] z-[2]" delay={120} eager />
-          <Arch p={phone} className="bottom-[24%] left-[37%] h-[64%] w-[27%] z-[1]" delay={200} eager />
-          <Arch p={shoes} className="bottom-[24%] right-[3%] h-[44%] w-[31%] z-[2]" delay={280} />
-          <Arch p={beauty} rounded="circle" className="left-[14%] top-[6%] aspect-square w-[19%] z-[2]" delay={360} />
-          <Arch p={gadget} rounded="circle" className="right-[8%] top-[2%] aspect-square w-[21%] z-[2]" delay={420} />
-
-          <LeafSpray className="pointer-events-none absolute -right-[9%] bottom-[30%] z-0 h-[50%] w-auto lg:-right-[7%]" />
         </div>
+
+        {/* Product composition: real catalogue products on a podium in front of a yellow disc */}
+        <Reveal delay={60} className="relative mx-auto aspect-[1.2] w-full max-w-[26rem] sm:max-w-[38rem] lg:mr-[-1rem] lg:max-w-none">
+          <span aria-hidden className="absolute right-[2%] top-[-3%] aspect-square w-[80%] rounded-full bg-brand-yellow" />
+          <span aria-hidden className="absolute right-[24%] top-[6%] aspect-square w-[44%] rounded-full bg-[#FFDA4D]" />
+          <LeafCluster className="absolute bottom-[22%] left-[-3%] h-[42%] w-auto -scale-x-100" />
+          <PottedPlant className="absolute bottom-[8%] right-[-6%] h-[70%] w-auto" />
+          <Podium className="absolute bottom-[1%] left-[4%] h-[22%] w-[84%]" />
+
+          <HeroPiece p={at("phone")} shape="rounded-[1.7rem]" className="bottom-[22%] left-[42%] z-[1] h-[66%] w-[22%]" sizes="(min-width: 1024px) 12vw, 22vw" eager />
+          <HeroPiece p={at("headphones")} shape="rounded-full" className="bottom-[15%] left-[5%] z-[2] aspect-square w-[40%]" sizes="(min-width: 1024px) 22vw, 40vw" eager />
+          <HeroPiece p={at("perfume")} shape="rounded-[1.2rem]" className="bottom-[15%] left-[64%] z-[2] aspect-[0.62] w-[14%]" sizes="(min-width: 1024px) 8vw, 15vw" />
+          <HeroPiece p={at("watch")} shape="rounded-[1.4rem]" className="bottom-[14%] right-[6%] z-[2] aspect-square w-[19%]" sizes="(min-width: 1024px) 11vw, 20vw" />
+          <HeroPiece p={at("sneakers")} shape="rounded-[1.6rem]" className="bottom-[4%] left-[24%] z-[3] aspect-[1.6] w-[44%]" sizes="(min-width: 1024px) 24vw, 45vw" eager />
+
+          {looks > 1 && (
+            <div className="absolute bottom-[2%] right-[4%] z-[4] flex gap-2">
+              <button type="button" className={arrow} onClick={() => setLook((l) => (l - 1 + looks) % looks)} aria-label={t("home.v2.heroPrev")}>
+                <ChevronLeft className="h-4 w-4 rtl:rotate-180" />
+              </button>
+              <button type="button" className={arrow} onClick={() => setLook((l) => (l + 1) % looks)} aria-label={t("home.v2.heroNext")}>
+                <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+              </button>
+            </div>
+          )}
+        </Reveal>
       </div>
     </section>
   );
@@ -262,29 +301,24 @@ export function StorefrontHero({
 
 /* ------------------------------------------------------------------ trust / benefits bar */
 
-export function ServiceStrip({ productCount }: { productCount?: number }) {
-  const { t, number } = useI18n();
+export function ServiceStrip() {
+  const { t } = useI18n();
   const items = [
     { icon: Truck, title: t("home.v2.svc.delivery"), body: t("home.v2.svc.deliveryb"), href: "/policies/shipping" },
     { icon: ShieldCheck, title: t("home.v2.svc.payments"), body: t("home.v2.svc.paymentsb"), href: "/policies/privacy" },
-    { icon: Package, title: t("home.v2.svc.returns"), body: t("home.v2.svc.returnsb"), href: "/policies/returns" },
-    {
-      icon: Leaf,
-      title: t("home.v2.svc.selection"),
-      body: productCount ? t("home.v2.svc.selectionb", { n: number(productCount) }) : t("home.v2.svc.selectionPlain"),
-      href: "/categories",
-    },
+    { icon: RotateCcw, title: t("home.v2.svc.returns"), body: t("home.v2.svc.returnsb"), href: "/policies/returns" },
+    { icon: Headset, title: t("home.v2.svc.support"), body: t("home.v2.svc.supportb"), href: "/orders" },
   ];
   return (
     <Reveal as="section" className="container-page relative z-10">
-      <ul className="grid grid-cols-2 gap-y-2 rounded-[1.4rem] bg-white px-2 py-4 shadow-card ring-1 ring-black/[0.04] sm:py-5 lg:grid-cols-4 lg:divide-x lg:divide-ink/10">
+      <ul className="grid grid-cols-2 gap-y-3 rounded-3xl bg-white px-2 py-4 shadow-card ring-1 ring-black/[0.04] sm:py-5 lg:grid-cols-4 lg:divide-x lg:divide-ink/10 rtl:lg:divide-x-reverse">
         {items.map(({ icon: Icon, title, body, href }) => (
-          <li key={title} className="flex justify-center sm:justify-start lg:justify-center">
-            <Link href={href} className="group flex flex-col items-center gap-2 rounded-xl px-2 py-1.5 text-center sm:flex-row sm:gap-3.5 sm:px-5 sm:text-left">
-              <Icon className="h-7 w-7 shrink-0 text-brand-green-logo transition-transform duration-base ease-out group-hover:-translate-y-0.5" strokeWidth={1.8} aria-hidden />
+          <li key={title} className="flex justify-center">
+            <Link href={href} className="group flex flex-col items-center gap-2 rounded-xl px-2 py-1 text-center sm:flex-row sm:gap-4 sm:px-4 sm:text-start">
+              <Icon className="h-8 w-8 shrink-0 text-ink transition-transform duration-base ease-out group-hover:-translate-y-0.5" strokeWidth={1.6} aria-hidden />
               <span>
-                <span className="block text-[13.5px] font-bold text-ink">{title}</span>
-                <span className="block text-xs text-ink/55">{body}</span>
+                <span className="block text-[14px] font-bold text-ink">{title}</span>
+                <span className="block text-[12.5px] text-ink/60">{body}</span>
               </span>
             </Link>
           </li>
@@ -427,8 +461,8 @@ export function CampaignRow({ images }: { images: Map<string, ProductSummary> })
 
 /* ------------------------------------------------------------------ the basket edit */
 
-const EDITS: { key: string; slugs: string[]; bg: string }[] = [
-  { key: "tech", slugs: ["electronics", "computers-laptops", "mobiles-accessories"], bg: "#EDEBE6" },
+const EDITS: { key: string; slugs: string[]; bg: string; dark?: boolean }[] = [
+  { key: "tech", slugs: ["electronics", "computers-laptops", "mobiles-accessories"], bg: "#1C1B19", dark: true },
   { key: "style", slugs: ["fashion", "fashion-clothing"], bg: "#F5ECE2" },
   { key: "home", slugs: ["home-kitchen", "furniture-decor", "home-furniture", "home-appliances"], bg: "#E3EDE5" },
   { key: "beauty", slugs: ["beauty", "beauty-personal-care"], bg: "#F6E8E5" },
@@ -521,11 +555,11 @@ export function BasketEdit({ categories, images }: { categories: Category[]; ima
                 className="group relative flex h-40 overflow-hidden rounded-card shadow-card ring-1 ring-black/[0.04] transition-[transform,box-shadow] duration-base ease-out hover:-translate-y-1 hover:shadow-card-hover sm:h-[10.5rem]"
               >
                 <span className="relative z-10 flex w-[52%] flex-col justify-center p-5 sm:p-6">
-                  <span className="text-[1.6rem] font-extrabold leading-[1.02] tracking-[-0.02em] text-ink">{t(`home.v2.edit.${c.key}`)}</span>
-                  <span className="mt-2 text-xs leading-snug text-ink/65">{t(`home.v2.edit.${c.key}.body`)}</span>
-                  <span className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-bold text-ink opacity-0 transition-opacity duration-base group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <span className={`text-[1.6rem] font-extrabold leading-[1.02] tracking-[-0.02em] ${c.dark ? "text-white" : "text-ink"}`}>{t(`home.v2.edit.${c.key}`)}</span>
+                  <span className={`mt-2 text-xs leading-snug ${c.dark ? "text-white/70" : "text-ink/65"}`}>{t(`home.v2.edit.${c.key}.body`)}</span>
+                  <span className={`mt-3 inline-flex items-center gap-1.5 text-[13px] font-bold ${c.dark ? "text-brand-yellow" : "text-ink"}`}>
                     {t("home.v2.explore")}
-                    <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+                    <ArrowRight className="h-3.5 w-3.5 transition-transform duration-base ease-out group-hover:translate-x-1 rtl:rotate-180" />
                   </span>
                 </span>
                 <span className="absolute inset-y-0 right-0 w-[58%] overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_38%)]">
