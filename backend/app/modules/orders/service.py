@@ -622,7 +622,8 @@ class OrderService:
             "schema_version": 1,
             "aggregate_id": str(order_id),
             "order_number": order_number,
-            "customer_id": str(customer_id) if customer_id else None,
+            # No customer_id: customer identifiers are PII and the envelope
+            # rejects them (this event could never be published).
             "is_guest": customer_id is None,
             "quote_id": str(quote.id),
             "reservation_id": str(res.id),

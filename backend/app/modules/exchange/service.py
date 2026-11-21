@@ -59,9 +59,10 @@ class ExchangeService:
             event_type="exchange.request_created",
             aggregate_type="exchange_request",
             aggregate_id=r.id,
+            # No pincode: customer location is PII and the event envelope
+            # rejects it (the event could never be published).
             payload={
                 "request_id": r.id,
-                "pincode": r.delivery_pincode,
                 "items": len(r.items_manifest),
             },
         )

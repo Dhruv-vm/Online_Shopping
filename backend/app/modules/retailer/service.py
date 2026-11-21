@@ -561,12 +561,21 @@ class RetailerService:
             selling_price_paise=listing.selling_price_paise,
             mrp_paise=listing.original_price_paise,
         )
+        # Listing events must carry product_id (envelope partitioning rule).
+        product_id = (
+            await self.session.execute(
+                select(ProductVariant.product_id).where(
+                    ProductVariant.id == listing.variant_id
+                )
+            )
+        ).scalar_one()
         await enqueue_marketplace_event(
             self.session,
             event_type="price.changed",
             aggregate_type="listing",
             aggregate_id=listing.id,
             payload={
+                "product_id": product_id,
                 "listing_id": listing.id,
                 "previous_price_paise": previous_selling,
                 "price_paise": int(listing.selling_price_paise),
