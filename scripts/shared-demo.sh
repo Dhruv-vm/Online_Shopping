@@ -33,9 +33,9 @@ demo_origins() {
   # The browser's Origin is the address the laptops open (LAN or tunnel); the
   # backend's CSRF/CORS check only accepts origins listed here.
   # JSON list: pydantic-settings parses list fields from the environment as JSON.
-  local o="\"http://localhost:$WEB_PORT\",\"http://127.0.0.1:$WEB_PORT\""
+  local o="\"http://localhost:$WEB_PORT\",\"http://127.0.0.1:$WEB_PORT\",\"http://localhost:3000\",\"http://127.0.0.1:3000\""
   local ip; ip=$(lan_ip)
-  [[ "$ip" != "<this-mac-ip>" ]] && o="$o,\"http://$ip:$WEB_PORT\""
+  [[ "$ip" != "<this-mac-ip>" ]] && o="$o,\"http://$ip:$WEB_PORT\",\"http://$ip:3000\""
   [[ -f "$STATE/tunnel.url" ]] && o="$o,\"$(cat "$STATE/tunnel.url")\""
   echo "[$o]"
 }

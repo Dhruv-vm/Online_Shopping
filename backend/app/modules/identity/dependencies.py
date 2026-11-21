@@ -178,14 +178,38 @@ _CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 
 def _is_local_dev_origin(origin: str) -> bool:
-    """Exact hostname match for localhost origins (never a substring match)."""
+    """Validate dev/LAN origins (localhost, RFC-1918 private IPs, local tunnels)."""
+    import ipaddress
     from urllib.parse import urlsplit
+
+    from app.core.config import settings
+
+    if settings.is_production:
+        return False
 
     try:
         host = (urlsplit(origin).hostname or "").lower()
     except ValueError:
         return False
-    return host in {"localhost", "127.0.0.1", "::1"}
+
+    if not host:
+        return False
+
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        pass
+
+    if host.endswith(".trycloudflare.com"):
+        sub = host[: -len(".trycloudflare.com")]
+        if sub and "." not in sub and all(c.isalnum() or c == "-" for c in sub):
+            return True
+
+    return False
 
 
 async def verify_csrf_token(

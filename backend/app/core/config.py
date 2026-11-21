@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # ignored unless this is > 0 (prevents rate-limit bypass via spoofed headers).
     TRUSTED_PROXY_COUNT: int = 0
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGIN_REGEX: str | None = None
 
     # Database (Aiven PostgreSQL)
     DATABASE_URL: str | None = None
@@ -438,6 +439,20 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        if self.CORS_ORIGIN_REGEX is not None:
+            return self.CORS_ORIGIN_REGEX
+        if not self.is_production:
+            return (
+                r"^https?://(localhost|127\.0\.0\.1|"
+                r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+                r"192\.168\.\d{1,3}\.\d{1,3}|"
+                r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|"
+                r"[a-zA-Z0-9-]+\.trycloudflare\.com)(:\d+)?$"
+            )
+        return None
 
     @property
     def has_database(self) -> bool:
