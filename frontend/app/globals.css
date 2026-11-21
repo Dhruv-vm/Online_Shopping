@@ -5,13 +5,13 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --foreground: 220 4% 13%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --primary: 152 76% 36%;
-    --primary-foreground: 355 100% 97%;
+    --primary: 163 100% 30%;
+    --primary-foreground: 0 0% 100%;
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
@@ -22,8 +22,8 @@
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
-    --ring: 152 76% 36%;
-    --radius: 0.5rem;
+    --ring: 163 100% 30%;
+    --radius: 0.625rem;
   }
 
   .dark {
@@ -56,4 +56,33 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+@layer utilities {
+  .container-page {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Basket loader: the BASKET mark gently lifting, items dropping in. */
+@keyframes basket-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes basket-drop {
+  0% { transform: translateY(-14px); opacity: 0; }
+  40% { opacity: 1; }
+  70%, 100% { transform: translateY(2px); opacity: 0; }
+}
+.basket-loader-mark { animation: basket-bob 1.2s ease-in-out infinite; }
+.basket-loader-dot { animation: basket-drop 1.2s ease-in infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .basket-loader-mark, .basket-loader-dot { animation: none; }
 }

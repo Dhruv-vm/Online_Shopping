@@ -1,139 +1,65 @@
 "use client";
 
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { formatPrice } from "@/lib/utils";
+import { Scale, Store } from "lucide-react";
+import { ProductImage } from "@/components/catalogue/product-image";
 import { useCompare } from "@/lib/compare/compare-context";
+import { useI18n } from "@/lib/i18n/i18n-context";
 import type { ProductSummary } from "@/types";
-import { Scale, Store, Tag } from "lucide-react";
 
-interface ProductCardProps {
-  product: ProductSummary;
-}
-
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product }: { product: ProductSummary }) {
   const { isInCompare, toggleCompare } = useCompare();
+  const { t, money } = useI18n();
   const inCompare = isInCompare(product.slug);
-
-  const discountPercent =
-    product.original_price_paise &&
-    product.original_price_paise > product.min_price_paise
-      ? Math.round(
-          ((product.original_price_paise - product.min_price_paise) /
-            product.original_price_paise) *
-            100
-        )
+  const discount =
+    product.original_price_paise && product.original_price_paise > product.min_price_paise && product.min_price_paise > 0
+      ? Math.round(((product.original_price_paise - product.min_price_paise) / product.original_price_paise) * 100)
       : 0;
+  const available = product.is_in_stock && product.min_price_paise > 0;
 
   return (
-    <Card className="group relative flex flex-col overflow-hidden transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 border-border/80">
-      <Link
-        href={`/products/${product.slug}`}
-        className="flex flex-col h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-lg"
-      >
-        {/* Product Image Area */}
-        <div className="relative aspect-square w-full overflow-hidden bg-muted/30">
-          {product.primary_image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={product.primary_image}
-              alt={product.name}
-              className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
-              loading="lazy"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-muted text-muted-foreground">
-              <Tag className="h-12 w-12 stroke-1" />
-            </div>
-          )}
-
-          {/* Badges Overlay */}
-          <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5 items-start">
-            {discountPercent > 0 && (
-              <Badge className="bg-rose-600 text-white hover:bg-rose-700 shadow-sm text-xs font-bold">
-                {discountPercent}% OFF
-              </Badge>
+    <article className="group relative flex h-full flex-col overflow-hidden rounded-xl border bg-white transition hover:-translate-y-0.5 hover:shadow-md">
+      <Link href={`/products/${product.slug}`} className="flex h-full flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+        <div className="relative aspect-square overflow-hidden bg-surface">
+          <ProductImage src={product.primary_image} alt={product.name} className="transition duration-300 group-hover:scale-105" />
+          <div className="absolute left-2.5 top-2.5 flex flex-col items-start gap-1">
+            {discount > 0 && available && (
+              <span className="rounded-md bg-brand-yellow px-1.5 py-0.5 text-xs font-bold text-charcoal">{t("product.off", { n: discount })}</span>
             )}
-            {!product.is_in_stock && (
-              <Badge variant="outline" className="bg-background/90 text-destructive border-destructive/40 text-xs">
-                Out of Stock
-              </Badge>
+            {!available && (
+              <span className="rounded-md border border-red-200 bg-white/95 px-1.5 py-0.5 text-xs font-medium text-red-700">{t("common.outOfStock")}</span>
             )}
           </div>
-
-          <div className="absolute top-2.5 right-2.5">
-            <Badge variant="secondary" className="text-[11px] bg-background/85 backdrop-blur-sm shadow-xs border">
-              {product.category_name}
-            </Badge>
-          </div>
-
-          {/* Quick Compare Button */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              toggleCompare(product.slug);
-            }}
-            className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur-md shadow-xs transition-colors ${
-              inCompare
-                ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                : "bg-background/90 text-foreground hover:bg-background border border-border/60"
-            }`}
-            title={inCompare ? "Remove from comparison" : "Add to comparison"}
-          >
-            <Scale className="h-3 w-3" />
-            {inCompare ? "Comparing" : "Compare"}
-          </button>
         </div>
-
-        {/* Product Details Content */}
-        <CardContent className="flex flex-1 flex-col p-4 justify-between">
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">
-              {product.brand}
+        <div className="flex flex-1 flex-col p-3.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{product.brand}</p>
+          <h3 className="mt-0.5 line-clamp-2 text-sm font-semibold leading-snug text-charcoal group-hover:text-brand-dark">{product.name}</h3>
+          <div className="mt-auto pt-3">
+            {product.min_price_paise > 0 ? (
+              <div className="flex items-baseline gap-2">
+                <span className="text-base font-bold">{money(product.min_price_paise)}</span>
+                {product.original_price_paise && product.original_price_paise > product.min_price_paise && (
+                  <span className="text-xs text-muted-foreground line-through">{money(product.original_price_paise)}</span>
+                )}
+              </div>
+            ) : (
+              <span className="text-sm text-muted-foreground">{t("product.unavailable")}</span>
+            )}
+            <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Store className="h-3 w-3 text-brand" />
+              {t("product.sellers", { n: product.retailer_count })}
             </p>
-            <h3 className="font-semibold text-sm line-clamp-2 leading-snug text-foreground group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors">
-              {product.name}
-            </h3>
           </div>
-
-          <div className="pt-3 border-t border-border/50 mt-3 space-y-2">
-            {/* Price Display */}
-            <div className="flex items-baseline gap-2">
-              {product.min_price_paise > 0 ? (
-                <>
-                  <span className="text-lg font-bold text-foreground">
-                    {formatPrice(product.min_price_paise, product.currency)}
-                  </span>
-                  {product.original_price_paise &&
-                    product.original_price_paise > product.min_price_paise && (
-                      <span className="text-xs text-muted-foreground line-through">
-                        {formatPrice(product.original_price_paise, product.currency)}
-                      </span>
-                    )}
-                </>
-              ) : (
-                <span className="text-sm font-medium text-muted-foreground">
-                  Currently Unavailable
-                </span>
-              )}
-            </div>
-
-            {/* Seller and Variant Metadata */}
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
-              <span className="flex items-center gap-1">
-                <Store className="h-3 w-3 text-emerald-600" />
-                {product.retailer_count} {product.retailer_count === 1 ? "seller" : "sellers"}
-              </span>
-              <span>
-                {product.variant_count} {product.variant_count === 1 ? "option" : "options"}
-              </span>
-            </div>
-          </div>
-        </CardContent>
+        </div>
       </Link>
-    </Card>
+      <button
+        type="button"
+        onClick={() => toggleCompare(product.slug)}
+        aria-pressed={inCompare}
+        className={`absolute right-2.5 top-2.5 flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm backdrop-blur ${inCompare ? "bg-brand text-white" : "bg-white/90 text-charcoal"}`}
+      >
+        <Scale className="h-3 w-3" /> {inCompare ? t("product.comparing") : t("nav.compare")}
+      </button>
+    </article>
   );
 }

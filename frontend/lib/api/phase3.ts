@@ -15,7 +15,7 @@ const q = (params: Record<string, string | number | boolean | undefined | null>)
 
 // ---------------------------------------------------------------- 3F Price Intelligence
 export type PriceBadge = "GENUINE_DISCOUNT" | "MRP_INFLATED" | "NO_SPECIAL_DISCOUNT" | "INSUFFICIENT_HISTORY";
-export interface PricePoint { date: string; price_paise: number; day_low_paise: number; mrp_paise: number }
+export interface PricePoint { date: string; price_paise: number; day_low_paise: number; mrp_paise: number; source?: "LIVE" | "DEMO_SEED" }
 export interface PriceIntelligence {
   listing_id: UUID; currency: string; window_days: number;
   current_price_paise: number; current_mrp_paise: number;
@@ -24,6 +24,8 @@ export interface PriceIntelligence {
   current_vs_30d_average_pct: number | null; discount_from_mrp_pct: number;
   is_lowest_in_window: boolean; days_of_history: number;
   badge: PriceBadge; badge_reason: string; history: PricePoint[];
+  /** True when part of the history is demonstration data from the demo seed. */
+  contains_demo_data?: boolean; demo_days?: number; demo_data_notice?: string | null;
 }
 export const getPriceIntelligence = (listingId: UUID, days = 90) =>
   apiClient.get<PriceIntelligence>(`/api/v1/price-intelligence/listings/${encodeURIComponent(listingId)}${q({ days })}`);
@@ -88,6 +90,10 @@ export interface GroupBuyCampaign {
   participants_needed: number; total_quantity: number; max_quantity_per_member: number; discount_percent: number;
   list_price_paise: number; group_price_paise: number; status: "OPEN" | "SUCCESSFUL" | "FAILED" | "CANCELLED";
   expires_at: string; seconds_remaining: number;
+  /** True when a customer started this group on retailer-published terms. */
+  started_by_customer?: boolean;
+  /** First initial of each real member (no names or contacts). */
+  participant_initials?: string[];
   my_membership: { status: string; quantity: number; order_id: string | null } | null;
 }
 export interface CampaignCreate { listing_id: UUID; title?: string; min_participants: number; max_participants: number; discount_percent: number; duration_hours: number; max_quantity_per_member?: number }
