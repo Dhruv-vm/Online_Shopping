@@ -1,5 +1,7 @@
 "use client";
 
+import { ShopperGuard } from "@/components/auth/shopper-guard";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -38,7 +40,7 @@ import type {
   Reservation,
 } from "@/types";
 
-export default function CartPage() {
+function CartPageInner() {
   const {
     cart,
     items,
@@ -956,5 +958,14 @@ export default function CartPage() {
         onReplaced={handleSubstituteReplaced}
       />
     </div>
+  );
+}
+
+
+export default function CartPage() {
+  return (
+    <ShopperGuard>
+      <CartPageInner />
+    </ShopperGuard>
   );
 }

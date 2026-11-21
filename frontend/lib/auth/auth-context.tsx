@@ -43,6 +43,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refreshProfile();
   }, [refreshProfile]);
 
+  // A signed-in user whose session can no longer be renewed is signed out
+  // locally and sent to the login page with an explanation.
+  useEffect(() => {
+    const onExpired = () => {
+      setUser((current) => {
+        if (current && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+          const back = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.assign(`/login?expired=1&redirect=${back}`);
+        }
+        return null;
+      });
+    };
+    window.addEventListener("basket:session-expired", onExpired);
+    return () => window.removeEventListener("basket:session-expired", onExpired);
+  }, []);
+
   const login = async (email: string, password: string): Promise<User> => {
     setIsLoading(true);
     try {

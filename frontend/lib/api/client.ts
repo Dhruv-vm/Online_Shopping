@@ -196,6 +196,11 @@ class ApiClient {
           if (refreshed) {
             return this.request<T>(endpoint, options, true);
           }
+          // Session could not be renewed: let the auth layer decide whether a
+          // signed-in user must be sent back to the login page.
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("basket:session-expired"));
+          }
         }
 
         let errorData: ApiErrorEnvelope | null = null;

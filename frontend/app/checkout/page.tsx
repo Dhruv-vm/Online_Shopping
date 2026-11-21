@@ -1,5 +1,7 @@
 "use client";
 
+import { ShopperGuard } from "@/components/auth/shopper-guard";
+
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -586,7 +588,7 @@ function CheckoutContent() {
   );
 }
 
-export default function CheckoutPage() {
+function CheckoutPageInner() {
   return (
     <React.Suspense
       fallback={
@@ -597,5 +599,14 @@ export default function CheckoutPage() {
     >
       <CheckoutContent />
     </React.Suspense>
+  );
+}
+
+
+export default function CheckoutPage() {
+  return (
+    <ShopperGuard>
+      <CheckoutPageInner />
+    </ShopperGuard>
   );
 }

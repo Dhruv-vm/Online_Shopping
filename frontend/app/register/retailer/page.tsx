@@ -1,336 +1,149 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { CheckCircle2 } from "lucide-react";
+import { Field, TextInput } from "@/components/forms/field";
+import { apiClient } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-context";
-import { ApiClientError } from "@/lib/api/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Store,
-  Lock,
-  Mail,
-  User as UserIcon,
-  Phone,
-  Eye,
-  EyeOff,
-  AlertCircle,
-  Loader2,
-  MapPin,
-  Building,
-} from "lucide-react";
+import { errorMessage } from "@/lib/i18n/errors";
+import { useI18n } from "@/lib/i18n/i18n-context";
+import { GSTIN_PATTERN, INDIAN_STATES } from "@/lib/india";
 
-function RetailerRegisterForm() {
+export default function RetailerRegisterPage() {
   const router = useRouter();
   const { registerRetailer, isAuthenticated, user } = useAuth();
+  const { t } = useI18n();
+  const [f, setF] = useState({
+    full_name: "",
+    email: "",
+    phone: "",
+    password: "",
+    confirm: "",
+    store_name: "",
+    state: "KA",
+    business_address: "",
+    description: "",
+    gstin: "",
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [storeName, setStoreName] = useState("");
-  const [stateCode, setStateCode] = useState("KA");
-  const [businessAddress, setBusinessAddress] = useState("");
-  const [description, setDescription] = useState("");
-
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (isAuthenticated && user?.role === "retailer") {
-      router.replace("/retailer");
-    }
+  useEffect(() => {
+    if (isAuthenticated && user?.role === "retailer") router.replace("/retailer");
   }, [isAuthenticated, user?.role, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    setF((p) => ({ ...p, [k]: e.target.value }));
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
-
-    const trimmedName = fullName.trim();
-    const trimmedEmail = email.trim();
-    const trimmedPhone = phone.trim();
-    const trimmedStore = storeName.trim();
-    const trimmedAddress = businessAddress.trim();
-
-    if (!trimmedName || trimmedName.length < 2) {
-      setErrorMessage("Owner name must be at least 2 characters long.");
-      return;
-    }
-    if (!trimmedStore || trimmedStore.length < 2) {
-      setErrorMessage("Store name must be at least 2 characters long.");
-      return;
-    }
-    if (!trimmedAddress || trimmedAddress.length < 5) {
-      setErrorMessage("Please enter a valid registered business address.");
-      return;
-    }
-    if (password.length < 8) {
-      setErrorMessage("Password must be at least 8 characters long.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setErrorMessage("Passwords do not match.");
-      return;
-    }
-
-    setIsLoading(true);
+    const errs: Record<string, string> = {};
+    if (f.full_name.trim().length < 2) errs.full_name = t("validation.name");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email.trim())) errs.email = t("validation.email");
+    if (!/^\+?[0-9]{10,13}$/.test(f.phone.replace(/\s/g, ""))) errs.phone = t("validation.phone");
+    if (f.password.length < 8) errs.password = t("validation.password");
+    if (f.password !== f.confirm) errs.confirm = t("validation.passwordMatch");
+    if (f.store_name.trim().length < 2) errs.store_name = t("validation.storeName");
+    if (f.business_address.trim().length < 5) errs.business_address = t("validation.address");
+    if (f.gstin && !GSTIN_PATTERN.test(f.gstin.trim().toUpperCase())) errs.gstin = t("validation.gstin");
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+    setBusy(true);
+    setFormError(null);
     try {
       await registerRetailer({
-        email: trimmedEmail,
-        password,
-        full_name: trimmedName,
-        phone: trimmedPhone,
-        store_name: trimmedStore,
-        state: stateCode.trim().toUpperCase(),
-        business_address: trimmedAddress,
-        description: description.trim() || undefined,
+        email: f.email.trim(),
+        password: f.password,
+        full_name: f.full_name.trim(),
+        phone: f.phone.replace(/\s/g, ""),
+        store_name: f.store_name.trim(),
+        state: f.state,
+        business_address: f.business_address.trim(),
+        description: f.description.trim() || undefined,
       });
-      router.push("/retailer");
-    } catch (err: unknown) {
-      if (err instanceof ApiClientError) {
-        if (err.code === "EMAIL_ALREADY_EXISTS" || err.status === 409) {
-          setErrorMessage("An account with this email address already exists.");
-        } else {
-          setErrorMessage(err.message || "Failed to complete retailer onboarding.");
-        }
-      } else {
-        setErrorMessage("An unexpected network error occurred. Please try again.");
+      if (f.gstin.trim()) {
+        await apiClient.updateRetailerProfile({ gstin: f.gstin.trim().toUpperCase() }).catch(() => undefined);
       }
+      router.replace("/retailer/onboarding");
+    } catch (err) {
+      setFormError(errorMessage(err, t));
     } finally {
-      setIsLoading(false);
+      setBusy(false);
     }
   };
 
   return (
-    <Card className="w-full max-w-xl shadow-lg border-muted">
-      <CardHeader className="text-center pb-4">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white mb-2 shadow-sm">
-          <Store className="h-7 w-7" />
-        </div>
-        <CardTitle className="text-2xl font-bold tracking-tight">
-          Partner Retailer Onboarding
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Open your digital storefront on BASKET and reach multi-category shoppers across India.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {errorMessage && (
-          <div
-            role="alert"
-            className="mb-4 flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400"
-          >
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{errorMessage}</span>
+    <div className="container-page grid gap-10 py-10 lg:grid-cols-[1fr_1.3fr]">
+      <section className="space-y-5">
+        <h1 className="text-3xl font-bold">{t("onboarding.registerTitle")}</h1>
+        <p className="text-muted-foreground">{t("onboarding.registerBody")}</p>
+        <ol className="space-y-3">
+          {["onboarding.step1", "onboarding.step2", "onboarding.step3", "onboarding.step4"].map((k, i) => (
+            <li key={k} className="flex items-start gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">{i + 1}</span>
+              <span className="text-sm">{t(k)}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="flex items-start gap-2 rounded-lg border border-brand/30 bg-brand-light p-3 text-sm text-brand-dark">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> {t("onboarding.reviewNote")}
+        </p>
+      </section>
+      <section className="rounded-2xl border bg-white p-6 shadow-sm sm:p-8">
+        {formError && <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{formError}</p>}
+        <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2" noValidate>
+          <h2 className="text-lg font-semibold sm:col-span-2">{t("onboarding.ownerDetails")}</h2>
+          <Field id="full_name" label={t("onboarding.ownerName")} error={errors.full_name}>
+            <TextInput id="full_name" value={f.full_name} onChange={set("full_name")} autoComplete="name" />
+          </Field>
+          <Field id="phone" label={t("auth.phone")} error={errors.phone}>
+            <TextInput id="phone" type="tel" value={f.phone} onChange={set("phone")} placeholder="+91 98xxxxxxxx" />
+          </Field>
+          <Field id="email" label={t("auth.email")} error={errors.email}>
+            <TextInput id="email" type="email" value={f.email} onChange={set("email")} autoComplete="email" />
+          </Field>
+          <div className="hidden sm:block" />
+          <Field id="password" label={t("auth.password")} hint={t("validation.password")} error={errors.password}>
+            <TextInput id="password" type="password" value={f.password} onChange={set("password")} autoComplete="new-password" />
+          </Field>
+          <Field id="confirm" label={t("auth.confirmPassword")} error={errors.confirm}>
+            <TextInput id="confirm" type="password" value={f.confirm} onChange={set("confirm")} autoComplete="new-password" />
+          </Field>
+          <h2 className="mt-2 text-lg font-semibold sm:col-span-2">{t("onboarding.storeDetails")}</h2>
+          <Field id="store_name" label={t("onboarding.storeName")} error={errors.store_name}>
+            <TextInput id="store_name" value={f.store_name} onChange={set("store_name")} />
+          </Field>
+          <Field id="state" label={t("onboarding.state")}>
+            <select id="state" value={f.state} onChange={set("state")} className="h-11 w-full rounded-lg border bg-white px-3 text-sm">
+              {INDIAN_STATES.map((s) => (
+                <option key={s.code} value={s.code}>{s.name}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Field id="business_address" label={t("onboarding.address")} error={errors.business_address}>
+              <textarea id="business_address" rows={2} value={f.business_address} onChange={set("business_address")} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            </Field>
           </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
-              1. Store & Business Details
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2 space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  Store / Trade Name <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <Building className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    required
-                    placeholder="e.g. Croma Electronics, Nature Basket"
-                    value={storeName}
-                    onChange={(e) => setStoreName(e.target.value)}
-                    className="pl-9 h-9 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  State <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={stateCode}
-                  onChange={(e) => setStateCode(e.target.value)}
-                  className="w-full h-9 rounded-md border border-input bg-background px-2 text-xs"
-                >
-                  <option value="KA">Karnataka (KA)</option>
-                  <option value="MH">Maharashtra (MH)</option>
-                  <option value="DL">Delhi (DL)</option>
-                  <option value="TN">Tamil Nadu (TN)</option>
-                  <option value="TS">Telangana (TS)</option>
-                  <option value="UP">Uttar Pradesh (UP)</option>
-                  <option value="GJ">Gujarat (GJ)</option>
-                  <option value="WB">West Bengal (WB)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-foreground">
-                Registered Warehouse / Dispatch Address <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <MapPin className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  required
-                  placeholder="Complete business address with pin code..."
-                  value={businessAddress}
-                  onChange={(e) => setBusinessAddress(e.target.value)}
-                  className="pl-9 h-9 text-xs"
-                />
-              </div>
-            </div>
+          <Field id="gstin" label={`GSTIN (${t("common.optional")})`} hint={t("onboarding.gstinHint")} error={errors.gstin}>
+            <TextInput id="gstin" value={f.gstin} onChange={set("gstin")} maxLength={15} className="uppercase" placeholder="29ABCDE1234F1Z5" />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field id="description" label={`${t("onboarding.description")} (${t("common.optional")})`}>
+              <textarea id="description" rows={3} value={f.description} onChange={set("description")} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            </Field>
           </div>
-
-          <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">
-              2. Owner & Login Credentials
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  Owner Full Name <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <UserIcon className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    required
-                    placeholder="Full name"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="pl-9 h-9 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  Business Phone <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    required
-                    type="tel"
-                    placeholder="+919876543210"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="pl-9 h-9 text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-foreground">
-                Business Email (Login Username) <span className="text-red-500">*</span>
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  required
-                  type="email"
-                  placeholder="seller@business.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-9 h-9 text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  Password <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    required
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Min 8 characters"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pl-9 pr-9 h-9 text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-2.5 text-muted-foreground hover:text-foreground"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-foreground">
-                  Confirm Password <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    required
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Confirm password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="pl-9 h-9 text-xs"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs h-10 shadow-sm"
-          >
-            {isLoading ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Provisioning Store Account...
-              </span>
-            ) : (
-              "Submit Store Registration & Open Merchant Portal"
-            )}
-          </Button>
-
-          <div className="text-center text-xs text-muted-foreground pt-1">
-            Already have a merchant account?{" "}
-            <Link
-              href="/login?redirect=/retailer"
-              className="font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline"
-            >
-              Sign In to Merchant Desk
-            </Link>
-          </div>
+          <button type="submit" disabled={busy} className="h-11 rounded-lg bg-brand text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-60 sm:col-span-2">
+            {busy ? t("common.pleaseWait") : t("onboarding.submit")}
+          </button>
+          <p className="text-center text-sm text-muted-foreground sm:col-span-2">
+            {t("auth.haveAccount")} <Link href="/login?redirect=/retailer" className="font-semibold text-brand">{t("nav.signIn")}</Link>
+          </p>
         </form>
-      </CardContent>
-    </Card>
-  );
-}
-
-export default function RetailerRegisterPage() {
-  return (
-    <div className="container mx-auto flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-8">
-      <Suspense
-        fallback={
-          <div className="text-center text-sm text-muted-foreground">
-            Loading merchant onboarding...
-          </div>
-        }
-      >
-        <RetailerRegisterForm />
-      </Suspense>
+      </section>
     </div>
   );
 }
