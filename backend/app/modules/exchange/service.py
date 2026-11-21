@@ -54,6 +54,19 @@ class ExchangeService:
         )
         self.session.add(r)
         await self.session.flush()
+        from app.core.notify import notify_retailers_serving
+
+        # Free-text title is not copied into the notice (it may contain personal details).
+        await notify_retailers_serving(
+            self.session,
+            pincode=r.delivery_pincode,
+            title="New quote request near you",
+            message=(
+                f"A shopper in PIN {r.delivery_pincode} wants quotes for "
+                f"{len(r.items_manifest)} item(s). Open Exchange requests to respond."
+            ),
+            event_type="retailer.rfq_created",
+        )
         await enqueue_marketplace_event(
             self.session,
             event_type="exchange.request_created",

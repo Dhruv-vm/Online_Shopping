@@ -9,6 +9,7 @@ import { apiClient } from "@/lib/api/client";
 import { errorMessage } from "@/lib/i18n/errors";
 import { useI18n } from "@/lib/i18n/i18n-context";
 import type { RetailerAnalyticsResponse, RetailerOverview, RetailerProfile } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 const IN_FLIGHT = ["CONFIRMED", "PROCESSING", "PACKED"];
 
@@ -21,8 +22,8 @@ export default function RetailerDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true);
     try {
       const [o, p, a] = await Promise.all([
         apiClient.getRetailerOverview(),
@@ -38,6 +39,7 @@ export default function RetailerDashboardPage() {
       setLoading(false);
     }
   }, [t]);
+  useLiveUpdates(["order.", "payment.", "fulfilment.", "auction.", "demand.", "negotiation.", "group_buy.", "exchange."], () => void load({ quiet: true }));
 
   useEffect(() => {
     load();
@@ -70,7 +72,7 @@ export default function RetailerDashboardPage() {
         subtitle={t("retailer.dash.subtitle")}
         actions={
           <>
-            <button type="button" onClick={load} className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm">
+            <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-sm">
               <RefreshCw className="h-4 w-4" /> {t("common.refresh")}
             </button>
             {verified && (

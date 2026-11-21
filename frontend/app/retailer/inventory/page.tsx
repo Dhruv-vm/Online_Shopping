@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient, ApiClientError } from "@/lib/api/client";
 import type { RetailerInventoryDashboard, RetailerInventoryItem } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 export default function RetailerInventoryPage() {
   const [dashboard, setDashboard] = useState<RetailerInventoryDashboard | null>(null);
@@ -37,8 +38,8 @@ export default function RetailerInventoryPage() {
   const [isSubmittingAdjust, setIsSubmittingAdjust] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const loadInventory = useCallback(async () => {
-    setIsLoading(true);
+  const loadInventory = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setIsLoading(true);
     setErrorMsg(null);
     try {
       const data = await apiClient.getRetailerInventory({
@@ -52,6 +53,7 @@ export default function RetailerInventoryPage() {
       setIsLoading(false);
     }
   }, [searchQuery, statusFilter]);
+  useLiveUpdates(["listing.", "inventory.", "store_inventory.", "price.", "variant.", "order.", "fulfilment."], () => void loadInventory({ quiet: true }));
 
   useEffect(() => {
     loadInventory();
@@ -149,7 +151,7 @@ export default function RetailerInventoryPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadInventory}
+            onClick={() => void loadInventory()}
             disabled={isLoading}
             className="gap-2"
           >

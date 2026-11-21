@@ -561,6 +561,15 @@ async def process_payment_capture_and_fulfillment(
             status=OutboxStatus.PENDING.value,
         )
         session.add(outbox_event)
+        from app.core.notify import notify_retailer_users
+
+        await notify_retailer_users(
+            session,
+            retailer_ids=[i.retailer_id for i in order.items],
+            title=f"New paid order {order.order_number}",
+            message="Payment is confirmed. Open Orders to pack and dispatch it.",
+            event_type="retailer.order_paid",
+        )
         await session.commit()
         await session.refresh(order)
         await session.refresh(capture)

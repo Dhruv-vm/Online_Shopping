@@ -39,6 +39,7 @@ import type {
   QuoteValidationIssue,
   Reservation,
 } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 function CartPageInner() {
   const {
@@ -57,6 +58,7 @@ function CartPageInner() {
     refreshCart,
   } = useCart();
   const { isAuthenticated } = useAuth();
+  useLiveUpdates(["price.", "listing.", "inventory.", "store_inventory.", "offer.", "variant."], () => void refreshCart());
 
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);

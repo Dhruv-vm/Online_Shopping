@@ -53,6 +53,26 @@ class AuctionService:
                 aggregate_id=a.id,
                 payload={"auction_id": a.id, "status": a.status, "bids": int(n)},
             )
+            if n:
+                from app.core.notify import notify_retailer_users
+
+                bidders = (
+                    await self.session.execute(
+                        select(BasketAuctionBid.retailer_id)
+                        .where(BasketAuctionBid.auction_id == a.id)
+                        .distinct()
+                    )
+                ).scalars()
+                await notify_retailer_users(
+                    self.session,
+                    retailer_ids=list(bidders),
+                    title="Auction closed",
+                    message=(
+                        f"Bidding has ended for the basket in PIN {a.pincode}. "
+                        "The shopper is now choosing a store."
+                    ),
+                    event_type="retailer.auction_closed",
+                )
             await self.session.flush()
 
     # ----------------------------------------------------------- customer
@@ -140,6 +160,18 @@ class AuctionService:
                 "ends_at": a.ends_at.isoformat(),
             },
         )
+        from app.core.notify import notify_retailers_serving
+
+        await notify_retailers_serving(
+            self.session,
+            pincode=pincode,
+            title="New Dukaan vs Dukaan auction",
+            message=(
+                f"A basket of {len(snapshot)} item(s) in PIN {pincode} is open for bids "
+                f"for {AUCTION_SECONDS // 60} minute(s). Open Auctions to bid."
+            ),
+            event_type="retailer.auction_started",
+        )
         return a
 
     async def get_own(
@@ -221,6 +253,35 @@ class AuctionService:
             new_lines.append((listing.id, ln["quantity"]))
         a.status = AuctionStatus.AWARDED.value
         a.winning_bid_id = bid.id
+        from app.core.notify import notify_retailer_users
+
+        await notify_retailer_users(
+            self.session,
+            retailer_ids=[bid.retailer_id],
+            title="You won the auction",
+            message=(
+                f"The shopper in PIN {a.pincode} chose your bid. "
+                "Watch Orders for their checkout."
+            ),
+            event_type="retailer.auction_won",
+        )
+        others = (
+            await self.session.execute(
+                select(BasketAuctionBid.retailer_id)
+                .where(
+                    BasketAuctionBid.auction_id == a.id,
+                    BasketAuctionBid.retailer_id != bid.retailer_id,
+                )
+                .distinct()
+            )
+        ).scalars()
+        await notify_retailer_users(
+            self.session,
+            retailer_ids=list(others),
+            title="Auction result: not selected",
+            message=f"The shopper in PIN {a.pincode} chose another store's bid.",
+            event_type="retailer.auction_lost",
+        )
         cart = await set_customer_cart_lines(
             self.session,
             user_id,

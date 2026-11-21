@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import type { RetailerOrderListItem } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 const STATUS_TABS = [
   { id: "ALL", label: "All Orders" },
@@ -40,8 +41,8 @@ export default function RetailerOrdersPage() {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const loadOrders = useCallback(async () => {
-    setIsLoading(true);
+  const loadOrders = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setIsLoading(true);
     setErrorMsg(null);
     try {
       const res = await apiClient.listRetailerOrders({
@@ -60,6 +61,7 @@ export default function RetailerOrdersPage() {
   useEffect(() => {
     loadOrders();
   }, [loadOrders]);
+  useLiveUpdates(["order.", "payment.", "fulfilment."], () => void loadOrders({ quiet: true }));
 
   const handleUpdateStatus = async (orderId: string, nextStatus: string) => {
     setUpdatingOrderId(orderId);
@@ -108,7 +110,7 @@ export default function RetailerOrdersPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={loadOrders}
+          onClick={() => void loadOrders()}
           disabled={isLoading}
           className="gap-2 shrink-0"
         >

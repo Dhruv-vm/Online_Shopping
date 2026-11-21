@@ -148,3 +148,49 @@ async def test_new_live_update_events_are_emitted(async_client: AsyncClient):
 async def test_stream_requires_authentication(async_client: AsyncClient):
     r = await async_client.get("/api/v1/realtime/stream")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_retailers_are_notified_of_rfqs_and_auctions_in_their_area(
+    async_client: AsyncClient,
+):
+    pin = "411045"
+    base, near = await make_retailer(service_pincodes=[pin])
+    _, far = await make_retailer(service_pincodes=["110001"])
+    _, cust = await make_user()
+
+    rfq = await async_client.post(
+        "/api/v1/exchange/requests",
+        headers=cust,
+        json={
+            "title": "Call Priya on 98xxxxxx01 for this",
+            "delivery_pincode": pin,
+            "items": [{"name": "ceiling fan", "quantity": 2}],
+        },
+    )
+    assert rfq.status_code == 201, rfq.text
+    await async_client.post(
+        "/api/v1/cart/items",
+        headers=cust,
+        json={"listing_id": base["id"], "quantity": 1},
+    )
+    a = await async_client.post(
+        "/api/v1/auctions/start", headers=cust, json={"pincode": pin}
+    )
+    assert a.status_code in (200, 201), a.text
+
+    near_items = (await async_client.get("/api/v1/notifications", headers=near)).json()[
+        "items"
+    ]
+    far_items = (await async_client.get("/api/v1/notifications", headers=far)).json()[
+        "items"
+    ]
+    types = {n["event_type"] for n in near_items}
+    assert {"retailer.rfq_created", "retailer.auction_started"} <= types
+    assert not {"retailer.rfq_created", "retailer.auction_started"} & {
+        n["event_type"] for n in far_items
+    }
+    # the customer's free-text title (which here holds a phone number) is never copied
+    assert all(
+        "Priya" not in n["message"] and "98xx" not in n["message"] for n in near_items
+    )

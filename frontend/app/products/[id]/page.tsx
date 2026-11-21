@@ -2,7 +2,7 @@
 
 import { recordView } from "@/lib/recent";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import { useCompare } from "@/lib/compare/compare-context";
 import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 import { ProductPassportSection } from "@/components/passport/ProductPassportSection";
 import { PriceIntelligencePanel } from "@/components/phase3/price-intelligence";
+import { useLiveUpdates } from "@/lib/realtime";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -75,13 +76,17 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
     }
   };
 
-  useEffect(() => {
-    async function fetchDetail() {
-      setIsLoading(true);
-      setError(null);
+  const fetchDetail = useCallback(async (opts?: { quiet?: boolean }) => {
+      if (!opts?.quiet) setIsLoading(true);
+      if (!opts?.quiet) setError(null);
       try {
         const data = await apiClient.getProduct(productIdOrSlug);
         setProduct(data);
+        if (opts?.quiet) {
+          // keep the shopper's variant choice; refresh its live price/stock
+          setSelectedVariant((cur) => (cur ? data.variants?.find((v) => v.id === cur.id) ?? cur : cur));
+          return;
+        }
         recordView({
           slug: data.slug,
           name: data.name,
@@ -93,14 +98,18 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
           setSelectedVariant(data.variants[0]);
         }
       } catch (err) {
+        if (opts?.quiet) return;
         console.error("Error loading product detail:", err);
         setError("Product not found or service unavailable.");
       } finally {
-        setIsLoading(false);
+        if (!opts?.quiet) setIsLoading(false);
       }
-    }
-    fetchDetail();
   }, [productIdOrSlug]);
+
+  useEffect(() => {
+    void fetchDetail();
+  }, [fetchDetail]);
+  useLiveUpdates(["product.", "catalogue.", "listing.", "variant.", "price.", "inventory.", "store_inventory.", "offer.", "sale_stream."], () => void fetchDetail({ quiet: true }));
 
   if (isLoading) {
     return (
