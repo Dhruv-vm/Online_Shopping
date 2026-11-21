@@ -194,7 +194,7 @@ export default function HomePage() {
       <Section id="partners" title={t("home.partners.title")} subtitle={t("home.partners.subtitle")} href="/retailers" linkLabel={t("common.viewAll")} tone="tint">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {(d.retailers ?? []).slice(0, 8).map((r) => (
-            <Link key={r.id} href={`/retailers/${r.slug}`} className="flex items-start gap-3 rounded-xl border bg-white p-4 hover:border-brand">
+            <Link key={r.id} href={`/products?retailer_id=${r.id}`} className="flex items-start gap-3 rounded-xl border bg-white p-4 hover:border-brand">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-brand-light text-brand-dark">
                 {r.logo_url ? <ProductImage src={r.logo_url} alt={r.name} /> : <Store className="h-5 w-5" />}
               </span>

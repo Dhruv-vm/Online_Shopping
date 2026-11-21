@@ -59,13 +59,20 @@ export function I18nProvider({
   const [lang, setLangState] = useState<LanguageCode>(initialLang);
 
   useEffect(() => {
-    // localStorage may hold a choice made before the cookie existed.
+    // The cookie is what the server rendered with, so it wins when present;
+    // localStorage only restores a choice when no cookie exists (e.g. a choice
+    // made before the cookie was introduced, or after cookies were cleared).
     try {
+      const hasCookie = document.cookie.split("; ").some((c) => c.startsWith(`${LANG_COOKIE}=`));
+      if (hasCookie) {
+        window.localStorage.setItem(STORAGE_KEY, initialLang);
+        return;
+      }
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (isLanguageCode(saved) && saved !== initialLang) {
         setLangState(saved);
-        writeCookie(saved);
       }
+      writeCookie(isLanguageCode(saved) ? saved : initialLang);
     } catch {
       /* storage unavailable */
     }

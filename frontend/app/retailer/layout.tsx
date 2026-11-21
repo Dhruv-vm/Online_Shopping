@@ -145,8 +145,8 @@ export default function RetailerLayout({ children }: { children: React.ReactNode
                 </strong>
               </span>
             )}
-            {profile?.slug && verified && (
-              <Link href={`/retailers/${profile.slug}`} className="inline-flex items-center gap-1 underline">
+            {profile?.id && verified && (
+              <Link href={`/products?retailer_id=${profile.id}`} className="inline-flex items-center gap-1 underline">
                 {t("retailer.banner.viewStore")} <ExternalLink className="h-3 w-3" />
               </Link>
             )}
