@@ -3,6 +3,11 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { initiatePayment, verifyPayment } from "@/lib/api/payments";
+import {
+  keyForOrder,
+  shouldRotatePaymentKey,
+  type PaymentKeyState,
+} from "@/lib/payments/idempotency";
 import type {
   PaymentVerifyResponse,
   RazorpayCheckoutOptions,
@@ -46,6 +51,9 @@ export function RazorpayPaymentButton({
   onDismissOrAmbiguous,
 }: RazorpayPaymentButtonProps) {
   const [loading, setLoading] = React.useState(false);
+  // One Idempotency-Key per order while this page is open: retries replay the
+  // same Razorpay order instead of creating a new one.
+  const paymentKeyRef = React.useRef<PaymentKeyState | null>(null);
 
   const loadRazorpayScript = (): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -82,7 +90,18 @@ export function RazorpayPaymentButton({
       }
 
       // Step 1: Initiate payment on backend (persists CREATING attempt, calls Razorpay)
-      const initData = await initiatePayment(orderId);
+      paymentKeyRef.current = keyForOrder(paymentKeyRef.current, orderId);
+      let initData;
+      try {
+        initData = await initiatePayment(orderId, paymentKeyRef.current.key);
+      } catch (initErr) {
+        if (!shouldRotatePaymentKey(initErr)) {
+          throw initErr;
+        }
+        // The previous attempt for this key failed permanently: start a new one.
+        paymentKeyRef.current = keyForOrder(null, orderId);
+        initData = await initiatePayment(orderId, paymentKeyRef.current.key);
+      }
 
       // Step 2: Open Razorpay modal
       const options: RazorpayCheckoutOptions = {
