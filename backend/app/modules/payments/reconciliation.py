@@ -265,22 +265,44 @@ class ReconciliationService:
                                 refund.order_id
                             )
                             if locked_order:
-                                order_processed_sum = (
-                                    await self.repo.get_processed_refunds_sum_for_order(
-                                        refund.order_id
+                                if locked_order.fulfilling_capture_id:
+                                    fulfilling_refunds_sum = (
+                                        await self.repo.get_processed_refunds_sum_for_capture(
+                                            locked_order.fulfilling_capture_id
+                                        )
                                     )
-                                )
-                                if (
-                                    order_processed_sum
-                                    >= locked_order.total_payable_paise
-                                ):
-                                    locked_order.payment_status = (
-                                        PaymentStatus.REFUNDED.value
+                                    if (
+                                        fulfilling_refunds_sum
+                                        >= locked_order.total_payable_paise
+                                    ):
+                                        locked_order.payment_status = (
+                                            PaymentStatus.REFUNDED.value
+                                        )
+                                    elif fulfilling_refunds_sum > 0:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.PARTIALLY_REFUNDED.value
+                                        )
+                                    else:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.SUCCEEDED.value
+                                        )
+                                else:
+                                    order_processed_sum = (
+                                        await self.repo.get_processed_refunds_sum_for_order(
+                                            refund.order_id
+                                        )
                                     )
-                                elif order_processed_sum > 0:
-                                    locked_order.payment_status = (
-                                        PaymentStatus.PARTIALLY_REFUNDED.value
-                                    )
+                                    if (
+                                        order_processed_sum
+                                        >= locked_order.total_payable_paise
+                                    ):
+                                        locked_order.payment_status = (
+                                            PaymentStatus.REFUNDED.value
+                                        )
+                                    elif order_processed_sum > 0:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.PARTIALLY_REFUNDED.value
+                                        )
                         elif rzp_rfnd.get("status") == "failed":
                             if (
                                 locked_rfnd.status

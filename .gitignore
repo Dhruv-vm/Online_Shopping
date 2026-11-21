@@ -65,3 +65,8 @@ backend/media_private/
 # Shared two-laptop demo runtime state and frontend build
 .shared-demo/
 frontend/.next-shared/
+
+# External experimental prototypes and agent configs
+Hack UI/
+.claude/
+

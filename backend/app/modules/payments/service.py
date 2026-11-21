@@ -561,18 +561,34 @@ async def process_payment_capture_and_fulfillment(
             status=OutboxStatus.PENDING.value,
         )
         session.add(outbox_event)
-        from app.core.notify import notify_retailer_users
+        try:
+            from app.core.notify import notify_retailer_users
 
-        await notify_retailer_users(
-            session,
-            retailer_ids=[i.retailer_id for i in order.items],
-            title=f"New paid order {order.order_number}",
-            message="Payment is confirmed. Open Orders to pack and dispatch it.",
-            event_type="retailer.order_paid",
-        )
-        from app.modules.missions.completion import complete_missions_for_order
+            await notify_retailer_users(
+                session,
+                retailer_ids=[i.retailer_id for i in order.items],
+                title=f"New paid order {order.order_number}",
+                message="Payment is confirmed. Open Orders to pack and dispatch it.",
+                event_type="retailer.order_paid",
+            )
+        except Exception as exc:
+            logger.error(
+                "Retailer notification failed for order %s: %s; order fulfillment preserved.",
+                order.id,
+                exc,
+            )
 
-        await complete_missions_for_order(session, order)
+        try:
+            from app.modules.missions.completion import complete_missions_for_order
+
+            await complete_missions_for_order(session, order)
+        except Exception as exc:
+            logger.error(
+                "Mission completion hook failed for order %s: %s; order fulfillment preserved.",
+                order.id,
+                exc,
+            )
+
         await session.commit()
         await session.refresh(order)
         await session.refresh(capture)
@@ -1275,15 +1291,28 @@ class PaymentService:
             else:
                 locked_capture.status = CaptureStatus.CAPTURED.value
 
-        order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
-            order_id
-        )
         locked_order = await self.repo.get_order_by_id_for_update(order_id)
         if locked_order:
-            if order_processed_sum >= locked_order.total_payable_paise:
-                locked_order.payment_status = PaymentStatus.REFUNDED.value
-            elif order_processed_sum > 0:
-                locked_order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
+            if locked_order.fulfilling_capture_id:
+                fulfilling_refunds_sum = (
+                    await self.repo.get_processed_refunds_sum_for_capture(
+                        locked_order.fulfilling_capture_id
+                    )
+                )
+                if fulfilling_refunds_sum >= locked_order.total_payable_paise:
+                    locked_order.payment_status = PaymentStatus.REFUNDED.value
+                elif fulfilling_refunds_sum > 0:
+                    locked_order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
+                else:
+                    locked_order.payment_status = PaymentStatus.SUCCEEDED.value
+            else:
+                order_processed_sum = (
+                    await self.repo.get_processed_refunds_sum_for_order(order_id)
+                )
+                if order_processed_sum >= locked_order.total_payable_paise:
+                    locked_order.payment_status = PaymentStatus.REFUNDED.value
+                elif order_processed_sum > 0:
+                    locked_order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
 
         await self.session.commit()
 

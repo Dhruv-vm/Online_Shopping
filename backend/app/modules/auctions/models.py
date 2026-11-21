@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -80,6 +81,7 @@ class BasketAuctionBid(Base):
     delivery_eta_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     warranty_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     line_allocation: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

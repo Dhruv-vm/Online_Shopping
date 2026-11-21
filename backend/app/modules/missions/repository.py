@@ -204,13 +204,9 @@ class MissionRepository:
             stmt = stmt.where(Product.category_id.in_(category_ids))
 
         if excluded_brands:
-            lower_brands = [b.lower() for b in excluded_brands if b]
-            if lower_brands:
-                stmt = stmt.where(
-                    ~Product.brand.ilike(
-                        f"%{'%'.join(lower_brands)}%"
-                    )  # or exact filter below
-                )
+            clean_brands = [b.strip() for b in excluded_brands if b and b.strip()]
+            for b in clean_brands:
+                stmt = stmt.where(~Product.brand.ilike(f"%{b}%"))
 
         if max_price_paise is not None:
             stmt = stmt.where(ProductListing.selling_price_paise <= max_price_paise)
@@ -221,12 +217,16 @@ class MissionRepository:
 
         # Exact brand exclusion check in Python
         if excluded_brands:
-            excl_set = {b.strip().lower() for b in excluded_brands if b.strip()}
-            candidates = [
-                c
-                for c in candidates
-                if (c.variant.product.brand or "").strip().lower() not in excl_set
-            ]
+            excl_set = {b.strip().lower() for b in excluded_brands if b and b.strip()}
+            if excl_set:
+                candidates = [
+                    c
+                    for c in candidates
+                    if not (
+                        c.variant.product.brand
+                        and any(ex in c.variant.product.brand.lower() for ex in excl_set)
+                    )
+                ]
 
         return candidates
 
@@ -277,6 +277,11 @@ class MissionRepository:
         stmt = select(Category).where(Category.is_active.is_(True))
         res = await self.session.execute(stmt)
         return list(res.scalars().all())
+
+    async def get_category_by_id(self, category_id: uuid.UUID) -> Category | None:
+        stmt = select(Category).where(Category.id == category_id)
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none()
 
     async def get_valid_active_listing(
         self, listing_id: uuid.UUID

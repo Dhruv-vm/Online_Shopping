@@ -22,6 +22,7 @@ import {
   Loader2,
   X,
   ExternalLink,
+  Package,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,54 @@ import type {
   MissionAlternativeItem,
   MissionAddToCartResponse,
 } from "@/types";
+
+const ALLOWED_IMAGE_HOSTS = new Set(["images.unsplash.com"]);
+
+function isValidImageHost(url?: string | null): boolean {
+  if (!url) return false;
+  if (url.startsWith("/")) return true;
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      ALLOWED_IMAGE_HOSTS.has(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function MissionProductImage({
+  src,
+  alt,
+  sizes = "80px",
+}: {
+  src?: string | null;
+  alt: string;
+  sizes?: string;
+}) {
+  const [loadError, setLoadError] = useState(false);
+
+  if (!src || loadError || !isValidImageHost(src)) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center bg-muted/50 text-muted-foreground/50 p-1 text-center select-none">
+        <Package className="h-5 w-5 mb-0.5 opacity-60" />
+        <span className="text-[9px] font-medium leading-tight line-clamp-1">{alt}</span>
+      </div>
+    );
+  }
+
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      fill
+      className="object-cover"
+      sizes={sizes}
+      onError={() => setLoadError(true)}
+    />
+  );
+}
 
 function formatPrice(paise: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -394,8 +443,32 @@ export default function MissionDetailPage({
 
       {/* Grouped Products */}
       <div className="space-y-8">
-        {mission.groups.map((group) => (
-          <div key={group.group_name} className="space-y-3">
+        {mission.groups.length === 0 ? (
+          <div className="text-center py-12 px-4 rounded-2xl border border-dashed bg-muted/20 space-y-4">
+            <Compass className="h-10 w-10 text-muted-foreground mx-auto" />
+            <div className="space-y-1">
+              <h3 className="text-base font-semibold text-foreground">No Matching Products Found</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                No active marketplace items currently match this mission&apos;s budget or filters. You can edit your criteria or explore products across our verified sellers.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Link href="/missions">
+                <Button variant="outline" size="sm">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Create Another Mission
+                </Button>
+              </Link>
+              <Link href="/search">
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  Browse Catalog
+                </Button>
+              </Link>
+            </div>
+          </div>
+        ) : (
+          mission.groups.map((group) => (
+            <div key={group.group_name} className="space-y-3">
             <div className="flex items-center justify-between border-b pb-2">
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-emerald-600" />
@@ -434,19 +507,11 @@ export default function MissionDetailPage({
                       />
 
                       <div className="relative h-16 w-16 sm:h-20 sm:w-20 rounded-lg overflow-hidden bg-muted shrink-0 border">
-                        {item.image_url ? (
-                          <Image
-                            src={item.image_url}
-                            alt={item.product_name}
-                            fill
-                            className="object-cover"
-                            sizes="80px"
-                          />
-                        ) : (
-                          <div className="h-full w-full flex items-center justify-center text-muted-foreground/50 text-[10px]">
-                            No image
-                          </div>
-                        )}
+                        <MissionProductImage
+                          src={item.image_url}
+                          alt={item.product_name}
+                          sizes="80px"
+                        />
                       </div>
 
                       <div className="space-y-1 min-w-0 flex-1">
@@ -563,7 +628,7 @@ export default function MissionDetailPage({
               })}
             </div>
           </div>
-        ))}
+        )))}
       </div>
 
       {/* Alternative Products Modal */}
@@ -614,19 +679,11 @@ export default function MissionDetailPage({
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div className="relative h-14 w-14 rounded-lg overflow-hidden bg-muted shrink-0 border">
-                          {alt.image_url ? (
-                            <Image
-                              src={alt.image_url}
-                              alt={alt.product_name}
-                              fill
-                              className="object-cover"
-                              sizes="56px"
-                            />
-                          ) : (
-                            <div className="h-full w-full flex items-center justify-center text-[9px] text-muted-foreground">
-                              No image
-                            </div>
-                          )}
+                          <MissionProductImage
+                            src={alt.image_url}
+                            alt={alt.product_name}
+                            sizes="56px"
+                          />
                         </div>
 
                         <div className="space-y-0.5 min-w-0">

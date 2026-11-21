@@ -164,7 +164,7 @@ export const upsertNegotiationRule = (body: Omit<NegotiationRule, "id" | "create
 export const deleteNegotiationRule = (id: UUID) => apiClient.delete<void>(`/api/v1/retailer/negotiation-rules/${id}`);
 
 // ---------------------------------------------------------------- 3E Dukaan vs Dukaan
-export interface AuctionBid { id: UUID; rank: number; retailer_id: UUID; retailer_name: string; retailer_rating: number; bid_price_paise: number; savings_paise: number; delivery_eta_minutes: number; warranty_note: string | null; created_at: string }
+export interface AuctionBid { id: UUID; rank: number; retailer_id: UUID; retailer_name: string; retailer_rating: number; bid_price_paise: number; savings_paise: number; delivery_eta_minutes: number; warranty_note: string | null; is_simulated?: boolean; created_at: string }
 export interface Auction {
   id: UUID; status: "ACTIVE" | "COMPLETED" | "NO_BIDS" | "AWARDED" | "CANCELLED"; pincode: string;
   items: { variant_id: UUID; product_name: string; variant_name: string; quantity: number; reference_unit_price_paise: number }[];
@@ -177,6 +177,7 @@ export interface Auction {
   my_outcome?: "WON" | "NOT_SELECTED" | "AWAITING_CHOICE" | "CLOSED" | null;
 }
 export const startAuction = (pincode: string) => apiClient.post<Auction>("/api/v1/auctions/start", { pincode });
+export const getActiveAuction = () => apiClient.get<Auction | null>("/api/v1/auctions/active");
 export const getAuctionLive = (id: UUID) => apiClient.get<Auction>(`/api/v1/auctions/${id}/live`);
 /** Server-Sent Events URL (use with EventSource; events: "auction" and "end"). */
 export const auctionEventStreamPath = (id: UUID) => `/api/v1/auctions/${id}/live`;
@@ -187,6 +188,8 @@ export const retailerLiveAuctions = () => apiClient.get<{ items: Auction[]; tota
 export const retailerRecentAuctions = () => apiClient.get<{ items: Auction[]; total: number }>("/api/v1/retailer/auctions/recent");
 export const retailerBid = (id: UUID, body: { bid_price_paise: number; delivery_eta_minutes: number; warranty_note?: string }) =>
   apiClient.post<AuctionBid>(`/api/v1/retailer/auctions/${id}/bid`, body);
+export const retailerSimulateBid = (id: UUID) =>
+  apiClient.post<AuctionBid>(`/api/v1/retailer/auctions/${id}/simulate`, {});
 
 // ---------------------------------------------------------------- 3I Handwritten List to Basket
 export interface ParsedListItem {

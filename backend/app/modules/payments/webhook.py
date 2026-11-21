@@ -394,13 +394,26 @@ class WebhookService:
 
         order = await self.repo.get_order_by_id_for_update(refund.order_id)
         if order:
-            order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
-                refund.order_id
-            )
-            if order_processed_sum >= order.total_payable_paise:
-                order.payment_status = PaymentStatus.REFUNDED.value
-            elif order_processed_sum > 0:
-                order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
+            if order.fulfilling_capture_id:
+                fulfilling_refunds_sum = (
+                    await self.repo.get_processed_refunds_sum_for_capture(
+                        order.fulfilling_capture_id
+                    )
+                )
+                if fulfilling_refunds_sum >= order.total_payable_paise:
+                    order.payment_status = PaymentStatus.REFUNDED.value
+                elif fulfilling_refunds_sum > 0:
+                    order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
+                else:
+                    order.payment_status = PaymentStatus.SUCCEEDED.value
+            else:
+                order_processed_sum = (
+                    await self.repo.get_processed_refunds_sum_for_order(refund.order_id)
+                )
+                if order_processed_sum >= order.total_payable_paise:
+                    order.payment_status = PaymentStatus.REFUNDED.value
+                elif order_processed_sum > 0:
+                    order.payment_status = PaymentStatus.PARTIALLY_REFUNDED.value
 
     async def _handle_refund_failed(self, payload: dict[str, Any]) -> None:
         """Handles refund.failed event to mark refund FAILED without regressing capture status.

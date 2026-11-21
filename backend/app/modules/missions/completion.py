@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.logging import logger
 from app.core.notify import notify_customer
 from app.modules.missions.models import ShoppingMission
 from app.modules.orders.models import Order, OrderItem, PaymentStatus
@@ -48,39 +49,53 @@ async def complete_missions_for_order(session: AsyncSession, order: Order) -> in
         or order.payment_status != PaymentStatus.SUCCEEDED.value
     ):
         return 0  # only a paid order can complete a mission
-    missions = (
-        (
-            await session.execute(
-                select(ShoppingMission)
-                .options(selectinload(ShoppingMission.items))
-                .where(
-                    ShoppingMission.customer_id == order.customer_id,
-                    ShoppingMission.status.in_(OPEN),
-                    ShoppingMission.carted_at.is_not(None),
-                    ShoppingMission.carted_at <= order.created_at,
+    try:
+        missions = (
+            (
+                await session.execute(
+                    select(ShoppingMission)
+                    .options(selectinload(ShoppingMission.items))
+                    .where(
+                        ShoppingMission.customer_id == order.customer_id,
+                        ShoppingMission.status.in_(OPEN),
+                        ShoppingMission.carted_at.is_not(None),
+                        ShoppingMission.carted_at <= order.created_at,
+                    )
+                    .with_for_update(skip_locked=True)
                 )
-                .with_for_update(skip_locked=True)
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
+    except Exception as exc:
+        logger.warning(
+            "Could not query shopping missions for order %s: %s; skipping mission completion.",
+            order.id,
+            exc,
+        )
+        return 0
+
     if not missions:
         return 0
     in_order = {i.listing_id for i in order.items}
     done = 0
     for m in missions:
-        selected = {i.listing_id for i in m.items if i.is_selected}
-        if selected and selected <= in_order:
-            m.status = "COMPLETED"
-            m.completed_at = datetime.now(UTC)
-            m.completed_order_id = order.id
-            notify_customer(
-                session,
-                customer_id=m.customer_id,
-                title="Shopping mission completed",
-                message=f"'{m.title}' is complete: order {order.order_number} has all of its items.",
-                event_type="MISSION_COMPLETED",
+        try:
+            selected = {i.listing_id for i in m.items if i.is_selected}
+            if selected and selected <= in_order:
+                m.status = "COMPLETED"
+                m.completed_at = datetime.now(UTC)
+                m.completed_order_id = order.id
+                notify_customer(
+                    session,
+                    customer_id=m.customer_id,
+                    title="Shopping mission completed",
+                    message=f"'{m.title}' is complete: order {order.order_number} has all of its items.",
+                    event_type="MISSION_COMPLETED",
+                )
+                done += 1
+        except Exception as exc:
+            logger.warning(
+                "Error processing mission %s for order %s: %s", m.id, order.id, exc
             )
-            done += 1
     return done

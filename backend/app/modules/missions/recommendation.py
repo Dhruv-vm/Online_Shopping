@@ -405,7 +405,12 @@ class RecommendationEngine:
         shortfall_inr = budget_shortfall_paise / 100
         remaining_inr = remaining_budget_paise / 100
 
-        if is_over_budget:
+        if not selected_items:
+            summary = (
+                f"No matching products found within your ₹{budget_inr:,.2f} budget criteria. "
+                "Try adjusting your budget, removing brand exclusions, or selecting another category to discover suitable options."
+            )
+        elif is_over_budget:
             summary = (
                 f"Planned {len(selected_items)} authentic marketplace products totaling ₹{cost_inr:,.2f}. "
                 f"This exceeds your ₹{budget_inr:,.2f} budget by ₹{shortfall_inr:,.2f}. "

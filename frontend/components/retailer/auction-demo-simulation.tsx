@@ -8,6 +8,7 @@
  * involved, and nothing here ever mixes with real auctions or real bids.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Auction } from "@/lib/api/phase3";
 import { formatPrice } from "@/lib/utils";
 
 type SimBid = { store: string; price: number; at: number };
@@ -33,7 +34,13 @@ function bestPerStore(bids: SimBid[]): SimBid[] {
   return [...best.values()].sort((x, y) => x.price - y.price || x.at - y.at);
 }
 
-export function AuctionDemoSimulation() {
+export function AuctionDemoSimulation({
+  activeAuctions = [],
+  onSimulateBid,
+}: {
+  activeAuctions?: Auction[];
+  onSimulateBid?: (auctionId: string) => Promise<void>;
+} = {}) {
   const [sim, setSim] = useState<Sim | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [price, setPrice] = useState("");
@@ -89,9 +96,36 @@ export function AuctionDemoSimulation() {
       <div className="rounded border border-dashed border-amber-400 bg-amber-50 p-3 text-sm">
         <p className="font-semibold text-amber-900">Demo simulation</p>
         <p className="text-xs text-amber-900">
-          Practise bidding against simulated stores. Runs only in this browser: no real customer, store or bid is involved and nothing is saved.
+          Practise bidding against simulated stores or simulate realistic bids onto active customer auctions.
         </p>
-        <button onClick={start} className="mt-2 rounded bg-amber-600 px-3 py-1 text-xs text-white">Start demo auction</button>
+
+        {activeAuctions.length > 0 && onSimulateBid && (
+          <div className="mt-2.5 rounded border border-amber-300 bg-amber-100/70 p-2.5 text-xs text-amber-950">
+            <p className="font-semibold text-amber-900">Live Customer Auction Simulation</p>
+            <p className="mt-0.5 text-amber-800">
+              There {activeAuctions.length === 1 ? "is 1 active customer auction" : `are ${activeAuctions.length} active customer auctions`}. Click to send a realistic simulated competitor bid directly to the customer screen in real time:
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {activeAuctions.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={async () => {
+                    try {
+                      await onSimulateBid(a.id);
+                    } catch {}
+                  }}
+                  className="rounded bg-amber-700 px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-amber-800"
+                >
+                  Simulate Live Bid ({a.items.map((i) => i.product_name).join(", ").slice(0, 32)}…)
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3">
+          <button onClick={start} className="rounded bg-amber-600 px-3 py-1 text-xs text-white">Start standalone demo auction</button>
+        </div>
       </div>
     );
   }

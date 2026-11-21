@@ -59,6 +59,19 @@ async def start_auction(
     return await svc.view(await svc.start(user.id, payload.pincode), include_bids=True)
 
 
+@router.get("/active", response_model=AuctionView | None)
+async def get_active_auction(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(require_customer)],
+) -> AuctionView | None:
+    """Return the customer's currently active or completed auction awaiting choice, if any."""
+    svc = AuctionService(db)
+    active = await svc.get_active_for_customer(user.id)
+    if not active:
+        return None
+    return await svc.view(active, include_bids=True)
+
+
 @router.get("/{auction_id}/live", response_model=AuctionView)
 async def live_auction(
     auction_id: uuid.UUID,
@@ -113,10 +126,16 @@ async def accept_auction_bid(
 ) -> AuctionAcceptResponse:
     svc = AuctionService(db)
     a, cart = await svc.accept(auction_id, user.id, payload.bid_id)
+    is_sim = bool(getattr(a, "winning_bid_is_simulated", False))
+    msg = (
+        "Winning offer applied. Your basket now uses this store at the bid price for 30 minutes."
+        if not is_sim
+        else "Demo simulated offer selected. As this was a simulation, no real order or payment obligation was created."
+    )
     return AuctionAcceptResponse(
         auction=await svc.view(a, include_bids=True),
-        cart_id=cart.id,
-        message="Winning offer applied. Your basket now uses this store at the bid price for 30 minutes.",
+        cart_id=cart.id if cart else uuid.UUID(int=0),
+        message=msg,
     )
 
 
@@ -170,6 +189,24 @@ async def retailer_place_bid(
 ) -> AuctionBidView:
     svc = AuctionService(db)
     b = await svc.bid(auction_id, retailer, payload)
+    from app.modules.auctions.models import BasketAuction
+
+    a = await db.get(BasketAuction, auction_id)
+    view = await svc.view(a, include_bids=True)
+    return next(x for x in view.bids if x.retailer_id == retailer.id and x.id == b.id)
+
+
+@retailer_router.post(
+    "/{auction_id}/simulate", response_model=AuctionBidView, status_code=201
+)
+async def retailer_simulate_bid(
+    auction_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+) -> AuctionBidView:
+    """Simulate a competitive bid on an active auction for demo purposes."""
+    svc = AuctionService(db)
+    b = await svc.simulate_bid(auction_id, retailer)
     from app.modules.auctions.models import BasketAuction
 
     a = await db.get(BasketAuction, auction_id)

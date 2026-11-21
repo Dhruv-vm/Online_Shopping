@@ -174,6 +174,7 @@ export default function MissionsPage() {
 
   const handleCreateMission = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMsg(null);
 
     if (!isAuthenticated) {

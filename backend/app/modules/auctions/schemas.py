@@ -46,6 +46,7 @@ class AuctionBidView(BaseModel):
     savings_paise: int
     delivery_eta_minutes: int
     warranty_note: str | None
+    is_simulated: bool = False
     created_at: datetime.datetime
 
 

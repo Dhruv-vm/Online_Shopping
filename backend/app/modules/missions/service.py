@@ -39,28 +39,45 @@ class MissionService:
         self, customer_id: uuid.UUID, payload: MissionCreateRequest
     ) -> MissionDetailResponse:
         """Create a new mission, run recommendations, persist items, and return detailed plan."""
+        # Validate category if provided
+        if payload.category_id:
+            category = await self.repo.get_category_by_id(payload.category_id)
+            if not category or not category.is_active:
+                raise AppException(
+                    code="CATEGORY_NOT_FOUND",
+                    message="The selected category was not found or is inactive.",
+                    status_code=400,
+                )
+
+        clean_preferences = [
+            p.strip() for p in (payload.preferences or []) if p and p.strip()
+        ]
+        clean_excluded_brands = [
+            b.strip() for b in (payload.excluded_brands or []) if b and b.strip()
+        ]
+
         # 1. Create parent mission record
         mission = await self.repo.create_mission(
             customer_id=customer_id,
-            title=payload.title,
-            description=payload.description,
+            title=payload.title.strip(),
+            description=payload.description.strip() if payload.description else None,
             budget_paise=payload.budget_paise,
             category_id=payload.category_id,
             people_count=payload.people_count,
-            preferences=payload.preferences,
-            excluded_brands=payload.excluded_brands,
+            preferences=clean_preferences,
+            excluded_brands=clean_excluded_brands,
             status="ACTIVE",
         )
 
         # 2. Generate initial plan
         plan = await self.engine.generate_plan(
-            title=payload.title,
+            title=payload.title.strip(),
             budget_paise=payload.budget_paise,
-            description=payload.description,
+            description=payload.description.strip() if payload.description else None,
             category_id=payload.category_id,
             people_count=payload.people_count,
-            preferences=payload.preferences,
-            excluded_brands=payload.excluded_brands,
+            preferences=clean_preferences,
+            excluded_brands=clean_excluded_brands,
             customer_id=customer_id,
         )
 
@@ -102,14 +119,30 @@ class MissionService:
         customer_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Generate in-memory preview without persisting."""
+        if payload.category_id:
+            category = await self.repo.get_category_by_id(payload.category_id)
+            if not category or not category.is_active:
+                raise AppException(
+                    code="CATEGORY_NOT_FOUND",
+                    message="The selected category was not found or is inactive.",
+                    status_code=400,
+                )
+
+        clean_preferences = [
+            p.strip() for p in (payload.preferences or []) if p and p.strip()
+        ]
+        clean_excluded_brands = [
+            b.strip() for b in (payload.excluded_brands or []) if b and b.strip()
+        ]
+
         plan = await self.engine.generate_plan(
-            title=payload.title,
+            title=payload.title.strip(),
             budget_paise=payload.budget_paise,
-            description=payload.description,
+            description=payload.description.strip() if payload.description else None,
             category_id=payload.category_id,
             people_count=payload.people_count,
-            preferences=payload.preferences,
-            excluded_brands=payload.excluded_brands,
+            preferences=clean_preferences,
+            excluded_brands=clean_excluded_brands,
             customer_id=customer_id,
         )
 
