@@ -176,7 +176,7 @@ function SearchView() {
               className="pl-10 pr-4 h-11 text-base bg-background shadow-xs border-muted-foreground/30 focus-visible:ring-emerald-500"
             />
           </div>
-          <Button type="submit" className="h-11 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-medium">
+          <Button type="submit" className="h-11 px-6 bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-medium">
             Search
           </Button>
         </form>
@@ -384,7 +384,7 @@ function SearchView() {
                 )}
                 <Link
                   href="/products"
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-3 bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-9 px-3 bg-brand-yellow hover:bg-brand-yellow-dark text-ink transition-colors"
                 >
                   Browse All Products
                 </Link>
@@ -509,7 +509,7 @@ function SearchView() {
                 Reset
               </Button>
               <Button
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="flex-1 bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                 onClick={() => setMobileFilterOpen(false)}
               >
                 Apply

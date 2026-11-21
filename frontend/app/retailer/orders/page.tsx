@@ -248,7 +248,7 @@ export default function RetailerOrdersPage() {
                       {order.status === "SHIPPED" && (
                         <Button
                           size="sm"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1"
+                          className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1"
                           disabled={updatingOrderId === order.id}
                           onClick={() => handleUpdateStatus(order.id, "DELIVERED")}
                         >

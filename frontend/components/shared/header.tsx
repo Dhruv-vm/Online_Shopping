@@ -495,9 +495,11 @@ export function Header() {
 
   useEffect(() => setMobile(false), [pathname]);
 
-  const submitSearch = (e: React.FormEvent) => {
+  const submitSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
+    // Read the live field value so a paste-then-Enter can't submit stale state.
+    const value = (e.currentTarget.querySelector("input") as HTMLInputElement | null)?.value ?? q;
+    if (value.trim()) router.push(`/search?q=${encodeURIComponent(value.trim())}`);
   };
   const isActive = (n: (typeof NAV)[number]) => (n.match ? n.match(pathname, params) : false);
   const categoriesActive = pathname.startsWith("/categories") || (pathname === "/products" && !!params?.get("category_slug"));

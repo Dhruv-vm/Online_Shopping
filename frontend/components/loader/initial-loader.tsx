@@ -6,6 +6,23 @@ const MIN_VISIBLE_MS = 1000;
 const SAFETY_CAP_MS = 8000;
 
 /**
+ * Never-stuck guarantee. The Hack UI controller closes only after window "load",
+ * which a hanging request (image, font, third-party) can delay indefinitely.
+ * At the cap we mark the app ready and, if the loader is still up shortly after,
+ * close it the same way the controller does (class swap, event, fade, removal).
+ */
+const SAFETY_SCRIPT = `setTimeout(function(){
+  var B=window.BasketLoader; if(B) B.done();
+  setTimeout(function(){
+    var root=document.getElementById("basket-loader"); if(!root||root.classList.contains("is-done")) return;
+    document.documentElement.classList.remove("bl-is-loading");
+    root.classList.add("is-done");
+    document.dispatchEvent(new CustomEvent("basket:loaded",{detail:{forced:true}}));
+    setTimeout(function(){ if(root.parentNode) root.parentNode.removeChild(root); }, 480);
+  }, 1200);
+},${SAFETY_CAP_MS});`;
+
+/**
  * First-load screen: the Hack UI loader, server-rendered as the first thing in
  * <body> so it covers the page before anything else paints. The unchanged Hack UI
  * controller (/brand/basket-loader.js) runs right after the markup, exactly as in
@@ -23,7 +40,7 @@ export function InitialLoader() {
       <script src="/brand/basket-loader.js" />
       <script
         dangerouslySetInnerHTML={{
-          __html: `setTimeout(function(){window.BasketLoader&&window.BasketLoader.done()},${SAFETY_CAP_MS});`,
+          __html: SAFETY_SCRIPT,
         }}
       />
     </>

@@ -473,7 +473,7 @@ export default function IntentMemoryPage() {
                         size="sm"
                         onClick={handleSaveProfile}
                         disabled={actionLoading}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium gap-1.5"
+                        className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-medium gap-1.5"
                       >
                         {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                         Save Preferences
@@ -749,7 +749,7 @@ export default function IntentMemoryPage() {
                             type="submit"
                             size="sm"
                             disabled={actionLoading || !intentionTitle.trim()}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                           >
                             {actionLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                             Save Goal
@@ -947,7 +947,7 @@ export default function IntentMemoryPage() {
                             type="submit"
                             size="sm"
                             disabled={actionLoading || !memoryKey.trim() || !memorySummary.trim()}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                           >
                             {actionLoading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
                             Remember Note

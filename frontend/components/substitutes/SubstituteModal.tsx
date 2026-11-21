@@ -440,7 +440,7 @@ export function SubstituteModal({
                             size="sm"
                             onClick={() => handleReplace(sub)}
                             disabled={isReplacing || !sub.is_in_stock}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 shrink-0"
+                            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs h-9 px-4 shrink-0"
                           >
                             {isReplacing ? (
                               <>
@@ -459,7 +459,7 @@ export function SubstituteModal({
                             size="sm"
                             onClick={() => handleAddAlternative(sub)}
                             disabled={isReplacing || !sub.is_in_stock}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 shrink-0"
+                            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs h-9 px-4 shrink-0"
                           >
                             {isReplacing ? (
                               <>

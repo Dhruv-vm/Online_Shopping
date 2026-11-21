@@ -381,7 +381,7 @@ function CheckoutContent() {
                     : "/orders"
                 }
               >
-                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5">
+                <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1.5">
                   Track Order
                   <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
@@ -458,7 +458,7 @@ function CheckoutContent() {
             )}
 
             <Button
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-10"
+              className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs h-10"
               onClick={handleCreateOrder}
               disabled={isCreatingOrder}
             >

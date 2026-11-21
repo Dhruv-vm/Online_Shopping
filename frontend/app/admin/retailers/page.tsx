@@ -348,7 +348,7 @@ export default function AdminRetailersPage() {
                                   reason: "",
                                 })
                               }
-                              className="h-7 text-xs px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                              className="h-7 text-xs px-2.5 bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                             >
                               Approve
                             </Button>
@@ -527,7 +527,7 @@ export default function AdminRetailersPage() {
                                 size="sm"
                                 disabled={docActionLoading === doc.id}
                                 onClick={() => handleDocVerify(doc.id, "APPROVED")}
-                                className="h-7 text-xs px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                className="h-7 text-xs px-2.5 bg-brand-yellow hover:bg-brand-yellow-dark text-ink gap-1"
                               >
                                 <Check className="h-3 w-3" /> Approve
                               </Button>
@@ -598,7 +598,7 @@ export default function AdminRetailersPage() {
                             reason: "",
                           })
                         }
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1"
+                        className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1"
                       >
                         <ShieldCheck className="h-3.5 w-3.5" /> Approve Retailer
                       </Button>
@@ -693,7 +693,7 @@ export default function AdminRetailersPage() {
                 disabled={actionLoading}
                 className={
                   actionModal.targetStatus === "VERIFIED"
-                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    ? "bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                     : "bg-red-600 hover:bg-red-700 text-white"
                 }
               >

@@ -365,7 +365,7 @@ function CartPageInner() {
   if (!items || items.length === 0) {
     return (
       <div className="container mx-auto px-4 py-20 max-w-xl text-center space-y-6">
-        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-yellow/25 text-ink">
           <ShoppingBasket className="h-10 w-10" />
         </div>
         <div className="space-y-2">
@@ -379,7 +379,7 @@ function CartPageInner() {
         </div>
         <div>
           <Link href="/products">
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 h-11 shadow-sm">
+            <Button className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold px-6 h-11 shadow-sm">
               Explore Products
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -962,7 +962,7 @@ function CartPageInner() {
                       <Link href={`/checkout?reservation_id=${reservation.id}&quote_id=${reservation.quote_id}`}>
                         <Button
                           size="sm"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-8 px-3"
+                          className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs h-8 px-3"
                         >
                           Checkout
                           <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
@@ -972,7 +972,7 @@ function CartPageInner() {
                   </div>
                 ) : (
                   <Button
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-sm"
+                    className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold h-11 text-sm shadow-sm"
                     disabled={
                       items.some((i) => !i.is_available) ||
                       isQuoteStale ||

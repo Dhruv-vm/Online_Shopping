@@ -116,7 +116,7 @@ export default function OrderTrackingPage({
             href={tracking.tracking_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium shadow-xs"
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-4 rounded-md bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs font-medium shadow-xs"
           >
             Track on Carrier Site
             <ExternalLink className="h-3.5 w-3.5" />

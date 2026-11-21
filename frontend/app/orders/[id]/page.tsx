@@ -38,7 +38,7 @@ function formatPrice(paise: number): string {
 function getStatusBadge(status: OrderStatus) {
   switch (status) {
     case "DELIVERED":
-      return <Badge className="bg-emerald-600 text-white hover:bg-emerald-700">Delivered</Badge>;
+      return <Badge className="bg-brand-yellow text-ink hover:bg-brand-yellow-dark">Delivered</Badge>;
     case "SHIPPED":
       return <Badge className="bg-blue-600 text-white hover:bg-blue-700">Shipped</Badge>;
     case "OUT_FOR_DELIVERY":
@@ -258,7 +258,7 @@ export default function OrderDetailsPage({
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
           <Link href={`/orders/${order.id}/track${querySuffix}`}>
-            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5">
+            <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1.5">
               <Truck className="h-3.5 w-3.5" />
               Track Package
             </Button>

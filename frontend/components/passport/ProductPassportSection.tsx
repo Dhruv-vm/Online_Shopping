@@ -367,7 +367,7 @@ export function ProductPassportSection({
 
                           <div className="shrink-0 flex flex-col items-end gap-1.5">
                             {isVerified ? (
-                              <Badge className="bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1 text-[11px]">
+                              <Badge className="bg-brand-yellow text-ink hover:bg-brand-yellow-dark flex items-center gap-1 text-[11px]">
                                 <CheckCircle2 className="h-3 w-3" />
                                 Verified
                               </Badge>

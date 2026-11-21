@@ -104,14 +104,16 @@ export default function AccountOverviewPage() {
 
           <main className="flex-1 w-full space-y-6">
             {/* Header Greeting */}
-            <div className="rounded-2xl border bg-gradient-to-r from-emerald-700 to-teal-800 p-6 sm:p-8 text-white shadow-sm">
-              <Badge variant="outline" className="text-white border-white/30 mb-3 bg-white/10 font-medium">
+            <div className="relative overflow-hidden rounded-hero bg-ink p-6 sm:p-8 text-white shadow-card">
+              <span aria-hidden className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-brand-yellow" />
+              <span aria-hidden className="pointer-events-none absolute -right-2 bottom-[-3.5rem] h-28 w-28 rounded-full border-[10px] border-brand-yellow/40" />
+              <Badge variant="outline" className="relative text-ink border-transparent mb-3 bg-brand-yellow font-semibold">
                 Customer Account
               </Badge>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+              <h1 className="relative text-2xl sm:text-3xl font-extrabold tracking-tight">
                 Hello, {user?.full_name || "Valued Customer"}!
               </h1>
-              <p className="mt-2 text-emerald-100 text-sm max-w-xl">
+              <p className="relative mt-2 text-white/70 text-sm max-w-xl">
                 Manage your profile details, default shipping destinations, and account security preferences.
               </p>
             </div>
@@ -191,13 +193,13 @@ export default function AccountOverviewPage() {
             {/* Quick Actions Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Link href="/orders" className="block group">
-                <Card className="h-full hover:border-emerald-600/50 hover:shadow-md transition-all cursor-pointer">
+                <Card className="h-full hover:border-ink/30 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-base cursor-pointer">
                   <CardContent className="p-5 flex items-start gap-3.5">
-                    <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 group-hover:scale-105 transition-transform">
+                    <div className="p-2.5 rounded-xl bg-cream text-ink group-hover:bg-brand-yellow group-hover:scale-105 transition-transform">
                       <Package className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-foreground group-hover:text-emerald-600 transition-colors text-sm">
+                      <h3 className="font-semibold text-foreground group-hover:text-ink transition-colors text-sm">
                         My Orders
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
@@ -227,13 +229,13 @@ export default function AccountOverviewPage() {
               </Link>
 
               <Link href="/account/addresses" className="block group">
-                <Card className="h-full hover:border-emerald-600/50 hover:shadow-md transition-all cursor-pointer">
+                <Card className="h-full hover:border-ink/30 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-base cursor-pointer">
                   <CardContent className="p-5 flex items-start gap-3.5">
                     <div className="p-2.5 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300 group-hover:scale-105 transition-transform">
                       <MapPin className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-foreground group-hover:text-emerald-600 transition-colors text-sm">
+                      <h3 className="font-semibold text-foreground group-hover:text-ink transition-colors text-sm">
                         Saved Addresses
                       </h3>
                       <p className="text-xs text-muted-foreground mt-0.5">
@@ -272,7 +274,7 @@ export default function AccountOverviewPage() {
                   </CardDescription>
                 </div>
                 <Link href="/orders">
-                  <Button variant="ghost" size="sm" className="text-xs text-emerald-600 hover:text-emerald-700 gap-1">
+                  <Button variant="ghost" size="sm" className="text-xs font-semibold text-ink hover:text-ink gap-1">
                     View All Orders
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Button>
@@ -326,7 +328,7 @@ export default function AccountOverviewPage() {
                             </Button>
                           </Link>
                           <Link href={`/orders/${ord.id}/track`}>
-                            <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1">
+                            <Button size="sm" className="h-7 text-xs bg-brand-yellow hover:bg-brand-yellow-dark text-ink gap-1">
                               <Truck className="h-3 w-3" />
                               Track
                             </Button>

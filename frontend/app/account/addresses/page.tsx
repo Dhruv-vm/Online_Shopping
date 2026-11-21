@@ -313,7 +313,7 @@ export default function AddressesPage() {
               {!formOpen && (
                 <Button
                   onClick={openAddForm}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm transition-colors shrink-0"
+                  className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-medium shadow-sm transition-colors shrink-0"
                 >
                   <Plus className="mr-1.5 h-4 w-4" /> Add New Address
                 </Button>
@@ -555,7 +555,7 @@ export default function AddressesPage() {
                       <Button
                         type="submit"
                         disabled={isSubmitting}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                        className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-medium"
                       >
                         {isSubmitting ? (
                           <>
@@ -604,7 +604,7 @@ export default function AddressesPage() {
                   </div>
                   <Button
                     onClick={openAddForm}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium mt-2"
+                    className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-medium mt-2"
                   >
                     <Plus className="mr-1.5 h-4 w-4" /> Add Your First Address
                   </Button>

@@ -223,7 +223,7 @@ export default function AdminPassportModerationPage() {
                 <option value="PRODUCT">Scope: Product Only</option>
               </select>
 
-              <Button type="submit" size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 cursor-pointer">
+              <Button type="submit" size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs h-9 px-4 cursor-pointer">
                 Search
               </Button>
             </div>
@@ -429,7 +429,7 @@ export default function AdminPassportModerationPage() {
                         size="sm"
                         disabled={isProcessing}
                         onClick={() => handleVerify(claim.id)}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 cursor-pointer"
+                        className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs h-8 cursor-pointer"
                       >
                         Verify & Publish
                       </Button>

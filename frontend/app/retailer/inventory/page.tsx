@@ -559,7 +559,7 @@ export default function RetailerInventoryPage() {
                   type="submit"
                   size="sm"
                   disabled={isSubmittingAdjust}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                 >
                   {isSubmittingAdjust ? "Updating Stock..." : "Confirm Stock Adjustment"}
                 </Button>

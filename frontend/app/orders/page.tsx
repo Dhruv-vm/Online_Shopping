@@ -36,7 +36,7 @@ function formatPrice(paise: number): string {
 function getStatusBadge(status: OrderStatus) {
   switch (status) {
     case "DELIVERED":
-      return <Badge className="bg-emerald-600 text-white hover:bg-emerald-700">Delivered</Badge>;
+      return <Badge className="bg-brand-yellow text-ink hover:bg-brand-yellow-dark">Delivered</Badge>;
     case "SHIPPED":
       return <Badge className="bg-blue-600 text-white hover:bg-blue-700">Shipped</Badge>;
     case "OUT_FOR_DELIVERY":
@@ -171,7 +171,7 @@ export default function OrdersPage() {
 
         {isAuthenticated && (
           <Link href="/products">
-            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs gap-1.5 shadow-xs">
+            <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1.5 shadow-xs">
               Continue Shopping
               <ArrowRight className="h-3.5 w-3.5" />
             </Button>
@@ -210,7 +210,7 @@ export default function OrdersPage() {
               type="submit"
               size="sm"
               disabled={guestLookupLoading}
-              className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+              className="h-9 text-xs bg-brand-yellow hover:bg-brand-yellow-dark text-ink shrink-0"
             >
               {guestLookupLoading ? (
                 <>
@@ -296,7 +296,7 @@ export default function OrdersPage() {
               </Button>
             )}
 
-            <Button type="submit" size="sm" className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Button type="submit" size="sm" className="h-9 text-xs bg-brand-yellow hover:bg-brand-yellow-dark text-ink">
               <Filter className="h-3.5 w-3.5 mr-1" />
               Apply
             </Button>
@@ -335,7 +335,7 @@ export default function OrdersPage() {
               {!isAuthenticated ? (
                 <>
                   <Link href="/login?redirect=/orders">
-                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
+                    <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs">
                       Sign In to Account
                     </Button>
                   </Link>
@@ -347,7 +347,7 @@ export default function OrdersPage() {
                 </>
               ) : (
                 <Link href="/products">
-                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
+                  <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs">
                     Start Shopping
                   </Button>
                 </Link>
@@ -410,7 +410,7 @@ export default function OrdersPage() {
                   <Link href={`/orders/${o.id}/track`}>
                     <Button
                       size="sm"
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-9 gap-1.5 shadow-xs"
+                      className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs h-9 gap-1.5 shadow-xs"
                     >
                       <Truck className="h-3.5 w-3.5" />
                       Track

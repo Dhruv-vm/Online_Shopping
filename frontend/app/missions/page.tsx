@@ -488,7 +488,7 @@ export default function MissionsPage() {
                   <Button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-md"
+                    className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold h-11 text-sm shadow-md"
                   >
                     {isSubmitting ? (
                       <>

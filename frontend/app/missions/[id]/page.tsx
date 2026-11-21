@@ -332,7 +332,7 @@ export default function MissionDetailPage({
             size="sm"
             onClick={handleAddToCart}
             disabled={isAddingToCart || selectedCount === 0}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-9 shadow-md"
+            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs h-9 shadow-md"
           >
             {isAddingToCart ? (
               <>
@@ -460,7 +460,7 @@ export default function MissionDetailPage({
                 </Button>
               </Link>
               <Link href="/search">
-                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink">
                   Browse Catalog
                 </Button>
               </Link>
@@ -731,7 +731,7 @@ export default function MissionDetailPage({
                           size="sm"
                           disabled={replacingAlt}
                           onClick={() => handleSelectAlternative(alt)}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8"
+                          className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs h-8"
                         >
                           {replacingAlt ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -792,7 +792,7 @@ export default function MissionDetailPage({
 
             <div className="flex items-center gap-2.5 pt-2">
               <Link href="/cart" className="flex-1">
-                <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold h-10">
+                <Button className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs font-semibold h-10">
                   <ShoppingCart className="h-3.5 w-3.5 mr-1.5" />
                   View Shopping Basket
                 </Button>

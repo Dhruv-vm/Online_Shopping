@@ -234,7 +234,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                   onClick={() => setSelectedImageIndex(idx)}
                   className={`relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition-all ${
                     selectedImageIndex === idx
-                      ? "border-emerald-600 ring-2 ring-emerald-600/20"
+                      ? "border-ink ring-2 ring-brand-yellow/60"
                       : "border-border hover:border-muted-foreground"
                   }`}
                 >
@@ -333,7 +333,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                           onClick={() => setSelectedListingId(listing.id)}
                           className={`p-2.5 rounded-lg border text-left transition-all flex flex-col justify-between text-xs ${
                             isSelected
-                              ? "border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/40 ring-1 ring-emerald-600"
+                              ? "border-ink bg-brand-yellow/10 ring-1 ring-ink"
                               : "border-border hover:border-muted-foreground bg-muted/20"
                           }`}
                         >
@@ -404,7 +404,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                     <Button
                       onClick={() => handleAddToCart(currentListing.id, quantity)}
                       disabled={isAdding}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 shadow-xs text-sm"
+                      className="flex-1 bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold h-11 shadow-xs text-sm"
                     >
                       {isAdding && activeAddingListingId === currentListing.id ? (
                         <>
@@ -425,7 +425,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       onClick={() => toggleCompare(product.slug)}
                       className={`h-11 px-4 border ${
                         isInCompare(product.slug)
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-600 dark:bg-emerald-950/40 font-semibold"
+                          ? "bg-ink text-white border-ink font-semibold hover:bg-charcoal"
                           : "hover:bg-muted"
                       }`}
                       title={isInCompare(product.slug) ? "Remove from comparison" : "Add to comparison"}
@@ -511,7 +511,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       onClick={() => setSelectedVariant(v)}
                       className={`flex flex-col items-start px-3.5 py-2 rounded-xl border text-xs font-medium transition-all ${
                         isSelected
-                          ? "border-emerald-600 bg-emerald-600/10 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-600"
+                          ? "border-ink bg-brand-yellow/20 text-ink ring-1 ring-ink"
                           : "border-border hover:border-muted-foreground text-foreground"
                       }`}
                     >
@@ -548,9 +548,9 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                     key={listing.id}
                     className={`overflow-hidden border transition-all ${
                       isSelected
-                        ? "border-emerald-600 bg-emerald-600/10 shadow-xs ring-1 ring-emerald-600/50"
+                        ? "border-ink bg-brand-yellow/15 shadow-xs ring-1 ring-ink/60"
                         : index === 0
-                        ? "border-emerald-600/50 bg-emerald-600/5 shadow-xs"
+                        ? "border-ink/40 bg-cream/60 shadow-xs"
                         : "border-border bg-card"
                     }`}
                   >
@@ -623,7 +623,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                             onClick={() => handleAddToCart(listing.id, 1)}
                             className={`h-8 px-3 text-xs font-semibold ${
                               isSelected || index === 0
-                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                ? "bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
                                 : "border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
                             }`}
                           >

@@ -56,7 +56,7 @@ export default function SaleStreamPage() {
       <PageTitle title={t("nav.saleStream")} subtitle="Live price drops, flash deals and hot sellers from nearby shops." />
       <div className="mb-4 flex flex-wrap gap-2">
         {TYPES.map((k) => (
-          <button key={k || "all"} onClick={() => setType(k)} className={`rounded-full border px-3 py-1 text-xs ${type === k ? "bg-emerald-600 text-white" : "bg-white"}`}>
+          <button key={k || "all"} onClick={() => setType(k)} className={`rounded-full border px-3 py-1 text-xs ${type === k ? "border-ink bg-ink text-white" : "bg-white hover:border-ink/40"}`}>
             {k ? k.replace("_", " ") : "All"}
           </button>
         ))}
@@ -102,7 +102,7 @@ export default function SaleStreamPage() {
                       setError(errorText(e));
                     }
                   }}
-                  className="rounded bg-emerald-600 px-3 py-1 text-white disabled:opacity-40"
+                  className="press rounded-full bg-brand-yellow px-3.5 py-1 font-semibold text-ink hover:bg-brand-yellow-dark disabled:opacity-40"
                 >
                   {t("common.addToBasket")}
                 </button>

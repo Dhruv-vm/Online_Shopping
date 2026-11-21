@@ -72,7 +72,7 @@ export function ProductFilters({
             onClick={() => onCategoryChange("")}
             className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-left text-xs font-medium transition-colors ${
               !selectedCategory
-                ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400 font-semibold"
+                ? "bg-brand-yellow/35 text-ink font-semibold"
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >
@@ -88,7 +88,7 @@ export function ProductFilters({
                 onClick={() => onCategoryChange(isSelected ? "" : cat.slug)}
                 className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-left text-xs font-medium transition-colors ${
                   isSelected
-                    ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400 font-semibold"
+                    ? "bg-brand-yellow/35 text-ink font-semibold"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
               >
@@ -113,7 +113,7 @@ export function ProductFilters({
             onClick={() => onRetailerChange("")}
             className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-left text-xs font-medium transition-colors ${
               !selectedRetailer
-                ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400 font-semibold"
+                ? "bg-brand-yellow/35 text-ink font-semibold"
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >
@@ -129,7 +129,7 @@ export function ProductFilters({
                 onClick={() => onRetailerChange(isSelected ? "" : ret.id)}
                 className={`flex items-center justify-between px-2.5 py-1.5 rounded-md text-left text-xs font-medium transition-colors ${
                   isSelected
-                    ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400 font-semibold"
+                    ? "bg-brand-yellow/35 text-ink font-semibold"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
               >

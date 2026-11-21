@@ -62,7 +62,7 @@ export function AccountNav() {
       {/* User Mini Card */}
       <div className="rounded-xl border bg-card p-5 shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-lg">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-yellow text-ink font-bold text-lg">
             {user?.full_name ? user.full_name.charAt(0).toUpperCase() : "U"}
           </div>
           <div className="flex-1 min-w-0">
@@ -93,11 +93,11 @@ export function AccountNav() {
               className={cn(
                 "flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors",
                 item.active
-                  ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold"
+                  ? "bg-brand-yellow/35 text-ink font-semibold"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
-              <Icon className={cn("h-4 w-4 shrink-0", item.active ? "text-emerald-600 dark:text-emerald-400" : "")} />
+              <Icon className={cn("h-4 w-4 shrink-0", item.active ? "text-ink" : "")} />
               {item.title}
             </Link>
           );

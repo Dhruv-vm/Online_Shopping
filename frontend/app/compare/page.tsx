@@ -113,7 +113,7 @@ export default function ComparePage() {
         </p>
         <div className="mt-8 flex justify-center gap-4">
           <Link href="/products">
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-2">
+            <Button className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold flex items-center gap-2">
               Browse Catalogue
               <ArrowRight className="h-4 w-4" />
             </Button>
@@ -253,7 +253,7 @@ export default function ComparePage() {
                           size="sm"
                           onClick={() => handleAddToCart(activeListing)}
                           disabled={addingListingId === activeListing.id}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs"
+                          className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs shadow-xs"
                         >
                           {addingListingId === activeListing.id ? (
                             <>

@@ -339,7 +339,7 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
               <Button
                 type="submit"
                 disabled={isSaving}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 gap-1.5 cursor-pointer"
+                className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs h-9 px-4 gap-1.5 cursor-pointer"
               >
                 <Save className="h-3.5 w-3.5" />
                 {isSaving ? "Saving..." : "Save Listing Attributes"}
@@ -365,7 +365,7 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
           <Button
             onClick={() => setShowClaimForm(!showClaimForm)}
             size="sm"
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1 cursor-pointer"
+            className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs gap-1 cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
             {showClaimForm ? "Close Form" : "Submit New Claim"}
@@ -502,7 +502,7 @@ export default function RetailerListingPassportPage({ params }: PageProps) {
                   type="submit"
                   disabled={isSubmittingClaim}
                   size="sm"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+                  className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-bold text-xs cursor-pointer"
                 >
                   {isSubmittingClaim ? "Submitting..." : "Submit for Moderation"}
                 </Button>
