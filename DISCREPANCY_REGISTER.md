@@ -7,6 +7,20 @@
 
 ---
 
+## V2C. Version 2.0 Phase C (payments verification & infrastructure) — 2026-11-21
+
+Branch `feature/version-2-development`; details in `VERSION_2_PHASE_C_REPORT.md`. No migration.
+
+| ID | Severity | Summary | Fix / status |
+| :--- | :---: | :--- | :--- |
+| V2C-F1 (audit D5, P1-2) | High | Outbox events only reached consumers through Kafka; with no broker, search and order projections never updated | `OUTBOX_DISPATCH=direct` delivers through the same publisher (claims, leases, retries, backoff) to the existing consumer handlers in-process; `consumer_inbox` deduplicates by event id. Default stays `kafka`; never switched automatically |
+| V2C-F2 (MC-12) | High | One OpenSearch index name for every database (`basket_products_*`): a demo/test database could read or write `basket_db`'s index | Index prefix now includes the database identity (`basket_<db>_<hash of host:port/db>`, no credentials); `OPENSEARCH_INDEX_PER_DATABASE` (default on); in direct mode the index is rebuilt from PostgreSQL before search trusts it |
+| V2C-F3 | High | Six event producers wrote payloads the envelope rejects, so those events could never be published in any mode: `order.created` (customer_id), `exchange.request_created`, `demand.pool_created`, `demand.pool_threshold_reached`, `auction.started` (pincode — PII), `price.changed` (no product_id) | Payloads corrected; PII guard unchanged. Existing FAILED/PENDING rows created before the fix are not rewritten |
+| V2C-F4 (audit D6) | Medium | Periodic jobs could run concurrently on several instances; overlapping auction closers notified the customer twice | Per-job `pg_try_advisory_xact_lock`; `FOR UPDATE SKIP LOCKED` claims in auction closing and group-buy settlement; notification only on this run's ACTIVE → COMPLETED transition |
+| V2C-F5 (audit D8) | Low | SQL echo tied to DEBUG flooded logs; the log "sanitizer" redacted nothing | `SQL_ECHO` flag (default off); one structured `job_run` line per job run; formatter masks URL credentials and password/secret/token values |
+| V2C-O1 | — | Razorpay failure+retry and webhook-only confirmation not verified | **Blocked**: needs webhook secret + public tunnel (runbook in `docs/RAZORPAY_SANDBOX_VERIFICATION.md`) |
+| V2C-O2 | Info | Admin overview `total_revenue_paise` does not subtract refunds (shown separately as `refunded_paise`) | Recorded, unchanged (v1.0 behaviour) |
+
 ## V2B. Version 2.0 Phase B (P0-2 discounts) — 2026-11-21
 
 Branch `feature/version-2-development`; details and evidence in `VERSION_2_PHASE_B_REPORT.md`. Migration `0035_discount_codes_redemptions` (additive, verified up/down/re-up).
