@@ -1208,7 +1208,7 @@ class AdminService:
             code_clean = req.code.strip().upper()
             existing = (
                 await self.session.execute(
-                    select(Discount.id).where(Discount.code == code_clean)
+                    select(Discount.id).where(func.upper(Discount.code) == code_clean)
                 )
             ).scalar_one_or_none()
             if existing:
@@ -1306,7 +1306,8 @@ class AdminService:
                 existing = (
                     await self.session.execute(
                         select(Discount.id).where(
-                            Discount.code == code_clean, Discount.id != deal_id
+                            func.upper(Discount.code) == code_clean,
+                            Discount.id != deal_id,
                         )
                     )
                 ).scalar_one_or_none()

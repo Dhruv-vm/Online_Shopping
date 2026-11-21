@@ -61,6 +61,7 @@ async def create_quote(
         cart=cart_ctx.cart,
         delivery_address_id=payload.delivery_address_id,
         delivery_state=payload.delivery_state,
+        discount_code=payload.discount_code,
     )
     return quote_service.format_quote_response(quote)
 

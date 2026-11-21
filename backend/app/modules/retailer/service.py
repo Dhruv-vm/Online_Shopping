@@ -1468,7 +1468,9 @@ class RetailerService:
         if req.code and req.code.strip():
             existing_code = (
                 await self.session.execute(
-                    select(Discount.id).where(Discount.code == req.code.strip())
+                    select(Discount.id).where(
+                        func.upper(Discount.code) == req.code.strip().upper()
+                    )
                 )
             ).scalar_one_or_none()
             if existing_code:

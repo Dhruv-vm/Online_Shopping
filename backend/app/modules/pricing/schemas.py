@@ -59,6 +59,9 @@ class QuoteItemResponse(BaseModel):
     total_tax_paise: int
     retailer_name: str
     retailer_state: str
+    # Discounts priced into this line (Version 2.0; empty when none or when a
+    # price award replaced them).
+    applied_discount_ids: list[uuid.UUID] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -86,6 +89,11 @@ class QuoteResponse(BaseModel):
     superseded_by_quote_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
+    # Version 2.0: the discount code that applied (None if none was supplied or
+    # it did not apply to any line) and every discount priced into the quote.
+    discount_code: str | None = None
+    discount_code_applied: bool = False
+    applied_discount_ids: list[uuid.UUID] = Field(default_factory=list)
     items: list[QuoteItemResponse]
     retailer_breakdowns: list[RetailerPricingBreakdownSchema] = Field(
         default_factory=list
@@ -95,6 +103,9 @@ class QuoteResponse(BaseModel):
 class QuoteCreateRequest(BaseModel):
     delivery_address_id: uuid.UUID | None = None
     delivery_state: str | None = None
+    # Optional discount code (exact, case-insensitive). Backend only for now:
+    # the checkout page does not send it yet.
+    discount_code: str | None = Field(default=None, max_length=50)
 
 
 class QuoteValidationIssue(BaseModel):
