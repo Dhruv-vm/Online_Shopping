@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -474,6 +476,39 @@ class TestKafkaProducer:
         assert isinstance(producer, AioKafkaEventProducer)
 
     @pytest.mark.asyncio
+    async def test_aiokafka_producer_start_passes_sasl_auth_kwargs(
+        self, test_ca_pem_file: Path
+    ):
+        from unittest.mock import patch
+
+        sasl_settings = Settings(
+            ENVIRONMENT="development",
+            KAFKA_BOOTSTRAP_SERVERS="kafka.example.com:9092",
+            KAFKA_SECURITY_PROTOCOL="SASL_SSL",
+            KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
+            KAFKA_SASL_USERNAME="avnadmin",
+            KAFKA_SASL_PASSWORD="test_password_123",
+            KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
+        )
+        producer = AioKafkaEventProducer(sasl_settings)
+        mock_instance = AsyncMock()
+        mock_instance.start = AsyncMock()
+
+        with patch(
+            "app.core.events.kafka.AIOKafkaProducer", return_value=mock_instance
+        ) as mock_cls:
+            await producer.start()
+            assert mock_cls.called
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["security_protocol"] == "SASL_SSL"
+            assert call_kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+            assert call_kwargs["sasl_plain_username"] == "avnadmin"
+            assert call_kwargs["sasl_plain_password"] == "test_password_123"
+            assert "ssl_context" in call_kwargs
+            assert call_kwargs["ssl_context"] is not None
+            assert call_kwargs["ssl_context"].verify_mode == ssl.CERT_REQUIRED
+
+    @pytest.mark.asyncio
     async def test_aiokafka_producer_send_not_started_raises(self):
         settings = Settings(
             KAFKA_BOOTSTRAP_SERVERS="kafka.internal:9092",
@@ -578,6 +613,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
         )
         assert s.has_kafka is True
         assert s.KAFKA_BOOTSTRAP_SERVERS == "basket-kafka-prod.aivencloud.com:21345"
@@ -594,6 +630,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
             KAFKA_PRODUCER_ACKS="all",
         )
         assert s.KAFKA_PRODUCER_ACKS == "all"
@@ -608,6 +645,7 @@ class TestKafkaConfigValidation:
             RAZORPAY_KEY_SECRET="productionsecret16chars",
             RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
             KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+            KAFKA_SECURITY_PROTOCOL="SSL",
             KAFKA_PRODUCER_ACKS="-1",
         )
         assert s_neg1.KAFKA_PRODUCER_ACKS == "-1"
@@ -623,6 +661,7 @@ class TestKafkaConfigValidation:
                 RAZORPAY_KEY_SECRET="productionsecret16chars",
                 RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
                 KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+                KAFKA_SECURITY_PROTOCOL="SSL",
                 KAFKA_PRODUCER_ACKS="0",
             )
 
@@ -637,6 +676,7 @@ class TestKafkaConfigValidation:
                 RAZORPAY_KEY_SECRET="productionsecret16chars",
                 RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
                 KAFKA_BOOTSTRAP_SERVERS="basket-kafka-prod.aivencloud.com:21345",
+                KAFKA_SECURITY_PROTOCOL="SSL",
                 KAFKA_PRODUCER_ACKS="1",
             )
 

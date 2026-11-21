@@ -1,215 +1,116 @@
-# BASKET — Project Control Centre
+# BASKET — Multi-Category Indian Retail Platform
 
-BASKET is a multi-category online retail platform for an Indian retail chain. This repository is designed for a two-developer team working exclusively in **Google Antigravity**, with ChatGPT used for architecture, prompt preparation, reviews, and debugging.
+> **Release:** **BASKET Version 2.0**  
+> **Active Feature Branch:** `feature/version-2-development`  
+> **Baseline Release:** `v1.0` (`68ac8ff`, preserved and unmodified)  
+> **Proposed Release Tag:** `v2.0`  
+> **Verification Status:** 604 Backend Tests Passed (100%), 129 Frontend Tests Passed (100%), 39 Migrations Applied (Head: `0039_mission_completion`), 56 Next.js App Router Routes Compiled, All Migration Rollbacks Verified, CI Green.
 
-## Read these first
-
-1. [`PROJECT_CHARTER.md`](PROJECT_CHARTER.md) — product scope and non-negotiable priorities.
-2. [`ARCHITECTURE.md`](ARCHITECTURE.md) — system boundaries and technical architecture.
-3. [`AGENT_RULES.md`](AGENT_RULES.md) — mandatory instructions for both Antigravity agents.
-4. [`AGENT_HANDOFF.md`](AGENT_HANDOFF.md) — the shared communication log between developers/agents.
-5. [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) — Git branches, integration, and daily workflow.
-6. [`QUALITY_GATES.md`](QUALITY_GATES.md) — definition of done and release gates.
-7. [`TASK_BREAKDOWN.md`](TASK_BREAKDOWN.md) — suggested ownership and implementation sequence.
-
-## Source of truth
-
-- Product scope: `PROJECT_CHARTER.md`
-- Architecture: `ARCHITECTURE.md`
-- Shared interfaces: `API_CONTRACTS.md`
-- Data ownership: `DATA_MODEL.md`
-- Decisions: `DECISIONS.md`
-- Cross-agent coordination: `AGENT_HANDOFF.md`
-
-If two documents conflict, stop and record the conflict in `AGENT_HANDOFF.md`. Do not silently choose one. The integration owner resolves it and records the decision in `DECISIONS.md`.
-
-## Quality principle
-
-**A small, complete, tested, demonstrable vertical slice is better than many unfinished features.** Mandatory commerce flow and real use of PostgreSQL, Kafka, and OpenSearch take priority over optional AI features.
+BASKET is an enterprise-grade, multi-category hyper-local e-commerce marketplace platform engineered for the Indian retail ecosystem (groceries & essentials, fashion & apparel, electronics, beauty & lifestyle).
 
 ---
 
-## Technology Stack
+## Master Documentation Suite
 
-### Frontend
-- **Framework:** Next.js 15 (App Router)
-- **UI & State:** React 19, Tailwind CSS, shadcn/ui primitives
-- **Language:** TypeScript with strict mode
-- **Animation:** Framer Motion (purposeful micro-interactions only)
-- **Client:** Centralized typed API client with structured error handling
+### Version 2.0 Release Documentation
+| Document | Description & Purpose |
+|---|---|
+| [`BASKET_V2_RELEASE_NOTES.md`](BASKET_V2_RELEASE_NOTES.md) | **Version 2.0 Release Notes:** Official release report, delivered capabilities, quality gates, and architecture enhancements. |
+| [`BASKET_V2_FINAL_AUDIT.md`](BASKET_V2_FINAL_AUDIT.md) | **Final Technical Audit:** Evidence-backed verification across Customer, Retailer, Admin, and Infrastructure. |
+| [`BASKET_V2_KNOWN_LIMITATIONS.md`](BASKET_V2_KNOWN_LIMITATIONS.md) | **Known Limitations & Dependencies:** Honest status of i18n coverage, external API keys, and auto-debit mandates. |
+| [`BASKET_V2_SETUP_GUIDE.md`](BASKET_V2_SETUP_GUIDE.md) | **Setup & Run Guide:** Local configuration, database setup, environment variables, and startup commands. |
+| [`BASKET_V2_DEMO_GUIDE.md`](BASKET_V2_DEMO_GUIDE.md) | **Product Demonstration Runbook:** Role-by-role presentation scripts, demo accounts, and end-to-end user journeys. |
+| [`BASKET_V2_HANDOFF.md`](BASKET_V2_HANDOFF.md) | **Engineering Handoff:** Architecture guidelines and boundaries for the incoming Branding, UI, and UX phase. |
 
-### Backend
-- **Framework:** FastAPI (Modular Monolith)
-- **ORM & Migrations:** SQLAlchemy 2.x (async) + Alembic
+### Technical & Historical Reference
+| Document | Description & Purpose |
+|---|---|
+| [`RELEASE_NOTES_V1.0.md`](RELEASE_NOTES_V1.0.md) | **Version 1.0 Release Notes:** Baseline Round 1 submission report and platform capabilities. |
+| [`PROJECT_ARCHITECTURE.md`](PROJECT_ARCHITECTURE.md) | **System Architecture:** Topology, security layers, HMAC quotes, outbox pattern, and data flows. |
+| [`BACKEND_AUDIT.md`](BACKEND_AUDIT.md) | **Backend Module Audit:** Audit of all 13 business modules, ORM models, transaction safety, and test coverage. |
+| [`API_INVENTORY.md`](API_INVENTORY.md) | **API Reference:** Comprehensive catalogue of FastAPI endpoints under `/api/v1`. |
+| [`DISCREPANCY_REGISTER.md`](DISCREPANCY_REGISTER.md) | **Technical Debt & Discrepancies:** Register of edge cases, contract alignments, and payment safeguards. |
+| [`VERSION_2_FEATURE_TRACKER.md`](VERSION_2_FEATURE_TRACKER.md) | **Version 2 Feature Tracker:** Evidence-based status register of all Version 2.0 items. |
+| [`CHANGELOG.md`](CHANGELOG.md) | **Project Changelog:** Release history following Keep a Changelog standards. |
+
+---
+
+## Core Technology Stack
+
+### Frontend (`frontend/`)
+- **Framework:** Next.js 15.5.29 (App Router) on Node.js 22 LTS
+- **UI & Components:** React 19.0.0, Tailwind CSS v4, Radix UI accessible primitives, Lucide React
+- **Language:** TypeScript with strict type checking
+- **Client Networking:** Centralized typed client (`lib/api.ts`) with Double-Submit CSRF integration
+- **Real-Time Client:** Shared `EventSource` (SSE) client (`lib/realtime.ts`) with focus-refresh
+- **Test Suite:** Vitest / Node Test Runner (129 component & integration tests)
+
+### Backend (`backend/`)
+- **Framework:** FastAPI modular monolith on Python 3.12
+- **ORM & Migrations:** SQLAlchemy 2.0.38 (asyncio / asyncpg) + Alembic (39 migrations applied, head `0039_mission_completion`)
 - **Validation & Settings:** Pydantic v2 + Pydantic Settings
-- **Server:** Uvicorn (ASGI)
-- **Quality & Testing:** pytest, pytest-asyncio, Ruff (linting & formatting)
+- **Authentication:** Argon2id password hashing + HTTP-only secure JWT cookies (HS256)
+- **ASGI Server:** Uvicorn with lifespan management
+- **Code Quality:** pytest, pytest-asyncio (604 unit/integration tests), Ruff (linting & formatting)
 
 ### Infrastructure & External Services
-- **System of Record:** Aiven PostgreSQL (orders, inventory, reservations, prices, users)
-- **Event Bus:** Aiven Apache Kafka (order domain events via Transactional Outbox)
-- **Search Engine:** Aiven OpenSearch (derived product search index)
-- **Payments:** Razorpay Sandbox (server-side webhook and signature verification)
+- **System of Record:** PostgreSQL 16 (`basket_db` / `basket_c1_demo`) — authoritative source of truth
+- **Transactional Outbox:** Dual-mode: Direct dispatch (`OUTBOX_DISPATCH=direct`) or Apache Kafka
+- **Search Engine:** OpenSearch 2.x with per-database index prefixes and transparent PostgreSQL FTS fallback
+- **Payment Gateway:** Razorpay dual-mode sandbox with server-side capture, webhook HMAC verification, and refund reconciliation
 
 ---
 
-## Monorepo Repository Structure
+## Quickstart & Local Setup
 
-```text
-basket/
-├── frontend/                     # Next.js 15 frontend application
-│   ├── app/                      # App router pages, layouts, globals
-│   ├── components/               # UI components (shadcn/ui & shared)
-│   ├── features/                 # Modular feature domains
-│   ├── lib/                      # Centralized API client and utilities
-│   ├── types/                    # Shared TypeScript types
-│   ├── package.json
-│   └── .env.example
-├── backend/                      # FastAPI modular monolith application
-│   ├── app/
-│   │   ├── api/                  # Versioned API routes (/api/v1) & dependencies
-│   │   ├── core/                 # Config, database engine, logging, exceptions
-│   │   ├── modules/              # Domain modules (catalogue, cart, orders, etc.)
-│   │   └── main.py               # Application factory & lifespan
-│   ├── alembic/                  # Database migration versions and harness
-│   ├── tests/                    # Pytest test suite
-│   ├── pyproject.toml
-│   └── .env.example
-├── docs/                         # Architecture diagrams and specifications
-├── infra/                        # Aiven infrastructure setup templates
-│   ├── aiven/
-│   └── .env.example
-├── scripts/                      # Bootstrap and verification scripts
-│   ├── dev-setup.sh              # One-command developer bootstrap
-│   └── verify-environment.sh     # Comprehensive foundation verification
-├── README.md                     # Project control centre (this file)
-├── PROJECT_CHARTER.md            # Vision, scope, and non-negotiables
-├── ARCHITECTURE.md               # System boundaries and data authority
-├── AGENT_RULES.md                # Mandatory agent guardrails and conventions
-├── AGENT_HANDOFF.md              # Shared communication and sync log
-├── API_CONTRACTS.md              # Baseline OpenAPI and REST interfaces
-├── DATA_MODEL.md                 # Entity relationships and migration rules
-├── DEVELOPMENT_WORKFLOW.md       # Git branches, PRs, and worktree routines
-├── TASK_BREAKDOWN.md             # Role assignments and phase tracking
-├── QUALITY_GATES.md              # Definition of Done and gate criteria
-└── DECISIONS.md                  # Architecture Decision Records (ADRs)
-```
+### 1. Manual Startup
 
----
-
-## Prerequisites
-
-- **Git:** >= 2.40
-- **Node.js:** >= 20.x (Node 22 LTS recommended)
-- **npm:** >= 10.x
-- **Python:** Python 3.12 (managed via `uv` or `venv`)
-- **uv:** `>= 0.11` (for ultra-fast Python virtualenv and dependency installation)
-- **PostgreSQL Client (Optional):** `libpq` / `psql` if manual CLI querying is needed
-
----
-
-## Local Setup Instructions
-
-### 1. Quick Bootstrap (One Command)
-Run the automated bootstrap script from the repository root:
-```bash
-./scripts/dev-setup.sh
-```
-
-### 2. Manual Setup
-
-#### Backend Setup
-```bash
-cd backend
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
-cp .env.example .env
-```
-
-#### Frontend Setup
-```bash
-cd frontend
-npm install
-cp .env.example .env.local
-```
-
----
-
-## Environment Configuration
-
-Both backend and frontend load settings from environment files. Templates with placeholders are provided:
-
-- `backend/.env.example` -> `backend/.env`
-  - `DATABASE_URL`: Aiven PostgreSQL connection URL with `sslmode=require`.
-  - `SECRET_KEY`: Cryptographically secure random secret key (minimum 32 characters).
-  - `CORS_ORIGINS`: Allowed client origins (`["http://localhost:3000"]`).
-  - `KAFKA_*` & `OPENSEARCH_*`: Aiven service parameters.
-- `frontend/.env.example` -> `frontend/.env.local`
-  - `NEXT_PUBLIC_API_URL`: Backend URL (defaults to `http://localhost:8000`).
-
-> **Security Note:** Never commit `.env` or `.env.local` files containing real secrets to source control.
-
----
-
-## Startup Commands
-
-### Start Backend Development Server
+#### Terminal 1 — Backend API
 ```bash
 cd backend
 source .venv/bin/activate
-uvicorn app.main:app --reload --port 8000
+export DATABASE_URL="postgresql+asyncpg://<username>@localhost:5432/basket_c1_demo"
+export OUTBOX_DISPATCH="direct"
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 - API Base: `http://localhost:8000`
-- API Docs: `http://localhost:8000/docs`
-- Health Endpoint: `http://localhost:8000/health`
-- Readiness Endpoint: `http://localhost:8000/ready`
+- Interactive API Docs: `http://localhost:8000/docs`
+- Health Probe: `http://localhost:8000/health`
+- Readiness Probe: `http://localhost:8000/ready`
 
-### Start Frontend Development Server
+#### Terminal 2 — Frontend Storefront & Portals
 ```bash
 cd frontend
 npm run dev
 ```
-- Storefront & Control Panel: `http://localhost:3000`
+- Application URL: `http://localhost:3000`
+
+#### Terminal 3 (Optional) — Webhook Tunnel
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
 
 ---
 
-## Testing & Quality Assurance Commands
+## Quality Assurance & Verification Commands
 
-### Backend Checks
 ```bash
-cd backend
-source .venv/bin/activate
+# 1. Full Backend Test Suite (isolated test database)
+cd backend && unset DATABASE_URL && .venv/bin/python -m pytest -q -p no:cacheprovider
 
-# Run Pytest suite
-pytest -v
+# 2. Feature-by-Feature API Audit (16 areas)
+./scripts/audit-features.sh
 
-# Run Ruff linter
-ruff check .
+# 3. Database Migration Up/Down/Rollback Verification
+./scripts/verify-migrations.sh
 
-# Run Ruff formatter check
-ruff format --check .
+# 4. Code Quality & Linting
+cd backend && .venv/bin/ruff check .
+cd frontend && npm run lint
 
-# Inspect Alembic migration heads
-alembic heads
-```
-
-### Frontend Checks
-```bash
+# 5. Frontend Tests, Types, and Production Build
 cd frontend
-
-# Run TypeScript strict type-check
+npm test
 npm run type-check
-
-# Run Next.js linter
-npm run lint
-
-# Build production bundle
 npm run build
-```
-
-### Full Repository Verification Gate
-To run all verification checks across both frontend and backend in one command:
-```bash
-./scripts/verify-environment.sh
 ```

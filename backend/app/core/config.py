@@ -1,10 +1,17 @@
+from pathlib import Path
+
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_CONFIG_FILE = Path(__file__).resolve()
+_APP_DIR = _CONFIG_FILE.parent.parent  # backend/app
+_BACKEND_DIR = _APP_DIR.parent  # backend
+_ROOT_DIR = _BACKEND_DIR.parent  # Online_Shopping (repo root)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=[".env", "backend/.env"],
+        env_file=[str(_BACKEND_DIR / ".env"), str(_ROOT_DIR / ".env"), ".env"],
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -14,6 +21,9 @@ class Settings(BaseSettings):
     # Application
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
+    # Log every SQL statement (SQLAlchemy echo). Independent of DEBUG; off by
+    # default because it floods the logs (Version 2.0 C4).
+    SQL_ECHO: bool = False
     PROJECT_NAME: str = "BASKET Backend"
     API_V1_STR: str = "/api/v1"
     HOST: str = "0.0.0.0"
@@ -36,7 +46,11 @@ class Settings(BaseSettings):
         "insecure-csrf-secret-key-change-in-production"
     )
     ALLOWED_HOSTS: list[str] = ["*"]
+    # Number of trusted reverse proxies in front of the API. X-Forwarded-For is
+    # ignored unless this is > 0 (prevents rate-limit bypass via spoofed headers).
+    TRUSTED_PROXY_COUNT: int = 0
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGIN_REGEX: str | None = None
 
     # Database (Aiven PostgreSQL)
     DATABASE_URL: str | None = None
@@ -53,6 +67,32 @@ class Settings(BaseSettings):
 
     # Inventory Reservation Policy (Phase 2D)
     RESERVATION_TTL_MINUTES: int = 10  # 10-minute hold for active stock reservation
+
+    # In-process background workers (outbox publisher, reservation expiry,
+    # payment reconciliation). Disable when running dedicated worker processes.
+    BACKGROUND_WORKERS_ENABLED: bool = True
+    OUTBOX_PUBLISHER_ENABLED: bool = True
+    # How outbox events reach their consumers (Version 2.0 C2):
+    #   "kafka"  – publish to Kafka; consumers read from Kafka (multi-instance).
+    #   "direct" – deliver in-process to the same consumer handlers (single
+    #              instance, no broker). Kafka consumers are not started.
+    # Never switched automatically.
+    OUTBOX_DISPATCH: str = "kafka"
+    RESERVATION_CLEANUP_INTERVAL_SECONDS: float = 60.0
+    PAYMENT_RECONCILE_INTERVAL_SECONDS: float = 120.0
+    PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS: float = 300.0
+    PHASE3_FAST_JOB_INTERVAL_SECONDS: float = 15.0
+    PHASE3_SLOW_JOB_INTERVAL_SECONDS: float = 3600.0
+
+    # Phase 3 marketplace policy defaults
+    DEMAND_POOL_DEFAULT_THRESHOLD: int = (
+        2  # unique customers before retailers see a pool
+    )
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
+    # Phase 3I OCR provider (unset = feature reports OCR_PROVIDER_UNAVAILABLE)
+    OCR_PROVIDER: str | None = None
+    OCR_PROVIDER_URL: str | None = None
+    OCR_PROVIDER_API_KEY: SecretStr | None = None
 
     # Internal Service Security (Phase 2D - background worker crons, internal tasks)
     # Must be set via environment variable. No hardcoded default is permitted in production.
@@ -100,11 +140,34 @@ class Settings(BaseSettings):
     KAFKA_CONSUMER_MAX_RETRIES: int = 5
     KAFKA_DLQ_TOPIC: str = "basket.events.dead-letter"
 
+    # Media storage. "local" stores validated uploads on disk under MEDIA_ROOT
+    # and serves them at MEDIA_PUBLIC_BASE_URL (development / single node).
+    # "none" disables uploads (the API answers 503 MEDIA_STORAGE_UNAVAILABLE).
+    # Production needs object storage (S3-compatible) — not implemented yet.
+    MEDIA_STORAGE: str = "local"
+    MEDIA_ROOT: str = str(_BACKEND_DIR / "media")
+    # Verification documents: stored outside the public media root and only
+    # downloadable by admins through an authenticated endpoint.
+    MEDIA_PRIVATE_ROOT: str = str(_BACKEND_DIR / "media_private")
+    MEDIA_PUBLIC_BASE_URL: str = "http://localhost:8000/media"
+    MEDIA_MAX_BYTES: int = 5 * 1024 * 1024
+
     # OpenSearch (Aiven OpenSearch)
     OPENSEARCH_URL: str | None = None
     OPENSEARCH_USERNAME: str | None = None
     OPENSEARCH_PASSWORD: SecretStr | None = None
     OPENSEARCH_INDEX_PREFIX: str = "basket"
+    # Append the database identity (name + short hash of host:port/name) to the
+    # index prefix so two databases can never share an index (Version 2.0 C2).
+    OPENSEARCH_INDEX_PER_DATABASE: bool = True
+    OPENSEARCH_VERIFY_CERTS: bool = True
+    OPENSEARCH_TIMEOUT_SECONDS: float = 5.0
+    OPENSEARCH_MAX_RETRIES: int = 3
+    OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+    OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
+    # Search uses PostgreSQL while the oldest unpublished outbox event is older
+    # than this (the OpenSearch index would be stale).
+    SEARCH_INDEX_MAX_LAG_SECONDS: int = 300
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -224,6 +287,14 @@ class Settings(BaseSettings):
             )
         return protocol
 
+    @field_validator("OUTBOX_DISPATCH", mode="after")
+    @classmethod
+    def validate_outbox_dispatch(cls, value: str) -> str:
+        mode = (value or "").strip().lower()
+        if mode not in ("kafka", "direct"):
+            raise ValueError("OUTBOX_DISPATCH must be 'kafka' or 'direct'")
+        return mode
+
     @field_validator("KAFKA_PRODUCER_ACKS", mode="after")
     @classmethod
     def validate_kafka_producer_acks(cls, v: str, info) -> str:
@@ -298,9 +369,90 @@ class Settings(BaseSettings):
             raise ValueError("OUTBOX_BATCH_SIZE must be between 1 and 20.")
         return v
 
+    @field_validator("KAFKA_SSL_CA_LOCATION", mode="after")
+    @classmethod
+    def resolve_kafka_ssl_ca_location(cls, v: str | None) -> str | None:
+        if not v or not v.strip():
+            return None
+        ca_str = v.strip()
+        p = Path(ca_str)
+        if p.is_file():
+            return str(p.resolve())
+        # Try relative to repo root
+        repo_p = _ROOT_DIR / ca_str
+        if repo_p.is_file():
+            return str(repo_p.resolve())
+        # Strip potential repo root directory duplicate prefix (e.g. Online_Shopping/...)
+        if ca_str.startswith("Online_Shopping/"):
+            sub_p = _ROOT_DIR / ca_str[len("Online_Shopping/") :]
+            if sub_p.is_file():
+                return str(sub_p.resolve())
+        return ca_str
+
+    @field_validator("OPENSEARCH_URL", mode="before")
+    @classmethod
+    def clean_opensearch_url(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            # Strip embedded basic auth credentials if present (e.g. https://user:pass@host:port)
+            if "@" in s:
+                try:
+                    from urllib.parse import urlparse, urlunparse
+
+                    p = urlparse(s)
+                    if p.username or p.password:
+                        netloc = p.hostname or ""
+                        if p.port:
+                            netloc += f":{p.port}"
+                        return urlunparse(
+                            (p.scheme, netloc, p.path, p.params, p.query, p.fragment)
+                        ).rstrip("/")
+                except Exception:
+                    pass
+            return s.rstrip("/")
+        return str(v)
+
+    @field_validator("OPENSEARCH_URL", mode="after")
+    @classmethod
+    def validate_opensearch_url(cls, v: str | None, info) -> str | None:
+        if not v:
+            return None
+        env = str(info.data.get("ENVIRONMENT", "development")).lower()
+        if env == "production":
+            if not v.startswith("https://"):
+                raise ValueError("OPENSEARCH_URL must use https:// in production.")
+            cleaned_lower = v.lower()
+            if (
+                "localhost" in cleaned_lower
+                or "127.0.0.1" in cleaned_lower
+                or "mock" in cleaned_lower
+            ):
+                raise ValueError(
+                    "OPENSEARCH_URL in production cannot use mock or localhost addresses."
+                )
+        return v
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        if self.CORS_ORIGIN_REGEX is not None:
+            return self.CORS_ORIGIN_REGEX
+        if not self.is_production:
+            return (
+                r"^https?://(localhost|127\.0\.0\.1|"
+                r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+                r"192\.168\.\d{1,3}\.\d{1,3}|"
+                r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|"
+                r"[a-zA-Z0-9-]+\.trycloudflare\.com)(:\d+)?$"
+            )
+        return None
 
     @property
     def has_database(self) -> bool:
@@ -311,6 +463,10 @@ class Settings(BaseSettings):
         return bool(
             self.KAFKA_BOOTSTRAP_SERVERS and self.KAFKA_BOOTSTRAP_SERVERS.strip()
         )
+
+    @property
+    def has_opensearch(self) -> bool:
+        return bool(self.OPENSEARCH_URL and self.OPENSEARCH_URL.strip())
 
 
 settings = Settings()

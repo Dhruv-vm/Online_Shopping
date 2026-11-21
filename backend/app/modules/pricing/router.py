@@ -9,10 +9,10 @@ from app.api.deps import get_db
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     CartContext,
-    get_cart_context,
     get_current_user_optional,
+    get_shopping_cart_context,
 )
-from app.modules.identity.dependencies import get_current_user
+from app.modules.identity.dependencies import get_current_user, verify_csrf_token
 from app.modules.identity.models import User
 from app.modules.pricing.quote_service import QuoteService
 from app.modules.pricing.schemas import (
@@ -21,7 +21,7 @@ from app.modules.pricing.schemas import (
     QuoteValidationResponse,
 )
 
-router = APIRouter(tags=["pricing-quotes"])
+router = APIRouter(tags=["pricing-quotes"], dependencies=[Depends(verify_csrf_token)])
 
 
 def _extract_ownership_identifiers(
@@ -53,7 +53,7 @@ def _extract_ownership_identifiers(
 )
 async def create_quote(
     payload: QuoteCreateRequest,
-    cart_ctx: Annotated[CartContext, Depends(get_cart_context)],
+    cart_ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> QuoteResponse:
     quote_service = QuoteService(db)
@@ -61,6 +61,7 @@ async def create_quote(
         cart=cart_ctx.cart,
         delivery_address_id=payload.delivery_address_id,
         delivery_state=payload.delivery_state,
+        discount_code=payload.discount_code,
     )
     return quote_service.format_quote_response(quote)
 
@@ -117,7 +118,7 @@ async def validate_quote(
 )
 async def refresh_quote(
     quote_id: uuid.UUID,
-    cart_ctx: Annotated[CartContext, Depends(get_cart_context)],
+    cart_ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> QuoteResponse:

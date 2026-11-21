@@ -14,7 +14,8 @@ from app.modules.catalogue.models import (
     ProductVariant,
 )
 from app.modules.identity.models import Address
-from app.modules.pricing.discount_service import DiscountService
+from app.modules.pricing.awards import best_award_for_line
+from app.modules.pricing.discount_service import DiscountLine, DiscountService
 from app.modules.pricing.models import (
     CheckoutQuote,
     CheckoutQuoteItem,
@@ -46,8 +47,12 @@ class QuoteService:
         cart: Cart,
         delivery_address_id: uuid.UUID | None = None,
         delivery_state: str | None = None,
+        discount_code: str | None = None,
     ) -> CheckoutQuote:
-        """Generate a server-authoritative, persistent pricing quote from a cart."""
+        """Generate a server-authoritative, persistent pricing quote from a cart.
+
+        ``discount_code`` (optional) unlocks coded deals; an invalid code raises
+        422 INVALID_DISCOUNT_CODE before anything is changed."""
         cart_repo = CartRepository(self.session)
         cart_items = await cart_repo.get_cart_items(cart.id)
         if not cart_items:
@@ -145,6 +150,33 @@ class QuoteService:
                     },
                 )
 
+        # Version 2.0 discount policy, priced once for the whole basket: coded
+        # deals need their code, minimum orders use the pre-discount subtotal of
+        # the covered lines, one platform deal + one retailer offer per line.
+        basket_discounts = await self.discount_service.resolve_basket_discounts(
+            [
+                DiscountLine(
+                    listing_id=item.listing_id,
+                    retailer_id=listings_map[item.listing_id].retailer_id,
+                    product_id=(
+                        listings_map[item.listing_id].variant.product_id
+                        if listings_map[item.listing_id].variant
+                        else None
+                    ),
+                    category_id=(
+                        listings_map[item.listing_id].variant.product.category_id
+                        if listings_map[item.listing_id].variant
+                        and listings_map[item.listing_id].variant.product
+                        else None
+                    ),
+                    unit_price_paise=listings_map[item.listing_id].selling_price_paise,
+                    quantity=item.quantity,
+                )
+                for item in cart_items
+            ],
+            discount_code,
+        )
+
         # Mark existing active quotes for this owner as SUPERSEDED
         if cart.customer_id:
             old_quotes_stmt = select(CheckoutQuote).where(
@@ -197,18 +229,25 @@ class QuoteService:
             unit_orig_price = listing.original_price_paise
             unit_selling_price = listing.selling_price_paise
 
-            # Check applicable discounts
-            discounts = (
-                await self.discount_service.get_applicable_discounts_for_listing(
-                    listing_id=listing.id,
-                    selling_price_paise=unit_selling_price,
-                )
+            line_discount = basket_discounts.lines[listing.id]
+            unit_discount = line_discount.unit_discount_paise
+            unit_discounted_price = line_discount.unit_price_paise
+            line_discount_ids = line_discount.applied_ids
+
+            # Phase 3: customer-specific price awards (negotiation, group buy,
+            # RFQ, reverse auction). Applied only when better than the public
+            # price and when the award covers the whole line quantity.
+            award = await best_award_for_line(
+                self.session,
+                customer_id=cart.customer_id,
+                listing_id=listing.id,
+                quantity=item.quantity,
             )
-            unit_discount, unit_discounted_price = (
-                self.discount_service.calculate_unit_discount(
-                    unit_selling_price, discounts
-                )
-            )
+            if award is not None and award.unit_price_paise < unit_discounted_price:
+                unit_discounted_price = int(award.unit_price_paise)
+                unit_discount = unit_selling_price - unit_discounted_price
+                award.quote_id = quote_id
+                line_discount_ids = []  # the award replaces the discounts
 
             line_selling_total = unit_discounted_price * item.quantity
             line_discount_total = unit_discount * item.quantity
@@ -245,6 +284,7 @@ class QuoteService:
                 total_tax_paise=tax_res["total_tax_paise"],
                 retailer_name=retailer_name,
                 retailer_state=retailer_state,
+                applied_discount_ids=line_discount_ids,
             )
             quote_items.append(quote_item)
 
@@ -271,6 +311,17 @@ class QuoteService:
 
         total_payable_paise = total_subtotal_paise + total_delivery_fee_paise
 
+        # Record the code only if a coded discount is actually priced in (a
+        # price award can replace it on a line).
+        priced_ids = {
+            uuid.UUID(i) for qi in quote_items for i in qi.applied_discount_ids
+        }
+        quote_code = (
+            basket_discounts.discount_code
+            if priced_ids & basket_discounts.code_discount_ids
+            else None
+        )
+
         quote = CheckoutQuote(
             id=quote_id,
             customer_id=cart.customer_id,
@@ -278,6 +329,7 @@ class QuoteService:
             cart_id=cart.id,
             delivery_address_id=resolved_address_id,
             delivery_state=resolved_delivery_state,
+            discount_code=quote_code,
             subtotal_paise=total_subtotal_paise,
             discount_total_paise=total_discount_paise,
             delivery_fee_paise=total_delivery_fee_paise,
@@ -487,6 +539,7 @@ class QuoteService:
             cart=cart,
             delivery_address_id=old_quote.delivery_address_id,
             delivery_state=old_quote.delivery_state,
+            discount_code=old_quote.discount_code,
         )
 
         old_quote.status = QuoteStatus.SUPERSEDED.value
@@ -567,6 +620,15 @@ class QuoteService:
                 "superseded_by_quote_id": quote.superseded_by_quote_id,
                 "created_at": quote.created_at,
                 "updated_at": quote.updated_at,
+                "discount_code": quote.discount_code,
+                "discount_code_applied": quote.discount_code is not None,
+                "applied_discount_ids": sorted(
+                    {
+                        i
+                        for item in quote.items
+                        for i in (item.applied_discount_ids or [])
+                    }
+                ),
                 "items": quote.items,
                 "retailer_breakdowns": retailer_breakdowns,
             }

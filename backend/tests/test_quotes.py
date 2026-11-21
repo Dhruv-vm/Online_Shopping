@@ -8,23 +8,7 @@ from sqlalchemy import update
 from app.core.database import get_session_factory
 from app.modules.catalogue.models import ProductListing, Retailer
 from app.modules.pricing.models import CheckoutQuote
-
-
-async def get_test_listing(async_client: AsyncClient, min_stock: int = 5) -> dict:
-    """Helper to fetch an active product listing with sufficient stock."""
-    response = await async_client.get("/api/v1/products?limit=10")
-    assert response.status_code == 200
-    for prod in response.json()["items"]:
-        detail_resp = await async_client.get(f"/api/v1/products/{prod['id']}")
-        assert detail_resp.status_code == 200
-        for variant in detail_resp.json().get("variants", []):
-            for listing in variant.get("listings", []):
-                if (
-                    listing.get("is_active")
-                    and listing.get("available_quantity", 0) >= min_stock
-                ):
-                    return listing
-    raise RuntimeError("No active test listing with sufficient stock found.")
+from tests.factories import create_test_listing, get_test_listing
 
 
 @pytest.mark.asyncio
@@ -114,7 +98,11 @@ async def test_quote_generation_authenticated_with_intra_state_gst(
     address_id = addr_resp.json()["id"]
 
     # 3. Add item from Croma (KA retailer) to cart
-    listing = await get_test_listing(async_client)
+    listing = await create_test_listing(
+        retailer_name="Croma KA",
+        retailer_state="KA",
+        gst_rate_basis_points=1800,
+    )
     add_resp = await async_client.post(
         "/api/v1/cart/items",
         json={"listing_id": listing["id"], "quantity": 1},
@@ -176,7 +164,11 @@ async def test_quote_generation_inter_state_gst(async_client: AsyncClient):
     address_id = addr_resp.json()["id"]
 
     # 3. Add item from Croma (KA retailer) to cart
-    listing = await get_test_listing(async_client)
+    listing = await create_test_listing(
+        retailer_name="Croma KA",
+        retailer_state="KA",
+        gst_rate_basis_points=1800,
+    )
     await async_client.post(
         "/api/v1/cart/items",
         json={"listing_id": listing["id"], "quantity": 1},

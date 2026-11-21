@@ -70,11 +70,28 @@ async def validation_exception_handler(
         for err in exc.errors()
     ]
     logger.info("Validation error on %s: %s", request.url.path, details)
+
+    # Build actionable field-level validation error message
+    error_parts: list[str] = []
+    for err in exc.errors():
+        loc = err.get("loc", ())
+        field_parts = [str(x) for x in loc if str(x) != "body"]
+        field_name = ".".join(field_parts) if field_parts else "payload"
+        msg = err.get("msg", "Invalid value")
+        error_parts.append(f"{field_name}: {msg}")
+
+    field_summary = "; ".join(error_parts) if error_parts else None
+    error_message = (
+        f"The request payload validation failed: {field_summary}"
+        if field_summary
+        else "The request payload validation failed."
+    )
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=format_error_response(
             code="VALIDATION_ERROR",
-            message="The request payload validation failed.",
+            message=error_message,
             request_id=request_id,
             details=details,
         ),

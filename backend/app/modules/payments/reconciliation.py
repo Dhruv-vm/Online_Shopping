@@ -53,6 +53,7 @@ class ReconciliationService:
         batch_size: int = 50,
         max_age_minutes: int = 1440,
         pending_cutoff_minutes: int = 5,
+        order_id: uuid.UUID | None = None,
     ) -> ReconcilePendingResponse:
         """Automated reconciliation for ambiguous attempts, pending payments, and stuck webhook leases."""
         now = datetime.now(UTC)
@@ -103,7 +104,7 @@ class ReconciliationService:
 
         # 2. Reconcile pending payments older than cutoff (Missed-Webhook Recovery)
         pending_payments = await self.repo.get_pending_payments_for_reconciliation(
-            cutoff_datetime=cutoff_pending, limit=batch_size
+            cutoff_datetime=cutoff_pending, limit=batch_size, order_id=order_id
         )
         for payment in pending_payments:
             if not payment.provider_order_id:
@@ -264,22 +265,40 @@ class ReconciliationService:
                                 refund.order_id
                             )
                             if locked_order:
-                                order_processed_sum = (
-                                    await self.repo.get_processed_refunds_sum_for_order(
+                                if locked_order.fulfilling_capture_id:
+                                    fulfilling_refunds_sum = await self.repo.get_processed_refunds_sum_for_capture(
+                                        locked_order.fulfilling_capture_id
+                                    )
+                                    if (
+                                        fulfilling_refunds_sum
+                                        >= locked_order.total_payable_paise
+                                    ):
+                                        locked_order.payment_status = (
+                                            PaymentStatus.REFUNDED.value
+                                        )
+                                    elif fulfilling_refunds_sum > 0:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.PARTIALLY_REFUNDED.value
+                                        )
+                                    else:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.SUCCEEDED.value
+                                        )
+                                else:
+                                    order_processed_sum = await self.repo.get_processed_refunds_sum_for_order(
                                         refund.order_id
                                     )
-                                )
-                                if (
-                                    order_processed_sum
-                                    >= locked_order.total_payable_paise
-                                ):
-                                    locked_order.payment_status = (
-                                        PaymentStatus.REFUNDED.value
-                                    )
-                                elif order_processed_sum > 0:
-                                    locked_order.payment_status = (
-                                        PaymentStatus.PARTIALLY_REFUNDED.value
-                                    )
+                                    if (
+                                        order_processed_sum
+                                        >= locked_order.total_payable_paise
+                                    ):
+                                        locked_order.payment_status = (
+                                            PaymentStatus.REFUNDED.value
+                                        )
+                                    elif order_processed_sum > 0:
+                                        locked_order.payment_status = (
+                                            PaymentStatus.PARTIALLY_REFUNDED.value
+                                        )
                         elif rzp_rfnd.get("status") == "failed":
                             if (
                                 locked_rfnd.status
@@ -506,6 +525,15 @@ class ReconciliationService:
             locked_order.version += 1
             locked_order.status = OrderStatus.CANCELLED.value
             locked_order.payment_status = PaymentStatus.FAILED.value
+
+            # Version 2.0: payment window expired unpaid → discount uses back.
+            from app.modules.pricing.redemptions import release_discount_usage
+
+            await release_discount_usage(
+                self.session,
+                order_id=locked_order.id,
+                reason="PAYMENT_WINDOW_EXPIRED",
+            )
 
             history = OrderStatusHistory(
                 order_id=locked_order.id,

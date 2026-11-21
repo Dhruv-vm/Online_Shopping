@@ -22,10 +22,10 @@ class CatalogueService:
     def __init__(self, session: AsyncSession):
         self.repo = CatalogueRepository(session)
 
-    async def get_categories(self) -> list[CategorySchema]:
+    async def get_categories(self, top_level_only: bool = True) -> list[CategorySchema]:
         """Fetch all active categories with product counts."""
         categories_with_count = await self.repo.get_categories_with_count(
-            active_only=True
+            active_only=True, top_level_only=top_level_only
         )
         return [
             CategorySchema(
@@ -77,6 +77,14 @@ class CatalogueService:
             for listing in variant.listings:
                 if not listing.is_active:
                     continue
+                retailer = getattr(listing, "retailer", None)
+                if retailer is not None:
+                    if (
+                        not retailer.is_active
+                        or getattr(retailer, "verification_status", "VERIFIED")
+                        != "VERIFIED"
+                    ):
+                        continue
                 retailer_ids.add(listing.retailer_id)
                 selling_prices.append(listing.selling_price_paise)
                 original_prices.append(listing.original_price_paise)
@@ -174,7 +182,14 @@ class CatalogueService:
             variant_stock = 0
 
             for listing in variant.listings:
-                if not listing.is_active or not listing.retailer.is_active:
+                retailer = getattr(listing, "retailer", None)
+                if (
+                    not listing.is_active
+                    or not retailer
+                    or not retailer.is_active
+                    or getattr(retailer, "verification_status", "VERIFIED")
+                    != "VERIFIED"
+                ):
                     continue
 
                 on_hand = listing.inventory.on_hand_quantity if listing.inventory else 0
@@ -194,8 +209,9 @@ class CatalogueService:
                     ProductListingDetailSchema(
                         id=listing.id,
                         retailer_id=listing.retailer_id,
-                        retailer_name=listing.retailer.name,
-                        retailer_rating=listing.retailer.rating,
+                        retailer_name=retailer.name,
+                        retailer_rating=retailer.rating,
+                        retailer_state=retailer.state,
                         seller_sku=listing.seller_sku,
                         original_price_paise=listing.original_price_paise,
                         selling_price_paise=listing.selling_price_paise,

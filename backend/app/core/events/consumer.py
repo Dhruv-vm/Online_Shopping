@@ -17,6 +17,7 @@ from app.core.events.inbox import ConsumerInbox, InboxStatus, get_inbox_record
 from app.core.events.kafka import (
     EventProducer,
     KafkaConnectionError,
+    build_kafka_auth_kwargs,
     get_kafka_producer,
 )
 from app.core.events.outbox_publisher import (
@@ -346,22 +347,32 @@ class BaseKafkaConsumer(EventConsumer):
         if not self._producer.is_connected:
             await self._producer.start()
 
+        built_here = self._consumer is None
         if self._consumer is None:
-            # Build real AIOKafkaConsumer with cooperative sticky assignor
-            self._consumer = AIOKafkaConsumer(
-                *self._topics,
-                bootstrap_servers=self._settings.KAFKA_BOOTSTRAP_SERVERS,
-                group_id=self._consumer_group,
-                enable_auto_commit=False,
-                auto_offset_reset=self._settings.KAFKA_CONSUMER_AUTO_OFFSET_RESET
+            # Real AIOKafkaConsumer. aiokafka takes assignor *classes*; the Java/librdkafka
+            # name "cooperative-sticky" made every group join fail on a real broker
+            # (AttributeError: 'str' object has no attribute 'metadata'), so the default
+            # range assignor is used. Per-key ordering comes from partitioning, not the assignor.
+            consumer_kwargs: dict[str, Any] = {
+                "bootstrap_servers": self._settings.KAFKA_BOOTSTRAP_SERVERS,
+                "group_id": self._consumer_group,
+                "enable_auto_commit": False,
+                "auto_offset_reset": self._settings.KAFKA_CONSUMER_AUTO_OFFSET_RESET
                 if hasattr(self._settings, "KAFKA_CONSUMER_AUTO_OFFSET_RESET")
                 else "earliest",
-                max_poll_records=50,
-                partition_assignment_strategy=["cooperative-sticky"],
+                "max_poll_records": 50,
+                **build_kafka_auth_kwargs(self._settings),
+            }
+            self._consumer = AIOKafkaConsumer(
+                *self._topics,
+                **consumer_kwargs,
             )
 
         await self._consumer.start()
-        if hasattr(self._consumer, "subscribe"):
+        # A consumer built here is already subscribed through its constructor;
+        # subscribing again after start() resets the assignment under the running
+        # fetcher. Injected consumers (tests, mocks) are subscribed explicitly.
+        if not built_here and hasattr(self._consumer, "subscribe"):
             self._consumer.subscribe(self._topics)
 
         self._running = True
@@ -370,6 +381,32 @@ class BaseKafkaConsumer(EventConsumer):
             self._consumer_group,
             self._topics,
         )
+
+    def start_consuming(self) -> None:
+        """Run the poll loop in the background (production). Tests drive
+        ``poll_and_process_batch`` themselves and do not call this."""
+        if self._consume_task is None or self._consume_task.done():
+            self._consume_task = asyncio.create_task(
+                self._consume_loop(), name=f"kafka-consume-{self._consumer_group}"
+            )
+
+    async def _consume_loop(self) -> None:
+        backoff = 1.0
+        while self._running:
+            try:
+                await self.poll_and_process_batch()
+                backoff = 1.0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # never let the loop die silently
+                logger.error(
+                    "Consume loop error for group %s: %s; retrying in %.0fs",
+                    self._consumer_group,
+                    exc,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
 
     async def stop(self) -> None:
         """Stop the consumer and cancel background polling tasks."""
@@ -1023,12 +1060,15 @@ def get_kafka_consumer(
         mock = MockKafkaConsumer(active_settings)
         mock.subscribe(topics)
         return mock
+    consumer_kwargs: dict[str, Any] = {
+        "bootstrap_servers": active_settings.KAFKA_BOOTSTRAP_SERVERS,
+        "group_id": consumer_group,
+        "enable_auto_commit": False,
+        "auto_offset_reset": "earliest",
+        "max_poll_records": 50,
+        **build_kafka_auth_kwargs(active_settings),
+    }
     return AIOKafkaConsumer(
         *topics,
-        bootstrap_servers=active_settings.KAFKA_BOOTSTRAP_SERVERS,
-        group_id=consumer_group,
-        enable_auto_commit=False,
-        auto_offset_reset="earliest",
-        max_poll_records=50,
-        partition_assignment_strategy=["cooperative-sticky"],
+        **consumer_kwargs,
     )

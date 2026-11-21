@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
+from app.core.exceptions import AppException
 from app.modules.cart.models import Cart
 from app.modules.cart.service import CartService
 from app.modules.identity.models import User
@@ -88,13 +89,31 @@ class CartContext:
     user: User | None
 
 
-async def get_cart_context(
-    request: Request,
-    response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+# Only customer accounts (and signed-out guests) may build a basket and check
+# out. Retailer and administrator sessions are business sessions; letting them
+# place customer orders would mix seller and buyer identities on one order.
+SHOPPER_ROLES = frozenset({"customer"})
+
+
+def ensure_can_shop(user: User | None) -> None:
+    if user is not None and user.role not in SHOPPER_ROLES:
+        raise AppException(
+            code="BUSINESS_ACCOUNT_CANNOT_SHOP",
+            message=(
+                "Retailer and administrator accounts cannot place customer orders. "
+                "Sign in with a customer account to shop."
+            ),
+            status_code=403,
+        )
+
+
+async def _build_cart_context(
+    request: Request, response: Response, db: AsyncSession, *, shopping: bool
 ) -> CartContext:
     service = CartService(db)
     user = await get_current_user_optional(request, db)
+    if shopping:
+        ensure_can_shop(user)
 
     guest_token = request.cookies.get(GUEST_CART_COOKIE_NAME) or request.headers.get(
         "X-Guest-Cart-Token"
@@ -116,3 +135,21 @@ async def get_cart_context(
         is_new_guest_token=is_new,
         user=user,
     )
+
+
+async def get_cart_context(
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CartContext:
+    """Cart context for read-only use (any session may view its cart)."""
+    return await _build_cart_context(request, response, db, shopping=False)
+
+
+async def get_shopping_cart_context(
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> CartContext:
+    """Cart context for changing the basket or checking out: shoppers only."""
+    return await _build_cart_context(request, response, db, shopping=True)

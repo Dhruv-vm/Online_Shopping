@@ -1,200 +1,155 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Eye, EyeOff, Lock, Mail, ShieldCheck, Store, User as UserIcon } from "lucide-react";
+import { BasketLoader } from "@/components/brand/basket-loader";
 import { useAuth } from "@/lib/auth/auth-context";
-import { ApiClientError } from "@/lib/api/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ShoppingBasket, Lock, Mail, Eye, EyeOff, AlertCircle, Loader2 } from "lucide-react";
+import { postLoginDestination } from "@/lib/auth/roles";
+import { errorMessage } from "@/lib/i18n/errors";
+import { useI18n } from "@/lib/i18n/i18n-context";
 
 function LoginForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTarget = searchParams.get("redirect") || "/account";
-  const { login, isAuthenticated } = useAuth();
-
+  const params = useSearchParams();
+  const requested = params.get("redirect");
+  const expired = params.get("expired") === "1";
+  const { login, isAuthenticated, user, isLoading } = useAuth();
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // If already logged in, redirect immediately
-  React.useEffect(() => {
-    if (isAuthenticated) {
-      const safeTarget = redirectTarget.startsWith("/") && !redirectTarget.startsWith("//")
-        ? redirectTarget
-        : "/account";
-      router.replace(safeTarget);
+  // Already signed in: go where the verified role belongs.
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user) {
+      router.replace(postLoginDestination(user.role, requested));
     }
-  }, [isAuthenticated, redirectTarget, router]);
+  }, [isLoading, isAuthenticated, user, requested, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
-
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setErrorMessage("Please enter your email address.");
+    setError(null);
+    if (!email.trim() || !password) {
+      setError(t("auth.fillBoth"));
       return;
     }
-    if (!password) {
-      setErrorMessage("Please enter your password.");
-      return;
-    }
-
-    setIsLoading(true);
+    setBusy(true);
     try {
-      await login(trimmedEmail, password);
-      const safeTarget = redirectTarget.startsWith("/") && !redirectTarget.startsWith("//")
-        ? redirectTarget
-        : "/account";
-      router.push(safeTarget);
-    } catch (err: unknown) {
-      if (err instanceof ApiClientError) {
-        if (err.code === "INVALID_CREDENTIALS" || err.status === 401) {
-          setErrorMessage("Invalid email or password. Please verify your credentials.");
-        } else if (err.code === "LOGIN_RATE_LIMITED" || err.status === 429) {
-          setErrorMessage("Too many failed login attempts. For security, please wait 60 seconds before trying again.");
-        } else if (err.code === "USER_INACTIVE" || err.status === 403) {
-          setErrorMessage("This account has been deactivated. Please contact support.");
-        } else {
-          setErrorMessage(err.message || "Login failed. Please try again.");
-        }
-      } else {
-        setErrorMessage("Network error: Unable to connect to the authentication server.");
-      }
+      // The role comes from the backend response, never from this form.
+      const u = await login(email.trim(), password);
+      router.replace(postLoginDestination(u.role, requested));
+    } catch (err) {
+      setError(errorMessage(err, t));
     } finally {
-      setIsLoading(false);
+      setBusy(false);
     }
   };
 
   return (
-    <div className="container mx-auto px-4 py-12 sm:py-16 flex items-center justify-center min-h-[calc(100vh-12rem)]">
-      <Card className="w-full max-w-md shadow-lg border-muted/50">
-        <CardHeader className="space-y-2 text-center pb-6">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
-            <ShoppingBasket className="h-6 w-6" />
-          </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">
-            Welcome to BASKET
-          </CardTitle>
-          <CardDescription className="text-sm text-muted-foreground">
-            Sign in to access your saved cart, addresses, and order history
-          </CardDescription>
-        </CardHeader>
+    <div className="container-page grid min-h-[calc(100vh-12rem)] items-center gap-10 py-10 lg:grid-cols-2">
+      <section className="hidden space-y-6 lg:block">
+        <h1 className="text-4xl font-bold leading-tight text-charcoal">{t("auth.welcomeTitle")}</h1>
+        <p className="max-w-md text-muted-foreground">{t("auth.welcomeBody")}</p>
+        <ul className="space-y-4">
+          {[
+            { icon: UserIcon, k: "auth.roleCustomer" },
+            { icon: Store, k: "auth.roleRetailer" },
+            { icon: ShieldCheck, k: "auth.roleAdmin" },
+          ].map(({ icon: Icon, k }) => (
+            <li key={k} className="flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg bg-brand-light text-brand-dark">
+                <Icon className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block font-semibold">{t(`${k}.title`)}</span>
+                <span className="block text-sm text-muted-foreground">{t(`${k}.body`)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-        <CardContent>
-          {errorMessage && (
-            <div
-              role="alert"
-              className="mb-6 flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3.5 text-sm text-red-700 dark:text-red-400"
-            >
-              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
-              <div className="flex-1 font-medium">{errorMessage}</div>
+      <section className="mx-auto w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm sm:p-8">
+        <h2 className="text-2xl font-bold">{t("auth.signInTitle")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{t("auth.signInSubtitle")}</p>
+        {expired && (
+          <p role="status" className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            {t("auth.sessionExpired")}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            {error}
+          </p>
+        )}
+        <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
+          <div>
+            <label htmlFor="email" className="text-sm font-medium">{t("auth.email")}</label>
+            <div className="relative mt-1">
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-11 w-full rounded-lg border pl-9 pr-3 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
+              />
             </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label
-                htmlFor="email"
-                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+          </div>
+          <div>
+            <label htmlFor="password" className="text-sm font-medium">{t("auth.password")}</label>
+            <div className="relative mt-1">
+              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                id="password"
+                type={show ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-11 w-full rounded-lg border pl-9 pr-10 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
+              />
+              <button
+                type="button"
+                onClick={() => setShow((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground"
+                aria-label={show ? t("auth.hidePassword") : t("auth.showPassword")}
               >
-                Email Address
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-9 h-10"
-                  disabled={isLoading}
-                />
-              </div>
+                {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="password"
-                  className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-                >
-                  Password
-                </label>
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-9 pr-10 h-10"
-                  disabled={isLoading}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-3 top-3 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="w-full h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-sm transition-colors mt-2"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing In...
-                </>
-              ) : (
-                "Sign In"
-              )}
-            </Button>
-          </form>
-
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{" "}
-            <Link
-              href={`/register${redirectTarget !== "/account" ? `?redirect=${encodeURIComponent(redirectTarget)}` : ""}`}
-              className="font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 hover:underline"
-            >
-              Create Account
-            </Link>
           </div>
-        </CardContent>
-      </Card>
+          <button
+            type="submit"
+            disabled={busy}
+            className="h-11 w-full rounded-lg bg-brand text-sm font-semibold text-white transition hover:bg-brand/90 disabled:opacity-60"
+          >
+            {busy ? t("auth.signingIn") : t("auth.signInButton")}
+          </button>
+        </form>
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          {t("auth.noAccount")}{" "}
+          <Link href="/register" className="font-semibold text-brand">{t("auth.createAccount")}</Link>
+        </p>
+        <p className="mt-2 text-center text-sm text-muted-foreground">
+          {t("auth.sellerQuestion")}{" "}
+          <Link href="/register/retailer" className="font-semibold text-brand-dark">{t("nav.sellOnBasket")}</Link>
+        </p>
+        <p className="mt-6 border-t pt-4 text-xs text-muted-foreground">{t("auth.oneLoginNote")}</p>
+      </section>
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="container mx-auto px-4 py-24 flex justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
-        </div>
-      }
-    >
+    <Suspense fallback={<BasketLoader />}>
       <LoginForm />
     </Suspense>
   );

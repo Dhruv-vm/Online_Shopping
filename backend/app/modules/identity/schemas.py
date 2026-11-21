@@ -57,7 +57,62 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
+    retailer_id: uuid.UUID | None = None
+    store_name: str | None = None
+    verification_status: str | None = None
+    preferred_language: str = "en"
     created_at: datetime.datetime
+
+
+class RetailerRegisterRequest(BaseModel):
+    # Owner credentials
+    email: str = Field(..., max_length=255, description="Retailer business email")
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(
+        ..., min_length=2, max_length=255, description="Store owner / manager name"
+    )
+    phone: str = Field(
+        ..., min_length=10, max_length=15, description="Primary contact phone"
+    )
+
+    # Store details
+    store_name: str = Field(
+        ..., min_length=2, max_length=255, description="Business / Store display name"
+    )
+    state: str = Field(
+        ..., min_length=2, max_length=100, description="Store state (e.g. MH, KA, DL)"
+    )
+    business_address: str = Field(
+        ..., min_length=5, description="Registered business / warehouse address"
+    )
+    contact_email: str | None = Field(None, max_length=255)
+    contact_phone: str | None = Field(None, max_length=15)
+    description: str | None = Field(None, max_length=2000)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Invalid email format.")
+        return v
+
+    @field_validator("contact_email")
+    @classmethod
+    def validate_contact_email_opt(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Invalid email format.")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long.")
+        return v
 
 
 class AuthResponse(BaseModel):

@@ -53,3 +53,24 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Database Backups
+backups/
+*.dump
+
+# Locally stored uploads (development)
+backend/media/
+backend/media_private/
+
+# Shared two-laptop demo runtime state and frontend build
+.shared-demo/
+frontend/.next-shared/
+
+# External experimental prototypes and agent configs
+Hack UI/
+.claude/
+
+
+.ui-shots/
+frontend/.next-ui/
+frontend/.next-uibuild/

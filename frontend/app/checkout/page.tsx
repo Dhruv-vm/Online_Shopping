@@ -1,8 +1,10 @@
 "use client";
 
+import { ShopperGuard } from "@/components/auth/shopper-guard";
+
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
@@ -18,19 +20,26 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RazorpayPaymentButton } from "@/components/checkout/razorpay-modal";
+import { apiClient, ApiClientError } from "@/lib/api/client";
 import { createOrder, getOrder } from "@/lib/api/orders";
 import { formatPrice } from "@/lib/utils";
-import type { Order, PaymentVerifyResponse } from "@/types";
+import type { Address, Order, PaymentVerifyResponse } from "@/types";
+import { useI18n } from "@/lib/i18n/i18n-context";
 
 function CheckoutContent() {
+  const { t } = useI18n();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const reservationIdParam = searchParams.get("reservation_id");
+  const quoteIdParam = searchParams.get("quote_id");
   const orderIdParam = searchParams.get("order_id");
 
   const [order, setOrder] = useState<Order | null>(null);
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [derivedQuoteId, setDerivedQuoteId] = useState<string | null>(null);
 
   // Payment UI states
   const [verifyResponse, setVerifyResponse] = useState<PaymentVerifyResponse | null>(null);
@@ -40,6 +49,8 @@ function CheckoutContent() {
 
   // Address state for new order creation
   const [addressId, setAddressId] = useState("");
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
 
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -49,6 +60,7 @@ function CheckoutContent() {
       setOrder(fetched);
       if (fetched.status === "CONFIRMED") {
         setAmbiguousState(false);
+        setError(null);
       } else if (fetched.payment_status === "REQUIRES_RECONCILIATION") {
         setAmbiguousState(true);
       }
@@ -66,6 +78,49 @@ function CheckoutContent() {
       fetchOrderDetails(orderIdParam).finally(() => setIsLoadingOrder(false));
     }
   }, [orderIdParam, fetchOrderDetails]);
+
+  // Fetch saved customer addresses if authenticated
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingAddresses(true);
+    apiClient
+      .getAddresses()
+      .then((data) => {
+        if (isMounted && Array.isArray(data) && data.length > 0) {
+          setAddresses(data);
+          const defaultAddr = data.find((a) => a.is_default) || data[0];
+          if (defaultAddr) {
+            setAddressId(defaultAddr.id);
+          }
+        }
+      })
+      .catch(() => {
+        // Guests or unauthenticated sessions do not have saved addresses
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingAddresses(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // If quote_id not passed in query params, fetch reservation to derive quote_id
+  useEffect(() => {
+    if (reservationIdParam && !quoteIdParam) {
+      apiClient
+        .getReservation(reservationIdParam)
+        .then((res) => {
+          if (res?.quote_id) {
+            setDerivedQuoteId(res.quote_id);
+          }
+        })
+        .catch(() => {
+          // If unauthenticated or expired, backend order creation will handle authority
+        });
+    }
+  }, [reservationIdParam, quoteIdParam]);
 
   // Clean up polling timer on unmount
   useEffect(() => {
@@ -94,6 +149,7 @@ function CheckoutContent() {
       if (latest) {
         if (latest.status === "CONFIRMED") {
           setIsPolling(false);
+          setError(null);
           return;
         }
         if (latest.payment_status === "REQUIRES_RECONCILIATION") {
@@ -111,6 +167,11 @@ function CheckoutContent() {
         pollTimerRef.current = setTimeout(poll, pollIntervalMs);
       } else {
         setIsPolling(false);
+        if (latest && latest.status !== "CONFIRMED") {
+          setError(
+            "Payment confirmation is taking longer than expected. Please check your orders page or click 'Check Status Now' before retrying."
+          );
+        }
       }
     };
 
@@ -124,14 +185,38 @@ function CheckoutContent() {
     }
     setIsCreatingOrder(true);
     setError(null);
+    setFieldErrors({});
+
     try {
+      const trimmedAddressId = addressId.trim();
       const created = await createOrder({
         reservation_id: reservationIdParam,
-        delivery_address_id: addressId.trim() || undefined,
+        quote_id: quoteIdParam || derivedQuoteId || undefined,
+        delivery_address_id: trimmedAddressId || undefined,
       });
       setOrder(created);
+      // Keep the order in the URL so a refresh resumes payment instead of starting over.
+      router.replace(`/checkout?order_id=${encodeURIComponent(created.id)}`, { scroll: false });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create order from reservation.");
+      if (err instanceof ApiClientError) {
+        if (err.status === 422 && Array.isArray(err.details)) {
+          const fieldMap: Record<string, string> = {};
+          for (const detail of err.details as Array<{ loc?: (string | number)[]; msg?: string }>) {
+            if (detail.loc && detail.msg) {
+              const field = detail.loc.filter((x) => x !== "body").join(".");
+              if (field) {
+                fieldMap[field] = detail.msg;
+              }
+            }
+          }
+          if (Object.keys(fieldMap).length > 0) {
+            setFieldErrors(fieldMap);
+          }
+        }
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to create order from reservation.");
+      }
     } finally {
       setIsCreatingOrder(false);
     }
@@ -140,6 +225,7 @@ function CheckoutContent() {
   const handlePaymentSuccess = (result: PaymentVerifyResponse) => {
     setVerifyResponse(result);
     setAmbiguousState(false);
+    setError(null);
     if (order) {
       setOrder({
         ...order,
@@ -151,7 +237,19 @@ function CheckoutContent() {
   };
 
   const handlePaymentError = (err: Error) => {
-    setError(err.message || "Payment verification failed");
+    const isTransientOrInternal =
+      err.message.includes("unexpected internal error") ||
+      err.message.includes("Failed to fetch") ||
+      err.message.includes("Network error") ||
+      err.message.includes("timeout");
+
+    if (isTransientOrInternal) {
+      setError(
+        "Payment was submitted to Razorpay. Verifying confirmation with server..."
+      );
+    } else {
+      setError(err.message || "Payment verification failed");
+    }
     // Immediately start server-side status refresh in case gateway completed asynchronously
     startPollingFallback();
   };
@@ -165,7 +263,7 @@ function CheckoutContent() {
             Checkout & Order Payment
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Phase 2F Razorpay sandbox gateway integration with server-side capture verification.
+            Confirm your delivery address and pay securely with Razorpay.
           </p>
         </div>
         <Link href="/cart">
@@ -175,7 +273,7 @@ function CheckoutContent() {
         </Link>
       </div>
 
-      {error && (
+      {error && order?.status !== "CONFIRMED" && verifyResponse?.status !== "CONFIRMED" && (
         <div className="mb-6 p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300 flex items-start gap-2.5">
           <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
@@ -238,14 +336,69 @@ function CheckoutContent() {
                 </p>
               </div>
             </div>
-            <div className="flex justify-end pt-2">
-              <Link href="/account">
-                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
-                  View My Orders
-                  <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+            {order?.guest_access_token && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-md text-xs space-y-1.5">
+                <span className="font-semibold text-amber-900 dark:text-amber-200 block">
+                  Guest Order Access Token (Save this to view & track your order):
+                </span>
+                <p className="font-mono text-[11px] select-all bg-white dark:bg-black/40 p-2 rounded border border-amber-300 dark:border-amber-800 break-all text-foreground">
+                  {order.guest_access_token}
+                </p>
+                <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                  Bookmark your order details or enter this token in the Orders page to track delivery status.
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
+              <Link href="/orders">
+                <Button variant="ghost" size="sm" className="text-xs">
+                  My Orders
+                </Button>
+              </Link>
+              <Link
+                href={
+                  order?.id
+                    ? `/orders/${order.id}${
+                        order.guest_access_token
+                          ? `?access_token=${encodeURIComponent(order.guest_access_token)}`
+                          : ""
+                      }`
+                    : "/orders"
+                }
+              >
+                <Button variant="outline" size="sm" className="text-xs">
+                  View Order Details
+                </Button>
+              </Link>
+              <Link
+                href={
+                  order?.id
+                    ? `/orders/${order.id}/track${
+                        order.guest_access_token
+                          ? `?access_token=${encodeURIComponent(order.guest_access_token)}`
+                          : ""
+                      }`
+                    : "/orders"
+                }
+              >
+                <Button size="sm" className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink text-xs gap-1.5">
+                  Track Order
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               </Link>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!order && !reservationIdParam && !orderIdParam && !isLoadingOrder && (
+        <Card className="mb-6">
+          <CardContent className="space-y-3 py-8 text-center">
+            <p className="font-semibold">Start checkout from your basket</p>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              Review your items and choose “Checkout” in the basket. Prices are confirmed and stock is held for you before you pay.
+            </p>
+            <Link href="/cart"><Button size="sm">Go to basket</Button></Link>
           </CardContent>
         </Card>
       )}
@@ -256,28 +409,56 @@ function CheckoutContent() {
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="h-4 w-4 text-emerald-600" />
-              Step 1: Convert Held Stock to BASKET Order
+              Step 1: Confirm your order
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-xs text-muted-foreground">
-              Your inventory is currently locked in PostgreSQL. Provide your delivery address ID (optional) to construct an immutable order snapshot.
+              Your items are held for you while you check out. Choose where they should be delivered.
             </p>
-            <div className="space-y-2">
-              <label htmlFor="addressId" className="text-xs font-medium text-foreground">
-                Delivery Address ID (Optional for Guest/Sandbox)
-              </label>
-              <input
-                id="addressId"
-                type="text"
-                placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
-                value={addressId}
-                onChange={(e) => setAddressId(e.target.value)}
-                className="w-full text-xs p-2.5 rounded-md border bg-background font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-            </div>
+
+            {/* Saved Addresses Dropdown (for authenticated users with saved addresses) */}
+            {addresses.length > 0 && (
+              <div className="space-y-1.5">
+                <label htmlFor="addressSelect" className="text-xs font-medium text-foreground">
+                  Saved Delivery Addresses
+                </label>
+                <select
+                  id="addressSelect"
+                  value={addressId}
+                  onChange={(e) => {
+                    setAddressId(e.target.value);
+                    setFieldErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.delivery_address_id;
+                      return next;
+                    });
+                  }}
+                  className="w-full text-xs p-2.5 rounded-md border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  {addresses.map((addr) => (
+                    <option key={addr.id} value={addr.id}>
+                      {addr.recipient_name} — {addr.line1}, {addr.city}, {addr.state} {addr.postal_code}
+                      {addr.is_default ? " (Default)" : ""}
+                    </option>
+                  ))}
+                                  </select>
+              </div>
+            )}
+
+            {fieldErrors.delivery_address_id && (
+              <p className="text-xs font-medium text-red-600">{fieldErrors.delivery_address_id}</p>
+            )}
+            {!isLoadingAddresses && addresses.length === 0 && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                You have no saved delivery address.{" "}
+                <Link href="/account/addresses" className="font-semibold underline">Add an address</Link>{" "}
+                and return to your basket to continue.
+              </p>
+            )}
+
             <Button
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-10"
+              className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs h-10"
               onClick={handleCreateOrder}
               disabled={isCreatingOrder}
             >
@@ -307,10 +488,10 @@ function CheckoutContent() {
                   <CardTitle className="text-base">Order Details</CardTitle>
                   <div className="flex items-center gap-2">
                     <Badge variant={order.status === "CONFIRMED" ? "default" : "secondary"} className="text-[10px]">
-                      {order.status}
+                      {t(`status.order.${order.status}`)}
                     </Badge>
                     <Badge variant="outline" className="text-[10px] font-mono">
-                      {order.payment_status}
+                      {t(`status.payment.${order.payment_status}`)}
                     </Badge>
                   </div>
                 </div>
@@ -374,7 +555,7 @@ function CheckoutContent() {
                     <span>{formatPrice(order.delivery_fee_paise ?? 0)}</span>
                   </div>
                   <div className="pt-2 border-t flex justify-between text-sm font-bold text-foreground">
-                    <span>Total Authoritative:</span>
+                    <span>Total payable:</span>
                     <span className="text-emerald-700 dark:text-emerald-400">
                       {formatPrice(order.total_payable_paise)}
                     </span>
@@ -395,7 +576,7 @@ function CheckoutContent() {
                       onDismissOrAmbiguous={startPollingFallback}
                     />
                     <p className="text-[10px] text-center text-muted-foreground mt-2">
-                      Secured by Razorpay Sandbox & HMAC-SHA256 signature verification
+                      Payments are processed by Razorpay and confirmed by the BASKET server.
                     </p>
                   </div>
                 )}
@@ -406,10 +587,10 @@ function CheckoutContent() {
             <div className="p-3 bg-muted/40 rounded-lg border text-[11px] text-muted-foreground space-y-1.5">
               <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
                 <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                <span>Zero Frontend-Trusted Amounts</span>
+                <span>Amounts are set by the server</span>
               </div>
               <p className="text-[10px] leading-relaxed">
-                Payment attempts and gateway orders are durably created by PostgreSQL before checkout modal opens.
+                The amount you pay is calculated and recorded by BASKET before the payment window opens; it cannot be changed in the browser.
               </p>
             </div>
           </div>
@@ -419,7 +600,7 @@ function CheckoutContent() {
   );
 }
 
-export default function CheckoutPage() {
+function CheckoutPageInner() {
   return (
     <React.Suspense
       fallback={
@@ -430,5 +611,14 @@ export default function CheckoutPage() {
     >
       <CheckoutContent />
     </React.Suspense>
+  );
+}
+
+
+export default function CheckoutPage() {
+  return (
+    <ShopperGuard>
+      <CheckoutPageInner />
+    </ShopperGuard>
   );
 }

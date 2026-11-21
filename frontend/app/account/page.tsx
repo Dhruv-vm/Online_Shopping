@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -10,6 +10,8 @@ import { AccountNav } from "@/components/account/account-nav";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { formatPrice } from "@/lib/utils";
+import type { OrderListItem } from "@/types";
 import {
   User as UserIcon,
   Mail,
@@ -22,6 +24,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  Package,
+  ArrowRight,
+  Clock,
+  Truck,
+  Sparkles,
 } from "lucide-react";
 
 export default function AccountOverviewPage() {
@@ -30,6 +37,30 @@ export default function AccountOverviewPage() {
   const [isLoggingOutAll, setIsLoggingOutAll] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const [recentOrders, setRecentOrders] = useState<OrderListItem[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    apiClient
+      .listOrders(3, 0)
+      .then((res) => {
+        if (isMounted) {
+          setRecentOrders(res.items || res.orders || []);
+        }
+      })
+      .catch(() => {
+        // Silently handle if unauthenticated or error
+      })
+      .finally(() => {
+        if (isMounted) setOrdersLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const formattedDate = user?.created_at
     ? new Date(user.created_at).toLocaleDateString("en-IN", {
@@ -73,14 +104,16 @@ export default function AccountOverviewPage() {
 
           <main className="flex-1 w-full space-y-6">
             {/* Header Greeting */}
-            <div className="rounded-2xl border bg-gradient-to-r from-emerald-700 to-teal-800 p-6 sm:p-8 text-white shadow-sm">
-              <Badge variant="outline" className="text-white border-white/30 mb-3 bg-white/10 font-medium">
+            <div className="relative overflow-hidden rounded-hero bg-ink p-6 sm:p-8 text-white shadow-card">
+              <span aria-hidden className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rounded-full bg-brand-yellow" />
+              <span aria-hidden className="pointer-events-none absolute -right-2 bottom-[-3.5rem] h-28 w-28 rounded-full border-[10px] border-brand-yellow/40" />
+              <Badge variant="outline" className="relative text-ink border-transparent mb-3 bg-brand-yellow font-semibold">
                 Customer Account
               </Badge>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+              <h1 className="relative text-2xl sm:text-3xl font-extrabold tracking-tight">
                 Hello, {user?.full_name || "Valued Customer"}!
               </h1>
-              <p className="mt-2 text-emerald-100 text-sm max-w-xl">
+              <p className="relative mt-2 text-white/70 text-sm max-w-xl">
                 Manage your profile details, default shipping destinations, and account security preferences.
               </p>
             </div>
@@ -158,19 +191,55 @@ export default function AccountOverviewPage() {
             </Card>
 
             {/* Quick Actions Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Link href="/account/addresses" className="block group">
-                <Card className="h-full hover:border-emerald-600/50 hover:shadow-md transition-all cursor-pointer">
-                  <CardContent className="p-6 flex items-start gap-4">
-                    <div className="p-3 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 group-hover:scale-105 transition-transform">
-                      <MapPin className="h-6 w-6" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <Link href="/orders" className="block group">
+                <Card className="h-full hover:border-ink/30 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-base cursor-pointer">
+                  <CardContent className="p-5 flex items-start gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-cream text-ink group-hover:bg-brand-yellow group-hover:scale-105 transition-transform">
+                      <Package className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-foreground group-hover:text-emerald-600 transition-colors">
+                      <h3 className="font-semibold text-foreground group-hover:text-ink transition-colors text-sm">
+                        My Orders
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Track deliveries, view receipts, and initiate returns
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/account/intent" className="block group">
+                <Card className="h-full hover:border-amber-500/50 hover:shadow-md transition-all cursor-pointer">
+                  <CardContent className="p-5 flex items-start gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 group-hover:scale-105 transition-transform">
+                      <Sparkles className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground group-hover:text-amber-600 transition-colors text-sm">
+                        Shopping Intent & Memory
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Manage your preferences, recurring goals, and privacy
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/account/addresses" className="block group">
+                <Card className="h-full hover:border-ink/30 hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-base cursor-pointer">
+                  <CardContent className="p-5 flex items-start gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/60 dark:text-teal-300 group-hover:scale-105 transition-transform">
+                      <MapPin className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground group-hover:text-ink transition-colors text-sm">
                         Saved Addresses
                       </h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Manage delivery destinations and default shipping address
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Manage delivery destinations and default address
                       </p>
                     </div>
                   </CardContent>
@@ -178,19 +247,99 @@ export default function AccountOverviewPage() {
               </Link>
 
               <Card className="h-full">
-                <CardContent className="p-6 flex items-start gap-4">
-                  <div className="p-3 rounded-xl bg-muted text-muted-foreground">
-                    <Shield className="h-6 w-6" />
+                <CardContent className="p-5 flex items-start gap-3.5">
+                  <div className="p-2.5 rounded-xl bg-muted text-muted-foreground">
+                    <Shield className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground">Security & Sessions</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Protected with Argon2id hashing & HttpOnly cookie tokens
+                    <h3 className="font-semibold text-foreground text-sm">Security & Sessions</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Argon2id hashing & HttpOnly cookie protection
                     </p>
                   </div>
                 </CardContent>
               </Card>
             </div>
+
+            {/* Recent Orders Overview */}
+            <Card>
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold flex items-center gap-2">
+                    <Package className="h-4 w-4 text-emerald-600" />
+                    Recent Purchases
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Your latest orders and live shipment status
+                  </CardDescription>
+                </div>
+                <Link href="/orders">
+                  <Button variant="ghost" size="sm" className="text-xs font-semibold text-ink hover:text-ink gap-1">
+                    View All Orders
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Button>
+                </Link>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {ordersLoading ? (
+                  <div className="flex items-center justify-center py-6 text-muted-foreground text-xs gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                    Loading recent orders...
+                  </div>
+                ) : recentOrders.length === 0 ? (
+                  <div className="text-center py-6 border border-dashed rounded-lg space-y-2">
+                    <Package className="h-8 w-8 text-muted-foreground mx-auto stroke-1" />
+                    <p className="text-xs text-muted-foreground">No orders placed yet.</p>
+                    <Link href="/products">
+                      <Button size="sm" variant="outline" className="text-xs">
+                        Start Shopping
+                      </Button>
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-muted/60">
+                    {recentOrders.map((ord) => (
+                      <div key={ord.id} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-semibold text-foreground">{ord.order_number}</span>
+                            <Badge variant={ord.status === "CONFIRMED" || ord.status === "DELIVERED" ? "default" : "secondary"} className="text-[10px]">
+                              {ord.status}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2 text-muted-foreground text-[11px]">
+                            <span>
+                              {new Date(ord.created_at).toLocaleDateString("en-IN", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </span>
+                            <span>•</span>
+                            <span>{ord.item_count ?? 1} {(ord.item_count ?? 1) === 1 ? "item" : "items"}</span>
+                            <span>•</span>
+                            <span className="font-semibold text-foreground">{formatPrice(ord.total_payable_paise)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Link href={`/orders/${ord.id}`}>
+                            <Button size="sm" variant="outline" className="h-7 text-xs">
+                              Details
+                            </Button>
+                          </Link>
+                          <Link href={`/orders/${ord.id}/track`}>
+                            <Button size="sm" className="h-7 text-xs bg-brand-yellow hover:bg-brand-yellow-dark text-ink gap-1">
+                              <Truck className="h-3 w-3" />
+                              Track
+                            </Button>
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Security Actions */}
             <Card className="border-red-200/50 dark:border-red-950/50">

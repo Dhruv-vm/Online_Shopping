@@ -155,6 +155,7 @@ def test_production_accepts_valid_credentials():
         RAZORPAY_KEY_ID="rzp_live_realproductionkey123",
         RAZORPAY_KEY_SECRET="productionsecret16chars",
         RAZORPAY_WEBHOOK_SECRET="productionwebhooksecret16chars",
+        KAFKA_BOOTSTRAP_SERVERS="",
     )
     assert s.is_production is True
     assert s.RAZORPAY_KEY_ID.get_secret_value() == "rzp_live_realproductionkey123"
@@ -172,3 +173,100 @@ def test_development_allows_mock_credentials():
     )
     assert s.is_production is False
     assert s.RAZORPAY_KEY_ID.get_secret_value() == "rzp_test_basket_mock_key_id"
+
+
+def test_clean_opensearch_url_strips_credentials():
+    # Embedded credentials should be stripped without leaking
+    s = Settings(
+        ENVIRONMENT="development",
+        OPENSEARCH_URL="https://avnadmin:secretpassword123@basket-opensearch.aivencloud.com:10494",
+    )
+    assert s.OPENSEARCH_URL == "https://basket-opensearch.aivencloud.com:10494"
+    assert "avnadmin" not in s.OPENSEARCH_URL
+    assert "secretpassword123" not in s.OPENSEARCH_URL
+
+    # Clean URL should be preserved intact
+    s2 = Settings(
+        ENVIRONMENT="development",
+        OPENSEARCH_URL="https://basket-opensearch.aivencloud.com:10494/",
+    )
+    assert s2.OPENSEARCH_URL == "https://basket-opensearch.aivencloud.com:10494"
+
+
+def test_resolve_kafka_ssl_ca_location_existing_absolute(test_ca_pem_file):
+    abs_path = str(test_ca_pem_file.resolve())
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_SSL_CA_LOCATION=abs_path,
+    )
+    assert s.KAFKA_SSL_CA_LOCATION == abs_path
+
+
+def test_resolve_kafka_ssl_ca_location_existing_relative(tmp_path, monkeypatch):
+    rel_cert = tmp_path / "cert_folder" / "custom_ca.pem"
+    rel_cert.parent.mkdir(parents=True, exist_ok=True)
+    rel_cert.write_text("dummy-cert-data", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_SSL_CA_LOCATION="cert_folder/custom_ca.pem",
+    )
+    assert s.KAFKA_SSL_CA_LOCATION == str(rel_cert.resolve())
+
+
+def test_resolve_kafka_ssl_ca_location_missing_path():
+    missing_path = "nonexistent/subfolder/ca.pem"
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_SSL_CA_LOCATION=missing_path,
+    )
+    # Nonexistent path returns raw configured path without crashing settings initialization
+    assert s.KAFKA_SSL_CA_LOCATION == missing_path
+
+
+def test_resolve_kafka_ssl_ca_location_empty_or_none():
+    s_none = Settings(ENVIRONMENT="development", KAFKA_SSL_CA_LOCATION=None)
+    assert s_none.KAFKA_SSL_CA_LOCATION is None
+
+    s_empty = Settings(ENVIRONMENT="development", KAFKA_SSL_CA_LOCATION="   ")
+    assert s_empty.KAFKA_SSL_CA_LOCATION is None
+
+
+def test_kafka_auth_kwargs_sasl_ssl(test_ca_pem_file):
+    import ssl
+
+    from app.core.events.kafka import build_kafka_auth_kwargs, build_kafka_ssl_context
+
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_BOOTSTRAP_SERVERS="kafka.example.com:9092",
+        KAFKA_SECURITY_PROTOCOL="SASL_SSL",
+        KAFKA_SASL_MECHANISM="SCRAM-SHA-256",
+        KAFKA_SASL_USERNAME="avnadmin",
+        KAFKA_SASL_PASSWORD="test_password_123",
+        KAFKA_SSL_CA_LOCATION=str(test_ca_pem_file),
+    )
+
+    kwargs = build_kafka_auth_kwargs(s)
+    assert kwargs["security_protocol"] == "SASL_SSL"
+    assert kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+    assert kwargs["sasl_plain_username"] == "avnadmin"
+    assert kwargs["sasl_plain_password"] == "test_password_123"
+    assert kwargs["ssl_context"] is not None
+
+    ssl_ctx = build_kafka_ssl_context(s)
+    assert ssl_ctx is not None
+    assert ssl_ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_kafka_auth_kwargs_plaintext():
+    from app.core.events.kafka import build_kafka_auth_kwargs
+
+    s = Settings(
+        ENVIRONMENT="development",
+        KAFKA_BOOTSTRAP_SERVERS="localhost:9092",
+        KAFKA_SECURITY_PROTOCOL="PLAINTEXT",
+    )
+    kwargs = build_kafka_auth_kwargs(s)
+    assert kwargs == {"security_protocol": "PLAINTEXT"}

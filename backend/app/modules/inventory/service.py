@@ -23,6 +23,16 @@ class ReservationService:
         self.repo = ReservationRepository(session)
         self.quote_service = QuoteService(session)
 
+    async def _emit_stock_change(self, listing_ids, reason: str) -> None:
+        """Enqueue product.updated outbox events so search stock stays accurate."""
+        from app.core.events.catalogue_events import (
+            enqueue_product_events_for_listings,
+        )
+
+        await enqueue_product_events_for_listings(
+            self.session, list(listing_ids), reason=reason
+        )
+
     async def create_reservation_from_quote(
         self,
         quote_id: uuid.UUID,
@@ -265,6 +275,7 @@ class ReservationService:
                 message="A conflicting reservation is currently being processed. Please retry.",
                 status_code=409,
             ) from None
+        await self._emit_stock_change(requested_by_listing.keys(), "stock_reserved")
         return reservation
 
     async def allocate_reservation_to_order(
@@ -488,6 +499,7 @@ class ReservationService:
         res.released_at = datetime.now(UTC)
         res.release_reason = reason
 
+        await self._emit_stock_change(released_by_listing.keys(), "stock_released")
         await self.session.flush()
         return res
 
@@ -569,8 +581,25 @@ class ReservationService:
         res.status = ReservationStatus.CONFIRMED.value
         res.confirmed_at = datetime.now(UTC)
 
+        await self._emit_stock_change(deducted_by_listing.keys(), "stock_committed")
         await self.session.flush()
         return res
+
+    async def restock_inventory_items(
+        self,
+        items: list[tuple[uuid.UUID, int]],
+    ) -> None:
+        """Restocks items back into on_hand_quantity in deterministic lock order."""
+        if not items:
+            return
+        listing_ids = [listing_id for listing_id, _ in items]
+        inventories = await self.repo.lock_inventories_for_update(listing_ids)
+        for listing_id, qty in items:
+            inv = inventories.get(listing_id)
+            if inv and qty > 0:
+                inv.on_hand_quantity += qty
+        await self._emit_stock_change(listing_ids, "stock_restocked")
+        await self.session.flush()
 
     async def cleanup_expired_reservations(self, limit: int = 100) -> int:
         """Background cleanup job to expire reservations past their TTL and release stock."""

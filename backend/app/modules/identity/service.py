@@ -1,5 +1,6 @@
 import datetime
 import uuid
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,8 +11,10 @@ from app.modules.identity.repository import IdentityRepository
 from app.modules.identity.schemas import (
     AddressCreateRequest,
     AddressUpdateRequest,
+    RetailerRegisterRequest,
     UserLoginRequest,
     UserRegisterRequest,
+    UserResponse,
 )
 from app.modules.identity.security import (
     create_access_token,
@@ -327,3 +330,109 @@ class IdentityService:
             if oldest:
                 oldest.is_default = True
                 await self.session.flush()
+
+    async def register_retailer(
+        self,
+        request: RetailerRegisterRequest,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> tuple[User, Any, str, str, str]:
+        import re
+
+        from sqlalchemy import select
+
+        from app.modules.catalogue.models import Retailer
+
+        normalized_email = normalize_email(request.email)
+        existing_user = await self.repo.get_user_by_email(normalized_email)
+        if existing_user:
+            raise AppException(
+                code="EMAIL_ALREADY_EXISTS",
+                message="An account with this email already exists.",
+                status_code=409,
+            )
+
+        base_slug = re.sub(r"[^a-z0-9]+", "-", request.store_name.lower()).strip("-")
+        if not base_slug:
+            base_slug = "store"
+        slug = base_slug
+
+        stmt = select(Retailer).where(Retailer.slug == slug)
+        res = await self.session.execute(stmt)
+        if res.scalar_one_or_none():
+            slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
+        hashed = hash_password(request.password)
+        user = User(
+            email=normalized_email,
+            phone=request.phone.strip(),
+            full_name=request.full_name.strip(),
+            hashed_password=hashed,
+            role="retailer",
+            is_active=True,
+        )
+        await self.repo.create_user(user)
+
+        retailer = Retailer(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            name=request.store_name.strip(),
+            slug=slug,
+            description=request.description.strip()
+            if request.description
+            else f"{request.store_name.strip()} storefront on BASKET",
+            state=request.state.strip().upper(),
+            state_source="RETAILER_REGISTRATION",
+            business_address=request.business_address.strip(),
+            contact_phone=request.contact_phone.strip()
+            if request.contact_phone
+            else request.phone.strip(),
+            contact_email=request.contact_email.strip()
+            if request.contact_email
+            else normalized_email,
+            is_open=True,
+            verification_status="PENDING",
+            is_active=True,
+        )
+        self.session.add(retailer)
+        await self.session.flush()
+
+        access_token, refresh_token, csrf_token = await self._issue_session(
+            user=user,
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+
+        return user, retailer, access_token, refresh_token, csrf_token
+
+    async def build_user_response(self, user: User) -> UserResponse:
+        from sqlalchemy import select
+
+        from app.modules.catalogue.models import Retailer
+
+        retailer_id = None
+        store_name = None
+        verification_status = None
+
+        if user.role == "retailer":
+            stmt = select(Retailer).where(Retailer.user_id == user.id)
+            res = await self.session.execute(stmt)
+            retailer = res.scalar_one_or_none()
+            if retailer:
+                retailer_id = retailer.id
+                store_name = retailer.name
+                verification_status = retailer.verification_status
+
+        return UserResponse(
+            id=user.id,
+            email=user.email,
+            phone=user.phone,
+            full_name=user.full_name,
+            role=user.role,
+            is_active=user.is_active,
+            retailer_id=retailer_id,
+            store_name=store_name,
+            verification_status=verification_status,
+            preferred_language=getattr(user, "preferred_language", None) or "en",
+            created_at=user.created_at,
+        )

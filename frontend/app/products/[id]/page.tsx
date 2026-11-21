@@ -1,6 +1,8 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { recordView } from "@/lib/recent";
+
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,7 @@ import {
   Info,
   Loader2,
   PackageX,
+  Scale,
   ShieldCheck,
   ShoppingBag,
   ShoppingBasket,
@@ -25,6 +28,11 @@ import {
   Truck,
 } from "lucide-react";
 import { useCart } from "@/lib/cart/cart-context";
+import { useCompare } from "@/lib/compare/compare-context";
+import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
+import { ProductPassportSection } from "@/components/passport/ProductPassportSection";
+import { PriceIntelligencePanel } from "@/components/phase3/price-intelligence";
+import { useLiveUpdates } from "@/lib/realtime";
 
 interface ProductPageProps {
   params: Promise<{ id: string }>;
@@ -34,9 +42,11 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
   const resolvedParams = use(params);
   const productIdOrSlug = resolvedParams.id;
   const { addItem } = useCart();
+  const { isInCompare, toggleCompare } = useCompare();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantDetail | null>(null);
+  const [selectedListingId, setSelectedListingId] = useState<string | null>(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +56,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
   const [addSuccess, setAddSuccess] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [activeAddingListingId, setActiveAddingListingId] = useState<string | null>(null);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
 
   const handleAddToCart = async (listingId: string, qty = 1) => {
     setIsAdding(true);
@@ -65,25 +76,40 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
     }
   };
 
-  useEffect(() => {
-    async function fetchDetail() {
-      setIsLoading(true);
-      setError(null);
+  const fetchDetail = useCallback(async (opts?: { quiet?: boolean }) => {
+      if (!opts?.quiet) setIsLoading(true);
+      if (!opts?.quiet) setError(null);
       try {
         const data = await apiClient.getProduct(productIdOrSlug);
         setProduct(data);
+        if (opts?.quiet) {
+          // keep the shopper's variant choice; refresh its live price/stock
+          setSelectedVariant((cur) => (cur ? data.variants?.find((v) => v.id === cur.id) ?? cur : cur));
+          return;
+        }
+        recordView({
+          slug: data.slug,
+          name: data.name,
+          brand: data.brand,
+          image: data.images?.find((i) => i.is_primary)?.url ?? data.images?.[0]?.url ?? null,
+          price_paise: data.min_price_paise,
+        });
         if (data.variants && data.variants.length > 0) {
           setSelectedVariant(data.variants[0]);
         }
       } catch (err) {
+        if (opts?.quiet) return;
         console.error("Error loading product detail:", err);
         setError("Product not found or service unavailable.");
       } finally {
-        setIsLoading(false);
+        if (!opts?.quiet) setIsLoading(false);
       }
-    }
-    fetchDetail();
   }, [productIdOrSlug]);
+
+  useEffect(() => {
+    void fetchDetail();
+  }, [fetchDetail]);
+  useLiveUpdates(["product.", "catalogue.", "listing.", "variant.", "price.", "inventory.", "store_inventory.", "offer.", "sale_stream."], () => void fetchDetail({ quiet: true }));
 
   if (isLoading) {
     return (
@@ -120,7 +146,9 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
 
   // Active listings for the selected variant
   const activeListings = selectedVariant ? selectedVariant.listings : [];
-  const bestListing = activeListings.length > 0 ? activeListings[0] : null;
+  const currentListing =
+    activeListings.find((l) => l.id === selectedListingId) ||
+    (activeListings.length > 0 ? activeListings[0] : null);
 
   const currentDisplayImage =
     product.images[selectedImageIndex]?.url ||
@@ -128,10 +156,12 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
     "";
 
   const discountPercent =
-    bestListing && bestListing.original_price_paise > bestListing.selling_price_paise
+    currentListing &&
+    currentListing.original_price_paise > currentListing.selling_price_paise
       ? Math.round(
-          ((bestListing.original_price_paise - bestListing.selling_price_paise) /
-            bestListing.original_price_paise) *
+          ((currentListing.original_price_paise -
+            currentListing.selling_price_paise) /
+            currentListing.original_price_paise) *
             100
         )
       : 0;
@@ -204,7 +234,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                   onClick={() => setSelectedImageIndex(idx)}
                   className={`relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition-all ${
                     selectedImageIndex === idx
-                      ? "border-emerald-600 ring-2 ring-emerald-600/20"
+                      ? "border-ink ring-2 ring-brand-yellow/60"
                       : "border-border hover:border-muted-foreground"
                   }`}
                 >
@@ -238,28 +268,102 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
           </div>
 
           {/* Pricing & Key Summary */}
-          {bestListing ? (
+          {currentListing ? (
             <div className="space-y-4">
-              <div className="flex items-baseline gap-3 p-4 rounded-xl bg-muted/40 border">
-                <div>
-                  <span className="text-3xl font-extrabold text-foreground">
-                    {formatPrice(bestListing.selling_price_paise, bestListing.currency)}
-                  </span>
-                  {bestListing.original_price_paise > bestListing.selling_price_paise && (
-                    <span className="text-sm text-muted-foreground line-through ml-2.5">
-                      {formatPrice(bestListing.original_price_paise, bestListing.currency)}
+              <div className="flex flex-col gap-2 p-4 rounded-xl bg-muted/40 border">
+                <div className="flex items-baseline gap-3">
+                  <div>
+                    <span className="text-3xl font-extrabold text-foreground">
+                      {formatPrice(currentListing.selling_price_paise, currentListing.currency)}
                     </span>
+                    {currentListing.original_price_paise > currentListing.selling_price_paise && (
+                      <span className="text-sm text-muted-foreground line-through ml-2.5">
+                        {formatPrice(currentListing.original_price_paise, currentListing.currency)}
+                      </span>
+                    )}
+                  </div>
+                  {discountPercent > 0 && (
+                    <Badge variant="outline" className="text-emerald-700 border-emerald-600/40 text-xs font-semibold">
+                      Save {formatPrice(currentListing.original_price_paise - currentListing.selling_price_paise, currentListing.currency)}
+                    </Badge>
                   )}
                 </div>
-                {discountPercent > 0 && (
-                  <Badge variant="outline" className="text-emerald-700 border-emerald-600/40 text-xs font-semibold">
-                    Save {formatPrice(bestListing.original_price_paise - bestListing.selling_price_paise, bestListing.currency)}
-                  </Badge>
-                )}
+
+                {/* Selected Seller Metadata */}
+                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1 border-t border-border/50">
+                  <span className="text-foreground font-semibold flex items-center gap-1">
+                    <Store className="h-3.5 w-3.5 text-emerald-600" />
+                    Sold by {currentListing.retailer_name}
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-0.5 text-amber-600 dark:text-amber-400 font-medium">
+                    <Star className="h-3 w-3 fill-amber-500" />
+                    {currentListing.retailer_rating.toFixed(1)}
+                  </span>
+                  {currentListing.retailer_state && (
+                    <>
+                      <span>•</span>
+                      <span>Ships from {currentListing.retailer_state}</span>
+                    </>
+                  )}
+                  <span>•</span>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                    {currentListing.available_quantity} units available
+                  </span>
+                </div>
               </div>
 
+              {/* Multi-Seller Offer Selector */}
+              {activeListings.length > 1 && (
+                <div className="space-y-2 rounded-xl border p-3.5 bg-card">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-foreground flex items-center gap-1.5">
+                      <Store className="h-3.5 w-3.5 text-emerald-600" />
+                      Select Seller Offer ({activeListings.length} retailers available):
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">Compare offers</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {activeListings.map((listing, idx) => {
+                      const isSelected = currentListing?.id === listing.id;
+                      return (
+                        <button
+                          key={listing.id}
+                          type="button"
+                          onClick={() => setSelectedListingId(listing.id)}
+                          className={`p-2.5 rounded-lg border text-left transition-all flex flex-col justify-between text-xs ${
+                            isSelected
+                              ? "border-ink bg-brand-yellow/10 ring-1 ring-ink"
+                              : "border-border hover:border-muted-foreground bg-muted/20"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold text-foreground truncate">
+                              {listing.retailer_name}
+                            </span>
+                            {idx === 0 && (
+                              <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1 h-3.5">
+                                Best Price
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-baseline justify-between mt-1">
+                            <span className="font-extrabold text-foreground text-sm">
+                              {formatPrice(listing.selling_price_paise, listing.currency)}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              ★ {listing.retailer_rating.toFixed(1)} • {listing.available_quantity} in stock
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Add to Basket Control */}
-              {bestListing.is_in_stock ? (
+              {currentListing.is_in_stock ? (
                 <div className="p-4 rounded-xl border bg-card space-y-3 shadow-xs">
                   <div className="flex items-center gap-3">
                     <div className="flex items-center border rounded-lg overflow-hidden bg-background">
@@ -280,14 +384,14 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                         onClick={() =>
                           setQuantity((q) =>
                             Math.min(
-                              Math.min(10, bestListing.available_quantity),
+                              Math.min(10, currentListing.available_quantity),
                               q + 1
                             )
                           )
                         }
                         disabled={
                           quantity >=
-                            Math.min(10, bestListing.available_quantity) ||
+                            Math.min(10, currentListing.available_quantity) ||
                           isAdding
                         }
                         aria-label="Increase quantity"
@@ -298,11 +402,11 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                     </div>
 
                     <Button
-                      onClick={() => handleAddToCart(bestListing.id, quantity)}
+                      onClick={() => handleAddToCart(currentListing.id, quantity)}
                       disabled={isAdding}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 shadow-xs text-sm"
+                      className="flex-1 bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold h-11 shadow-xs text-sm"
                     >
-                      {isAdding && activeAddingListingId === bestListing.id ? (
+                      {isAdding && activeAddingListingId === currentListing.id ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                           Adding to Basket...
@@ -310,9 +414,24 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       ) : (
                         <>
                           <ShoppingBasket className="h-4 w-4 mr-2" />
-                          Add to Basket • {formatPrice(bestListing.selling_price_paise * quantity, bestListing.currency)}
+                          Add to Basket • {formatPrice(currentListing.selling_price_paise * quantity, currentListing.currency)}
                         </>
                       )}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => toggleCompare(product.slug)}
+                      className={`h-11 px-4 border ${
+                        isInCompare(product.slug)
+                          ? "bg-ink text-white border-ink font-semibold hover:bg-charcoal"
+                          : "hover:bg-muted"
+                      }`}
+                      title={isInCompare(product.slug) ? "Remove from comparison" : "Add to comparison"}
+                    >
+                      <Scale className="h-4 w-4 mr-2" />
+                      {isInCompare(product.slug) ? "Comparing" : "Compare"}
                     </Button>
                   </div>
 
@@ -320,7 +439,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                     <div className="flex items-center justify-between text-xs text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-lg border border-emerald-600/30">
                       <span className="flex items-center gap-1.5 font-medium">
                         <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                        Added {quantity} unit(s) to your basket!
+                        Added {quantity} unit(s) from {currentListing.retailer_name} to your basket!
                       </span>
                       <Link href="/cart" className="font-bold underline hover:text-emerald-800 shrink-0">
                         View Cart →
@@ -333,16 +452,46 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       {addError}
                     </div>
                   )}
+                  {/* Explore Alternatives & Deals trigger */}
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsSubstituteModalOpen(true)}
+                      className="text-xs text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center gap-1.5 font-medium transition-colors cursor-pointer"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      <span>Compare with Alternative Products & Deals</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <Button disabled className="w-full bg-muted text-muted-foreground h-11">
-                  Out of Stock
-                </Button>
+                <div className="space-y-2.5">
+                  <Button disabled className="w-full bg-muted text-muted-foreground h-11 font-semibold">
+                    Out of Stock from this Seller
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => setIsSubstituteModalOpen(true)}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-black font-bold h-11 shadow-xs cursor-pointer"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Explore Available Substitutes
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
-            <div className="p-4 rounded-xl bg-muted/40 border text-sm text-muted-foreground">
-              No active retail listings available for this variant.
+            <div className="space-y-3 p-4 rounded-xl bg-muted/40 border text-sm text-muted-foreground">
+              <p>No active retail listings available for this variant.</p>
+              <Button
+                type="button"
+                onClick={() => setIsSubstituteModalOpen(true)}
+                variant="outline"
+                className="w-full text-xs font-semibold cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
+                Find Compatible Alternatives in Category
+              </Button>
             </div>
           )}
 
@@ -362,7 +511,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
                       onClick={() => setSelectedVariant(v)}
                       className={`flex flex-col items-start px-3.5 py-2 rounded-xl border text-xs font-medium transition-all ${
                         isSelected
-                          ? "border-emerald-600 bg-emerald-600/10 text-emerald-950 dark:text-emerald-200 ring-1 ring-emerald-600"
+                          ? "border-ink bg-brand-yellow/20 text-ink ring-1 ring-ink"
                           : "border-border hover:border-muted-foreground text-foreground"
                       }`}
                     >
@@ -392,76 +541,104 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
             </div>
 
             <div className="space-y-2.5">
-              {activeListings.map((listing, index) => (
-                <Card
-                  key={listing.id}
-                  className={`overflow-hidden border transition-all ${
-                    index === 0
-                      ? "border-emerald-600/50 bg-emerald-600/5 shadow-xs"
-                      : "border-border bg-card"
-                  }`}
-                >
-                  <CardContent className="p-3.5 flex items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-foreground">
-                          {listing.retailer_name}
-                        </span>
-                        {index === 0 && (
-                          <Badge className="bg-emerald-600 text-white text-[10px] py-0 px-1.5 h-4">
-                            Best Offer
-                          </Badge>
-                        )}
-                        <span className="flex items-center gap-0.5 text-xs text-amber-600 dark:text-amber-400 font-semibold">
-                          <Star className="h-3 w-3 fill-amber-500" />
-                          {listing.retailer_rating.toFixed(1)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
-                          <CheckCircle2 className="h-3 w-3" />
-                          {listing.available_quantity} available in stock
-                        </span>
-                        <span>•</span>
-                        <span className="font-mono text-[11px]">
-                          Ref: {listing.seller_sku}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-right">
-                      <div>
-                        <div className="text-base font-extrabold text-foreground">
-                          {formatPrice(listing.selling_price_paise, listing.currency)}
+              {activeListings.map((listing, index) => {
+                const isSelected = currentListing?.id === listing.id;
+                return (
+                  <Card
+                    key={listing.id}
+                    className={`overflow-hidden border transition-all ${
+                      isSelected
+                        ? "border-ink bg-brand-yellow/15 shadow-xs ring-1 ring-ink/60"
+                        : index === 0
+                        ? "border-ink/40 bg-cream/60 shadow-xs"
+                        : "border-border bg-card"
+                    }`}
+                  >
+                    <CardContent className="p-3.5 flex items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-foreground">
+                            {listing.retailer_name}
+                          </span>
+                          {index === 0 && (
+                            <Badge className="bg-emerald-600 text-white text-[10px] py-0 px-1.5 h-4">
+                              Best Offer
+                            </Badge>
+                          )}
+                          {isSelected && (
+                            <Badge variant="outline" className="text-emerald-700 border-emerald-600/40 text-[10px] py-0 px-1.5 h-4">
+                              Selected
+                            </Badge>
+                          )}
+                          <span className="flex items-center gap-0.5 text-xs text-amber-600 dark:text-amber-400 font-semibold">
+                            <Star className="h-3 w-3 fill-amber-500" />
+                            {listing.retailer_rating.toFixed(1)}
+                          </span>
                         </div>
-                        {listing.original_price_paise > listing.selling_price_paise && (
-                          <div className="text-[11px] text-muted-foreground line-through">
-                            {formatPrice(listing.original_price_paise, listing.currency)}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 className="h-3 w-3" />
+                            {listing.available_quantity} available in stock
+                          </span>
+                          {listing.retailer_state && (
+                            <>
+                              <span>•</span>
+                              <span>Location: {listing.retailer_state}</span>
+                            </>
+                          )}
+                          <span>•</span>
+                          <span className="font-mono text-[11px]">
+                            Ref: {listing.seller_sku}
+                          </span>
+                        </div>
                       </div>
 
-                      <Button
-                        size="sm"
-                        variant={index === 0 ? "default" : "outline"}
-                        disabled={isAdding || listing.available_quantity <= 0}
-                        onClick={() => handleAddToCart(listing.id, 1)}
-                        className={`h-9 px-3 text-xs font-semibold ${
-                          index === 0
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                            : "border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                        }`}
-                      >
-                        {isAdding && activeAddingListingId === listing.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          "Add"
-                        )}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                      <div className="flex items-center gap-3 text-right">
+                        <div>
+                          <div className="text-base font-extrabold text-foreground">
+                            {formatPrice(listing.selling_price_paise, listing.currency)}
+                          </div>
+                          {listing.original_price_paise > listing.selling_price_paise && (
+                            <div className="text-[11px] text-muted-foreground line-through">
+                              {formatPrice(listing.original_price_paise, listing.currency)}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {!isSelected && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setSelectedListingId(listing.id)}
+                              className="h-8 px-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                            >
+                              Select
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant={isSelected || index === 0 ? "default" : "outline"}
+                            disabled={isAdding || listing.available_quantity <= 0}
+                            onClick={() => handleAddToCart(listing.id, 1)}
+                            className={`h-8 px-3 text-xs font-semibold ${
+                              isSelected || index === 0
+                                ? "bg-brand-yellow hover:bg-brand-yellow-dark text-ink"
+                                : "border-emerald-600/40 text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                            }`}
+                          >
+                            {isAdding && activeAddingListingId === listing.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              "Add"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </div>
 
@@ -499,6 +676,30 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Basket Price Intelligence (Phase 3F) */}
+      <div className="mt-8">
+        <PriceIntelligencePanel listingId={currentListing?.id} variantId={selectedVariant?.id} />
+      </div>
+
+      {/* Product Passport Section (Phase 2D) */}
+      <div className="mt-8">
+        <ProductPassportSection
+          productIdOrSlug={productIdOrSlug}
+          selectedListingId={currentListing?.id}
+        />
+      </div>
+
+      {/* Substitute Intelligence Modal (Phase 2B) */}
+      <SubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        listingId={currentListing?.id || (product.variants?.[0]?.listings?.[0]?.id)}
+        productName={product.name}
+        onAddToCart={async (newListingId) => {
+          await handleAddToCart(newListingId, 1);
+        }}
+      />
     </div>
   );
 }

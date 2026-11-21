@@ -39,6 +39,37 @@ class Retailer(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, index=True, nullable=False
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
+    business_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    business_hours: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    policies: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Phase 3: PIN codes this store delivers to. Empty list = not restricted.
+    service_pincodes: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
+    verification_status: Mapped[str] = mapped_column(
+        String(32), default="VERIFIED", index=True, nullable=False
+    )
+    reviewed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    verified_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -52,6 +83,79 @@ class Retailer(Base):
     listings: Mapped[list["ProductListing"]] = relationship(
         "ProductListing", back_populates="retailer", cascade="all, delete-orphan"
     )
+    documents: Mapped[list["RetailerVerificationDocument"]] = relationship(
+        "RetailerVerificationDocument",
+        back_populates="retailer",
+        cascade="all, delete-orphan",
+    )
+    verification_history: Mapped[list["RetailerVerificationHistory"]] = relationship(
+        "RetailerVerificationHistory",
+        back_populates="retailer",
+        cascade="all, delete-orphan",
+        order_by="RetailerVerificationHistory.created_at.desc()",
+    )
+
+
+class RetailerVerificationHistory(Base):
+    __tablename__ = "retailer_verification_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    retailer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("retailers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    retailer: Mapped["Retailer"] = relationship(
+        "Retailer", back_populates="verification_history"
+    )
+
+
+class RetailerVerificationDocument(Base):
+    __tablename__ = "retailer_verification_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    retailer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("retailers.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    document_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    document_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    document_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="PENDING", index=True, nullable=False
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    retailer: Mapped["Retailer"] = relationship("Retailer", back_populates="documents")
 
 
 class Category(Base):
@@ -232,6 +336,8 @@ class ProductListing(Base):
         index=True,
     )
     seller_sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Store-supplied photo for this offer (canonical images stay on the product).
+    image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     original_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     selling_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
@@ -296,6 +402,9 @@ class StoreInventory(Base):
     )
     on_hand_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reserved_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    low_stock_threshold: Mapped[int] = mapped_column(
+        Integer, default=10, server_default="10", nullable=False
+    )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -314,12 +423,20 @@ class StoreInventory(Base):
     def available_quantity(self) -> int:
         return max(0, self.on_hand_quantity - self.reserved_quantity)
 
+    @property
+    def is_low_stock(self) -> bool:
+        return self.available_quantity <= self.low_stock_threshold
+
     __table_args__ = (
         CheckConstraint(
             "on_hand_quantity >= 0", name="chk_inventory_on_hand_non_negative"
         ),
         CheckConstraint(
             "reserved_quantity >= 0", name="chk_inventory_reserved_non_negative"
+        ),
+        CheckConstraint(
+            "low_stock_threshold >= 0",
+            name="chk_inventory_low_stock_threshold_non_negative",
         ),
         CheckConstraint(
             "on_hand_quantity >= reserved_quantity",

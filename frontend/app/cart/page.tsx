@@ -1,5 +1,7 @@
 "use client";
 
+import { ShopperGuard } from "@/components/auth/shopper-guard";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -19,22 +21,30 @@ import {
   Store,
   Trash2,
   Truck,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 import { useCart } from "@/lib/cart/cart-context";
 import { createQuote, refreshQuote } from "@/lib/api/quotes";
+import { ApiClientError } from "@/lib/api/client";
 import { reservationApi } from "@/lib/api/reservations";
 import { formatPrice } from "@/lib/utils";
+import { NegotiatorPanel } from "@/components/phase3/negotiator-panel";
+import { useAuth } from "@/lib/auth/auth-context";
 import type {
   CartItem,
   Quote,
   QuoteValidationIssue,
   Reservation,
 } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
-export default function CartPage() {
+const COUPON_KEY = "basket.checkout.coupon";
+
+function CartPageInner() {
   const {
     cart,
     items,
@@ -48,15 +58,52 @@ export default function CartPage() {
     updateQuantity,
     removeItem,
     clearCart,
+    refreshCart,
   } = useCart();
+  const { isAuthenticated } = useAuth();
+  useLiveUpdates(["price.", "listing.", "inventory.", "store_inventory.", "offer.", "variant."], () => void refreshCart());
 
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+
+  // Substitute Intelligence State (Phase 2B)
+  const [substituteItem, setSubstituteItem] = useState<CartItem | null>(null);
+  const [isSubstituteModalOpen, setIsSubstituteModalOpen] = useState(false);
+
+  const handleOpenSubstituteModal = (item: CartItem) => {
+    setSubstituteItem(item);
+    setIsSubstituteModalOpen(true);
+  };
+
+  const handleSubstituteReplaced = async () => {
+    await refreshCart();
+  };
 
   // Quote State (Phase 2C - Server-Authoritative Pricing & Persistent Quotes)
   const [quote, setQuote] = useState<Quote | null>(null);
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  // Coupon: the server validates and prices it; the page only sends the code.
+  const [couponCode, setCouponCode] = useState("");
+  const [couponInput, setCouponInput] = useState("");
+  const [couponRestored, setCouponRestored] = useState(false);
+  useEffect(() => {
+    // Restore after mount (not during render) to avoid a hydration mismatch.
+    try {
+      const saved = window.sessionStorage.getItem(COUPON_KEY) ?? "";
+      if (saved) {
+        setCouponCode(saved);
+        setCouponInput(saved);
+      }
+    } catch {
+      /* storage unavailable */
+    }
+    setCouponRestored(true);
+  }, []);
+  const [couponStatus, setCouponStatus] = useState<
+    "idle" | "applying" | "applied" | "ineligible" | "invalid"
+  >("idle");
+  const [rejectedCode, setRejectedCode] = useState<string | null>(null);
   const [validationIssues, setValidationIssues] = useState<QuoteValidationIssue[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false);
@@ -76,15 +123,32 @@ export default function CartPage() {
       return;
     }
 
+    if (!couponRestored) return;
     let isMounted = true;
     const loadQuote = async () => {
       setIsQuoteLoading(true);
       setQuoteError(null);
+      if (couponCode) setCouponStatus("applying");
       try {
-        const newQuote = await createQuote();
+        let newQuote;
+        try {
+          newQuote = await createQuote(couponCode ? { discount_code: couponCode } : {});
+        } catch (err: unknown) {
+          if (couponCode && err instanceof ApiClientError && err.code === "INVALID_DISCOUNT_CODE") {
+            // Unknown/expired code: tell the shopper and keep the cart usable without it.
+            if (isMounted) {
+              setRejectedCode(couponCode);
+              setCouponStatus("invalid");
+              setCouponCode("");
+            }
+            return;
+          }
+          throw err;
+        }
         if (isMounted) {
           setQuote(newQuote);
           setValidationIssues([]);
+          if (couponCode) setCouponStatus(newQuote.discount_code_applied ? "applied" : "ineligible");
         }
       } catch (err: unknown) {
         if (isMounted) {
@@ -104,7 +168,37 @@ export default function CartPage() {
     return () => {
       isMounted = false;
     };
-  }, [items]);
+  }, [items, couponCode, couponRestored]);
+
+  // Keep the coupon across page refreshes in this tab (never stored server-side here).
+  useEffect(() => {
+    if (!couponRestored) return;
+    try {
+      if (couponCode) window.sessionStorage.setItem(COUPON_KEY, couponCode);
+      else window.sessionStorage.removeItem(COUPON_KEY);
+    } catch {
+      /* storage unavailable: the coupon simply is not remembered */
+    }
+  }, [couponCode, couponRestored]);
+
+  const applyCoupon = () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setRejectedCode(null);
+    // A new code replaces the old one; the reservation is for the old quote.
+    setReservation(null);
+    setReservationTimeRemaining(null);
+    if (code === couponCode) setCouponStatus("applying");
+    setCouponCode(code);
+  };
+  const removeCoupon = () => {
+    setRejectedCode(null);
+    setCouponStatus("idle");
+    setCouponInput("");
+    setReservation(null);
+    setReservationTimeRemaining(null);
+    setCouponCode("");
+  };
 
   // TTL Countdown Timer for the active quote (15-minute guarantee)
   useEffect(() => {
@@ -271,7 +365,7 @@ export default function CartPage() {
   if (!items || items.length === 0) {
     return (
       <div className="container mx-auto px-4 py-20 max-w-xl text-center space-y-6">
-        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+        <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-3xl bg-brand-yellow/25 text-ink">
           <ShoppingBasket className="h-10 w-10" />
         </div>
         <div className="space-y-2">
@@ -285,7 +379,7 @@ export default function CartPage() {
         </div>
         <div>
           <Link href="/products">
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 h-11 shadow-sm">
+            <Button className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold px-6 h-11 shadow-sm">
               Explore Products
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
@@ -516,16 +610,40 @@ export default function CartPage() {
                             </div>
                           )}
 
-                          {/* Availability / Stock Notice */}
+                          {/* Availability / Stock Notice & Intelligent Substitutes */}
                           {!item.is_available && (
-                            <div className="flex items-center gap-1 text-xs text-red-600 font-semibold pt-0.5">
-                              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                              {item.validation_message || "Item unavailable"}
+                            <div className="space-y-1.5 pt-1">
+                              <div className="flex items-center gap-1 text-xs text-red-600 font-semibold">
+                                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                                {item.validation_message || "Item unavailable"}
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleOpenSubstituteModal(item)}
+                                className="h-7 text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 border-amber-500/40 font-semibold cursor-pointer"
+                              >
+                                <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-600" />
+                                Find Suitable Substitutes
+                              </Button>
                             </div>
                           )}
-                          {item.is_available && item.available_stock <= 5 && (
-                            <div className="text-[11px] text-amber-600 dark:text-amber-400 font-medium pt-0.5">
-                              Only {item.available_stock} units left in stock
+                          {item.is_available && (
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              {item.available_stock <= 5 && (
+                                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                  Only {item.available_stock} left
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSubstituteModal(item)}
+                                className="text-[11px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center gap-1 font-medium transition-colors cursor-pointer"
+                              >
+                                <Sparkles className="h-3 w-3 text-amber-500" />
+                                Explore Alternatives
+                              </button>
                             </div>
                           )}
                         </div>
@@ -613,6 +731,8 @@ export default function CartPage() {
 
         {/* Right Column: Order Summary & Retailer Delivery Breakdown */}
         <div className="lg:col-span-4 space-y-4">
+          {/* AI Negotiator (Phase 3D) */}
+          {isAuthenticated && <NegotiatorPanel />}
           <Card className="border shadow-xs">
             <CardHeader className="pb-3 border-b bg-muted/20">
               <div className="flex items-center justify-between">
@@ -648,6 +768,36 @@ export default function CartPage() {
                   <span className="font-semibold text-foreground">
                     {formatPrice(quote ? quote.subtotal_paise : subtotalPaise)}
                   </span>
+                </div>
+
+                <div className="space-y-1" aria-label="Coupon">
+                  <div className="flex gap-2">
+                    <input
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyCoupon();
+                      }}
+                      placeholder="Coupon code"
+                      aria-label="Coupon code"
+                      maxLength={50}
+                      className="h-8 min-w-0 flex-1 rounded border px-2 text-xs uppercase"
+                    />
+                    <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={!couponInput.trim() || couponStatus === "applying"} onClick={applyCoupon}>
+                      {couponCode && couponInput.trim() !== couponCode ? "Replace" : "Apply"}
+                    </Button>
+                    {couponCode && (
+                      <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={removeCoupon}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs" role="status" aria-live="polite">
+                    {couponStatus === "applying" && <span className="text-muted-foreground">Checking coupon…</span>}
+                    {couponStatus === "applied" && <span className="text-emerald-700">Coupon {couponCode.toUpperCase()} applied — included in the discounts below.</span>}
+                    {couponStatus === "ineligible" && <span className="text-amber-700">Coupon {couponCode.toUpperCase()} is valid but does not apply to this basket (for example a minimum order value or a store/product it is limited to).</span>}
+                    {couponStatus === "invalid" && rejectedCode && <span className="text-red-600">Coupon {rejectedCode.toUpperCase()} is not valid or has expired.</span>}
+                  </p>
                 </div>
 
                 {quote && quote.discount_total_paise > 0 && (
@@ -797,7 +947,7 @@ export default function CartPage() {
                       )}
                     </div>
                     <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
-                      All cart listings are locked in PostgreSQL for your session. Cannot be oversold to concurrent shoppers.
+                      Your items are held for you during checkout, so they cannot be sold to someone else meanwhile.
                     </p>
                     <div className="flex items-center justify-between pt-1">
                       <Button
@@ -809,10 +959,10 @@ export default function CartPage() {
                       >
                         {isReleasing ? "Releasing..." : "Release Hold"}
                       </Button>
-                      <Link href={`/checkout?reservation_id=${reservation.id}`}>
+                      <Link href={`/checkout?reservation_id=${reservation.id}&quote_id=${reservation.quote_id}`}>
                         <Button
                           size="sm"
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-8 px-3"
+                          className="bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold text-xs h-8 px-3"
                         >
                           Checkout
                           <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
@@ -822,7 +972,7 @@ export default function CartPage() {
                   </div>
                 ) : (
                   <Button
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-11 text-sm shadow-sm"
+                    className="w-full bg-brand-yellow hover:bg-brand-yellow-dark text-ink font-semibold h-11 text-sm shadow-sm"
                     disabled={
                       items.some((i) => !i.is_available) ||
                       isQuoteStale ||
@@ -887,7 +1037,7 @@ export default function CartPage() {
               <div className="pt-3 border-t space-y-1 text-[11px] text-muted-foreground">
                 <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>Server-authoritative pricing & immutable quote snapshot</span>
+                  <span>Prices confirmed by BASKET and fixed for this checkout</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -902,6 +1052,23 @@ export default function CartPage() {
           </Card>
         </div>
       </div>
+
+      {/* Intelligent Substitute Modal (Phase 2B) */}
+      <SubstituteModal
+        isOpen={isSubstituteModalOpen}
+        onClose={() => setIsSubstituteModalOpen(false)}
+        cartItem={substituteItem}
+        onReplaced={handleSubstituteReplaced}
+      />
     </div>
+  );
+}
+
+
+export default function CartPage() {
+  return (
+    <ShopperGuard>
+      <CartPageInner />
+    </ShopperGuard>
   );
 }

@@ -12,13 +12,28 @@ from alembic import context
 # Ensure app is discoverable on python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import app.core.events.inbox  # noqa: F401
+import app.modules.auctions.models  # noqa: F401
 import app.modules.cart.models  # noqa: F401
 import app.modules.catalogue.models  # noqa: F401
+import app.modules.community.models  # noqa: F401
+import app.modules.data_quality.models  # noqa: F401
+import app.modules.demand.models  # noqa: F401
+import app.modules.exchange.models  # noqa: F401
+import app.modules.governance.models  # noqa: F401
+import app.modules.i18n.models  # noqa: F401
 import app.modules.identity.models  # noqa: F401
+import app.modules.intent.models  # noqa: F401
 import app.modules.inventory.models  # noqa: F401
+import app.modules.missions.models  # noqa: F401
+import app.modules.negotiation.models  # noqa: F401
 import app.modules.orders.models  # noqa: F401
+import app.modules.passport.models  # noqa: F401
 import app.modules.payments.models  # noqa: F401
+import app.modules.price_intel.models  # noqa: F401
 import app.modules.pricing.models  # noqa: F401
+import app.modules.recurring.models  # noqa: F401
+import app.modules.sale_stream.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base
 

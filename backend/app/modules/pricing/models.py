@@ -11,9 +11,13 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
+    UniqueConstraint,
     Uuid,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -53,6 +57,24 @@ class Discount(Base):
         nullable=True,
         index=True,
     )
+    scope: Mapped[str] = mapped_column(
+        String(32), default="PLATFORM_WIDE", index=True, nullable=False
+    )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("categories.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    product_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    usage_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    times_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     min_order_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     max_discount_paise: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     is_active: Mapped[bool] = mapped_column(
@@ -109,6 +131,8 @@ class CheckoutQuote(Base):
         index=True,
     )
     delivery_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Version 2.0: the (normalised) discount code that applied to this quote.
+    discount_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     subtotal_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
     discount_total_paise: Mapped[int] = mapped_column(
         BigInteger, default=0, nullable=False
@@ -136,6 +160,7 @@ class CheckoutQuote(Base):
         Uuid(as_uuid=True),
         ForeignKey("checkout_quotes.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -238,6 +263,10 @@ class CheckoutQuoteItem(Base):
     total_tax_paise: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     retailer_name: Mapped[str] = mapped_column(String(255), nullable=False)
     retailer_state: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Version 2.0: ids (str) of the discounts priced into this line.
+    applied_discount_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -264,4 +293,123 @@ class CheckoutQuoteItem(Base):
             "taxable_base_paise >= 0",
             name="chk_quote_item_taxable_base_positive",
         ),
+    )
+
+
+class DiscountRedemptionStatus(enum.StrEnum):
+    RESERVED = "RESERVED"
+    RELEASED = "RELEASED"
+
+
+class DiscountRedemption(Base):
+    """One use of a discount by one order (Version 2.0).
+
+    Created (RESERVED) with the order, incrementing ``discounts.times_used``
+    under a row lock; set to RELEASED, decrementing it once, when an unpaid
+    order is cancelled or its payment window expires."""
+
+    __tablename__ = "discount_redemptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    discount_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("discounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=DiscountRedemptionStatus.RESERVED.value,
+        server_default=DiscountRedemptionStatus.RESERVED.value,
+        nullable=False,
+    )
+    release_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    released_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "discount_id", "order_id", name="uq_discount_redemption_order"
+        ),
+        CheckConstraint(
+            "status IN ('RESERVED', 'RELEASED')",
+            name="chk_discount_redemption_status",
+        ),
+    )
+
+
+class PriceAwardSource(enum.StrEnum):
+    NEGOTIATION = "NEGOTIATION"
+    GROUP_BUY = "GROUP_BUY"
+    EXCHANGE = "EXCHANGE"
+    AUCTION = "AUCTION"
+
+
+class PriceAwardStatus(enum.StrEnum):
+    ACTIVE = "ACTIVE"
+    USED = "USED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+class PriceAward(Base):
+    """A customer-specific, time-limited, single-use unit price for one listing.
+
+    Phase 3 features that settle on a special price (AI Negotiator, Community
+    Buying, Community Exchange RFQs, Dukaan vs Dukaan) issue awards instead of
+    building their own checkout. The quote service applies the best ACTIVE award
+    when it prices the customer's cart, so the negotiated price flows through the
+    existing server-authoritative quote -> reservation -> order -> Razorpay pipeline. The award is
+    marked USED when an order consumes the quote it was applied to.
+    """
+
+    __tablename__ = "price_awards"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    listing_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("product_listings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    unit_price_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=PriceAwardStatus.ACTIVE.value, nullable=False
+    )
+    expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    quote_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True
+    )
+    used_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("unit_price_paise > 0", name="chk_price_award_price_positive"),
+        CheckConstraint("max_quantity > 0", name="chk_price_award_qty_positive"),
+        Index("ix_price_awards_lookup", "customer_id", "listing_id", "status"),
+        Index("ix_price_awards_source", "source", "source_id"),
+        Index("ix_price_awards_quote", "quote_id"),
     )

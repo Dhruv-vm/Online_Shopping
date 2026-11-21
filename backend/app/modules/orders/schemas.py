@@ -3,7 +3,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
 class DeliveryAddressInput(BaseModel):
@@ -41,11 +48,32 @@ class DeliveryAddressInput(BaseModel):
 
 
 class CreateOrderRequest(BaseModel):
-    quote_id: uuid.UUID
+    quote_id: uuid.UUID | None = None
     reservation_id: uuid.UUID
     delivery_address_id: uuid.UUID | None = None
     delivery_address: DeliveryAddressInput | None = None
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+    @field_validator("quote_id", mode="before")
+    @classmethod
+    def clean_empty_quote_id(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @field_validator("delivery_address_id", mode="before")
+    @classmethod
+    def clean_empty_address_id(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def clean_empty_idempotency_key(cls, v: Any) -> Any:
+        if v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
 
 
 class OrderItemResponse(BaseModel):
@@ -73,6 +101,89 @@ class OrderItemResponse(BaseModel):
     total_tax_paise: int
     retailer_name: str
     retailer_state: str
+    fulfillment_status: str = Field(default="CONFIRMED")
+
+
+class OrderStatusHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    from_status: str | None
+    to_status: str
+    reason: str | None
+    created_at: datetime
+
+
+class ShipmentItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_item_id: uuid.UUID
+    quantity: int
+    created_at: datetime
+
+
+class ShipmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_id: uuid.UUID
+    shipment_number: str
+    carrier_name: str
+    carrier_code: str
+    tracking_number: str
+    tracking_url: str | None
+    status: str
+    shipped_at: datetime | None
+    estimated_delivery_at: datetime | None
+    delivered_at: datetime | None
+    notes: str | None
+    carrier_event_history: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime
+    items: list[ShipmentItemResponse] = Field(default_factory=list)
+
+
+class ReturnItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_item_id: uuid.UUID
+    quantity: int
+    refund_subtotal_paise: int
+    condition_grade: str | None
+    restock_approved: bool
+    created_at: datetime
+
+
+class ReturnStatusHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    from_status: str | None
+    to_status: str
+    reason: str | None
+    actor: str
+    created_at: datetime
+
+
+class ReturnResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_id: uuid.UUID
+    return_number: str
+    status: str
+    reason: str
+    customer_notes: str | None
+    admin_notes: str | None
+    refund_amount_paise: int
+    payment_refund_id: uuid.UUID | None
+    requested_at: datetime
+    inspected_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+    items: list[ReturnItemResponse] = Field(default_factory=list)
+    status_history: list[ReturnStatusHistoryResponse] = Field(default_factory=list)
 
 
 class OrderResponse(BaseModel):
@@ -95,9 +206,39 @@ class OrderResponse(BaseModel):
     currency: str
     status: str
     payment_status: str
+    guest_access_token: str | None = None
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
+    delivered_at: datetime | None = None
     payment_window_expires_at: datetime
     created_at: datetime
-    items: list[OrderItemResponse]
+    items: list[OrderItemResponse] = Field(default_factory=list)
+    status_history: list[OrderStatusHistoryResponse] = Field(default_factory=list)
+    shipments: list[ShipmentResponse] = Field(default_factory=list)
+    returns: list[ReturnResponse] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_defaults_for_unloaded(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return data
+        from sqlalchemy import inspect
+        from sqlalchemy.orm.base import NO_VALUE
+
+        insp = inspect(data, raiseerr=False)
+        if insp:
+            res: dict[str, Any] = {}
+            for col in data.__table__.columns:
+                res[col.name] = getattr(data, col.name)
+            for rel in ("items", "status_history", "shipments", "returns"):
+                if rel in insp.attrs and insp.attrs[rel].loaded_value is not NO_VALUE:
+                    res[rel] = getattr(data, rel)
+                else:
+                    res[rel] = []
+            res["delivery_address_snapshot"] = data.delivery_address_snapshot
+            res["guest_access_token"] = getattr(data, "guest_access_token", None)
+            return res
+        return data
 
     @computed_field
     @property
@@ -115,9 +256,118 @@ class OrderListItemResponse(BaseModel):
     total_payable_paise: int
     currency: str
     item_count: int
+    cancellation_reason: str | None = None
+    cancelled_at: datetime | None = None
+    delivered_at: datetime | None = None
     created_at: datetime
 
 
 class OrderListResponse(BaseModel):
     items: list[OrderListItemResponse]
     total: int
+
+    @computed_field
+    @property
+    def orders(self) -> list[OrderListItemResponse]:
+        return self.items
+
+
+class OrderCancellationRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=255)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class OrderCancellationResponse(BaseModel):
+    order_id: uuid.UUID
+    order_number: str
+    status: str
+    cancelled_at: datetime
+    refund_status: str | None = None
+    refund_amount_paise: int | None = None
+    inventory_restocked: bool
+    message: str
+
+
+class CreateShipmentItemInput(BaseModel):
+    order_item_id: uuid.UUID
+    quantity: int = Field(..., gt=0)
+
+
+class CreateShipmentRequest(BaseModel):
+    carrier_name: str = Field(..., min_length=2, max_length=64)
+    carrier_code: str = Field(..., min_length=2, max_length=32)
+    tracking_number: str = Field(..., min_length=2, max_length=64)
+    tracking_url: str | None = Field(default=None, max_length=512)
+    estimated_delivery_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=500)
+    items: list[CreateShipmentItemInput] | None = None
+
+
+class UpdateShipmentStatusRequest(BaseModel):
+    status: str = Field(..., min_length=2, max_length=32)
+    location: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class OrderTrackingTimelineEvent(BaseModel):
+    status: str
+    title: str
+    description: str
+    timestamp: datetime | None = None
+    completed: bool = False
+    current: bool = False
+
+
+class OrderTrackingResponse(BaseModel):
+    order_id: uuid.UUID
+    order_number: str
+    order_status: str
+    carrier_name: str | None = None
+    carrier_code: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
+    estimated_delivery_at: datetime | None = None
+    delivered_at: datetime | None = None
+    shipments: list[ShipmentResponse] = Field(default_factory=list)
+    timeline: list[OrderTrackingTimelineEvent] = Field(default_factory=list)
+
+
+class ReturnItemCreateRequest(BaseModel):
+    order_item_id: uuid.UUID
+    quantity: int = Field(..., gt=0)
+
+
+class ReturnCreateRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=255)
+    customer_notes: str | None = Field(default=None, max_length=1000)
+    items: list[ReturnItemCreateRequest] = Field(..., min_length=1)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class ReturnStatusUpdateRequest(BaseModel):
+    status: str = Field(..., min_length=2, max_length=32)
+    admin_notes: str | None = Field(default=None, max_length=1000)
+    restock_approved: bool | None = None
+
+
+class GuestOrderLookupRequest(BaseModel):
+    order_number: str = Field(..., min_length=3, max_length=32)
+    access_token: str = Field(..., min_length=16, max_length=128)
+
+
+class CustomerNotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    order_id: uuid.UUID | None
+    title: str
+    message: str
+    event_type: str
+    is_read: bool
+    read_at: datetime | None
+    created_at: datetime
+
+
+class NotificationListResponse(BaseModel):
+    items: list[CustomerNotificationResponse]
+    unread_count: int

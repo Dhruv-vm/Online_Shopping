@@ -2,6 +2,7 @@ import uuid
 
 from sqlalchemy import (
     asc,
+    case,
     desc,
     distinct,
     func,
@@ -26,7 +27,7 @@ class CatalogueRepository:
         self.session = session
 
     async def get_categories_with_count(
-        self, active_only: bool = True
+        self, active_only: bool = True, top_level_only: bool = True
     ) -> list[tuple[Category, int]]:
         """Return categories with active product counts."""
         query = (
@@ -43,15 +44,20 @@ class CatalogueRepository:
         )
         if active_only:
             query = query.where(Category.is_active.is_(True))
+        if top_level_only:
+            query = query.where(Category.parent_id.is_(None))
 
         result = await self.session.execute(query)
         return [(row[0], row[1]) for row in result.all()]
 
     async def get_retailers(self, active_only: bool = True) -> list[Retailer]:
-        """Return list of active retailers."""
+        """Return list of active, verified retailers."""
         query = select(Retailer).order_by(Retailer.name.asc())
         if active_only:
-            query = query.where(Retailer.is_active.is_(True))
+            query = query.where(
+                Retailer.is_active.is_(True),
+                Retailer.verification_status == "VERIFIED",
+            )
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
@@ -112,6 +118,12 @@ class CatalogueRepository:
                 (ProductListing.variant_id == ProductVariant.id)
                 & (ProductListing.is_active.is_(True)),
             )
+            .outerjoin(
+                Retailer,
+                (Retailer.id == ProductListing.retailer_id)
+                & (Retailer.is_active.is_(True))
+                & (Retailer.verification_status == "VERIFIED"),
+            )
             .outerjoin(StoreInventory, StoreInventory.listing_id == ProductListing.id)
             .where(Product.is_active.is_(True))
         )
@@ -142,19 +154,37 @@ class CatalogueRepository:
             )
 
         if min_price is not None:
-            base_stmt = base_stmt.where(ProductListing.selling_price_paise >= min_price)
+            base_stmt = base_stmt.where(
+                (ProductListing.selling_price_paise >= min_price)
+                & (Retailer.id.is_not(None))
+            )
 
         if max_price is not None:
-            base_stmt = base_stmt.where(ProductListing.selling_price_paise <= max_price)
+            base_stmt = base_stmt.where(
+                (ProductListing.selling_price_paise <= max_price)
+                & (Retailer.id.is_not(None))
+            )
 
         if in_stock is True:
             base_stmt = base_stmt.where(
-                (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity) > 0
+                (
+                    (StoreInventory.on_hand_quantity - StoreInventory.reserved_quantity)
+                    > 0
+                )
+                & (Retailer.id.is_not(None))
             )
 
         # Aggregation for sorting and distinct product IDs
         agg_stmt = base_stmt.group_by(Product.id).add_columns(
-            func.min(ProductListing.selling_price_paise).label("min_price"),
+            func.coalesce(
+                func.min(
+                    case(
+                        (Retailer.id.is_not(None), ProductListing.selling_price_paise),
+                        else_=None,
+                    )
+                ),
+                0,
+            ).label("min_price"),
             func.max(Product.created_at).label("created_at"),
             func.min(Product.name).label("name"),
         )

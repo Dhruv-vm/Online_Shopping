@@ -2,7 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { apiClient, ApiClientError } from "@/lib/api/client";
-import type { User } from "@/types";
+import type { RetailerRegisterPayload, User } from "@/types";
+import { reconnectLive } from "@/lib/realtime";
 
 interface AuthContextType {
   user: User | null;
@@ -15,6 +16,7 @@ interface AuthContextType {
     full_name: string;
     phone?: string | null;
   }) => Promise<User>;
+  registerRetailer: (payload: RetailerRegisterPayload) => Promise<User>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<User | null>;
 }
@@ -23,6 +25,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    // Re-open the live stream under the new identity after sign-in / sign-out.
+    reconnectLive();
+  }, [userId]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refreshProfile = useCallback(async (): Promise<User | null> => {
@@ -41,6 +48,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     refreshProfile();
   }, [refreshProfile]);
+
+  // A signed-in user whose session can no longer be renewed is signed out
+  // locally and sent to the login page with an explanation.
+  useEffect(() => {
+    const onExpired = () => {
+      setUser((current) => {
+        if (current && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+          const back = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.assign(`/login?expired=1&redirect=${back}`);
+        }
+        return null;
+      });
+    };
+    window.addEventListener("basket:session-expired", onExpired);
+    return () => window.removeEventListener("basket:session-expired", onExpired);
+  }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
     setIsLoading(true);
@@ -69,6 +92,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const registerRetailer = async (
+    payload: RetailerRegisterPayload
+  ): Promise<User> => {
+    setIsLoading(true);
+    try {
+      const response = await apiClient.registerRetailer(payload);
+      setUser(response.user);
+      return response.user;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = async (): Promise<void> => {
     try {
       await apiClient.logout();
@@ -88,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: !!user,
     login,
     register,
+    registerRetailer,
     logout,
     refreshProfile,
   };

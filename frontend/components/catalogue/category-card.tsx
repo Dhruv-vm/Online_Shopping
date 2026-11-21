@@ -39,7 +39,7 @@ export function CategoryCard({ category }: CategoryCardProps) {
     >
       <Card className="overflow-hidden border transition-all duration-200 group-hover:border-emerald-600/40 group-hover:shadow-md bg-gradient-to-b from-card to-muted/20 h-full">
         <CardContent className="p-3.5 sm:p-4 flex items-center space-x-3 h-full">
-          <div className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600/10 text-emerald-600 transition-colors group-hover:bg-emerald-600 group-hover:text-white">
+          <div className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-cream text-ink transition-colors group-hover:bg-brand-yellow">
             <IconComponent className="h-5 w-5 sm:h-6 sm:w-6 transition-transform duration-200 group-hover:scale-110" />
           </div>
           <div className="space-y-0.5 min-w-0 flex-1">
