@@ -1282,6 +1282,9 @@ class AdminService:
         from app.modules.sale_stream.service import record_flash_deal
 
         await record_flash_deal(self.session, discount=deal)
+        from app.modules.retailer.service import _offer_event
+
+        await _offer_event(self.session, deal, "offer.created")
 
         return await self.get_deal(deal.id)
 
@@ -1344,6 +1347,9 @@ class AdminService:
         if req.is_active is not None:
             deal.is_active = req.is_active
 
+        from app.modules.retailer.service import _offer_event
+
+        await _offer_event(self.session, deal, "offer.updated")
         await self.session.flush()
         return await self.get_deal(deal_id)
 

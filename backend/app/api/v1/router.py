@@ -129,6 +129,10 @@ api_router.include_router(auctions_retailer_router)
 api_router.include_router(auctions_admin_router)
 api_router.include_router(vision_router)
 
+from app.modules.realtime.router import router as realtime_router  # noqa: E402
+
+api_router.include_router(realtime_router)
+
 
 @api_router.get("/info", tags=["System"])
 async def get_api_info() -> dict:

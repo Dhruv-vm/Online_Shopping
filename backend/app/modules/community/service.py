@@ -203,6 +203,13 @@ class CommunityBuyingService:
             )
         c.current_participants += 1
         c.total_quantity += quantity
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="group_buy.member_joined",
+            aggregate_type="group_buy_campaign",
+            aggregate_id=c.id,
+            payload={"campaign_id": c.id, "participants": c.current_participants},
+        )
         await self.session.flush()
         if c.current_participants >= c.max_participants:
             await self._settle(c)
@@ -236,6 +243,13 @@ class CommunityBuyingService:
         member.status = GroupBuyMemberStatus.LEFT.value
         c.current_participants -= 1
         c.total_quantity -= member.quantity
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="group_buy.member_left",
+            aggregate_type="group_buy_campaign",
+            aggregate_id=c.id,
+            payload={"campaign_id": c.id, "participants": c.current_participants},
+        )
         await self.session.flush()
         return c
 

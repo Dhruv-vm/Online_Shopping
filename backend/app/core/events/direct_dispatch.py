@@ -26,6 +26,17 @@ from app.core.events.kafka import EventProducer
 logger = logging.getLogger(__name__)
 
 
+async def _notify_live_clients(event: EventEnvelope) -> None:
+    """Tell connected browsers the entity changed (direct mode has no Kafka
+    stream for the realtime listener). Never fails delivery."""
+    try:
+        from app.modules.realtime.hub import hub
+
+        await hub.publish_envelope(event)
+    except Exception as exc:  # pragma: no cover - push is best effort
+        logger.debug("Realtime notice skipped for %s: %s", event.event_id, exc)
+
+
 class DirectDispatchError(RuntimeError):
     """A consumer handler could not process the event yet (transient)."""
 
@@ -106,6 +117,7 @@ class DirectDispatchProducer(EventProducer):
             # No in-process subscriber for this topic (e.g. search is not
             # configured): nothing to do, the event counts as delivered.
             self.delivered += 1
+            await _notify_live_clients(event)
             return
         record = ConsumerRecord(
             topic=topic,
@@ -126,3 +138,4 @@ class DirectDispatchProducer(EventProducer):
                     f"{consumer.consumer_group} could not process {event.event_type} yet"
                 )
         self.delivered += 1
+        await _notify_live_clients(event)

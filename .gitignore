@@ -61,3 +61,7 @@ backups/
 # Locally stored uploads (development)
 backend/media/
 backend/media_private/
+
+# Shared two-laptop demo runtime state and frontend build
+.shared-demo/
+frontend/.next-shared/

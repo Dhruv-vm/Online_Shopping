@@ -84,6 +84,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 exc,
             )
 
+    # Live change notices for browsers (Kafka mode; direct mode feeds the hub
+    # from the dispatcher).
+    realtime_listener = None
+    if settings.has_kafka and settings.OUTBOX_DISPATCH == "kafka":
+        try:
+            from app.modules.realtime.hub import RealtimeKafkaListener
+
+            realtime_listener = RealtimeKafkaListener()
+            await realtime_listener.start()
+            logger.info(
+                "Realtime listener started (group %s).", realtime_listener.group_id
+            )
+        except Exception as exc:
+            logger.warning("Realtime listener not started: %s", exc)
+            realtime_listener = None
+
     # Background workers: outbox publisher, reservation expiry, reconciliation.
     supervisor = None
     if settings.has_database and settings.BACKGROUND_WORKERS_ENABLED:
@@ -101,6 +117,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Shutdown logic
+    if realtime_listener is not None:
+        await realtime_listener.stop()
     if supervisor is not None:
         try:
             await supervisor.stop()

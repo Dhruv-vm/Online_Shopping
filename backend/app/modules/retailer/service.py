@@ -62,6 +62,23 @@ def _slugify(text: str) -> str:
     return cleaned or "product"
 
 
+async def _offer_event(session, discount, event_type: str) -> None:
+    """Live-update notice that an offer changed (no customer data)."""
+    from app.core.events.marketplace_events import enqueue_marketplace_event
+
+    await enqueue_marketplace_event(
+        session,
+        event_type=event_type,
+        aggregate_type="discount",
+        aggregate_id=discount.id,
+        payload={
+            "discount_id": discount.id,
+            "listing_id": discount.listing_id,
+            "is_active": bool(discount.is_active),
+        },
+    )
+
+
 class RetailerService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -1372,6 +1389,20 @@ class RetailerService:
             )
             self.session.add(notif)
 
+        from app.core.events.marketplace_events import enqueue_marketplace_event
+
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="fulfilment.status_changed",
+            aggregate_type="order_fulfilment",
+            aggregate_id=order.id,
+            payload={
+                "order_id": order.id,
+                "retailer_id": retailer.id,
+                "status": target_status,
+                "order_status": order.status,
+            },
+        )
         await self.session.flush()
         if newly_cancelled:
             await self._compensate_cancelled_items(order, retailer, newly_cancelled)
@@ -1510,6 +1541,7 @@ class RetailerService:
         from app.modules.sale_stream.service import record_flash_deal
 
         await record_flash_deal(self.session, discount=discount)
+        await _offer_event(self.session, discount, "offer.created")
         return RetailerOfferItem.model_validate(discount)
 
     async def update_offer(
@@ -1551,6 +1583,7 @@ class RetailerService:
         if req.valid_to is not None:
             discount.valid_to = req.valid_to
 
+        await _offer_event(self.session, discount, "offer.updated")
         await self.session.flush()
         return RetailerOfferItem.model_validate(discount)
 

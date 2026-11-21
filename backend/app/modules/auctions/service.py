@@ -46,6 +46,13 @@ class AuctionService:
             a.status = (
                 AuctionStatus.COMPLETED.value if n else AuctionStatus.NO_BIDS.value
             )
+            await enqueue_marketplace_event(
+                self.session,
+                event_type="auction.closed",
+                aggregate_type="basket_auction",
+                aggregate_id=a.id,
+                payload={"auction_id": a.id, "status": a.status, "bids": int(n)},
+            )
             await self.session.flush()
 
     # ----------------------------------------------------------- customer
