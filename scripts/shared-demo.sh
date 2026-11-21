@@ -45,6 +45,9 @@ wait_http() { for i in {1..90}; do curl -fs -o /dev/null "$1" && return 0; sleep
 
 start_api() {
   [[ -f "$STATE/api.pid" ]] && kill -0 "$(cat "$STATE/api.pid")" 2>/dev/null && { echo "API already running"; return; }
+  # Bring the demo database to the current schema (additive migrations only).
+  ( cd "$ROOT/backend" && api_env && .venv/bin/alembic upgrade head > "$STATE/migrate.log" 2>&1 ) \
+    || { echo "Migration failed; see $STATE/migrate.log"; exit 1; }
   ( cd "$ROOT/backend" && api_env && nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port $API_PORT \
       > "$STATE/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
   wait_http "http://127.0.0.1:$API_PORT/health" && echo "API ready on 127.0.0.1:$API_PORT" || { echo "API failed; see $STATE/api.log"; exit 1; }
@@ -57,6 +60,8 @@ start_web() {
   if [[ ! -f .next-shared/BUILD_ID || "${REBUILD:-0}" == 1 ]]; then
     echo "Building the frontend (production build, separate .next-shared directory)..."
     ./node_modules/.bin/next build > "$STATE/web-build.log" 2>&1 || { echo "Build failed; see $STATE/web-build.log"; exit 1; }
+    # next build points next-env.d.ts at .next-shared; keep the committed file as is.
+    git -C "$ROOT" checkout -- frontend/next-env.d.ts 2>/dev/null || true
   fi
   nohup ./node_modules/.bin/next start -H 0.0.0.0 -p $WEB_PORT > "$STATE/web.log" 2>&1 &
   echo $! > "$STATE/web.pid"

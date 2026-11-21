@@ -250,3 +250,87 @@ async def get_intent_suggestions(
     return await service.get_suggestions(
         customer_id=current_user.id, category_id=category_id
     )
+
+
+# ------------------------------------------------------------ intent workflow
+from app.modules.identity.dependencies import require_role  # noqa: E402
+from app.modules.intent.schemas import (  # noqa: E402
+    IntentBasketResponse,
+    IntentSubmitRequest,
+    IntentSummary,
+    IntentWorkflowResponse,
+)
+from app.modules.intent.workflow import IntentWorkflow  # noqa: E402
+
+require_customer = require_role("customer")
+
+
+@intent_router.post(
+    "/workflow",
+    response_model=IntentWorkflowResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_csrf_token)],
+    summary="Submit a shopping intent and see real matches, demand status and next steps",
+)
+async def submit_intent(
+    payload: IntentSubmitRequest,
+    current_user: Annotated[User, Depends(require_customer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IntentWorkflowResponse:
+    """Resubmitting the same items for the same area and frequency updates the
+    existing intent (``updated_existing``) instead of creating a duplicate."""
+    return await IntentWorkflow(db).submit(current_user.id, payload)
+
+
+@intent_router.get(
+    "/workflow",
+    response_model=list[IntentSummary],
+    summary="Your saved shopping intents with their last status",
+)
+async def list_intent_workflows(
+    current_user: Annotated[User, Depends(require_customer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[IntentSummary]:
+    return await IntentWorkflow(db).list_intents(current_user.id)
+
+
+@intent_router.get(
+    "/workflow/{intention_id}",
+    response_model=IntentWorkflowResponse,
+    summary="Current matches and status for one intent (does not record new demand)",
+)
+async def get_intent_workflow(
+    intention_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_customer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IntentWorkflowResponse:
+    return await IntentWorkflow(db).get(current_user.id, intention_id)
+
+
+@intent_router.put(
+    "/workflow/{intention_id}",
+    response_model=IntentWorkflowResponse,
+    dependencies=[Depends(verify_csrf_token)],
+    summary="Review and update an intent",
+)
+async def update_intent_workflow(
+    intention_id: uuid.UUID,
+    payload: IntentSubmitRequest,
+    current_user: Annotated[User, Depends(require_customer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IntentWorkflowResponse:
+    return await IntentWorkflow(db).update(current_user.id, intention_id, payload)
+
+
+@intent_router.post(
+    "/workflow/{intention_id}/basket",
+    response_model=IntentBasketResponse,
+    dependencies=[Depends(verify_csrf_token)],
+    summary="Add the cheapest matching listing for each available item to the cart",
+)
+async def create_intent_basket(
+    intention_id: uuid.UUID,
+    current_user: Annotated[User, Depends(require_customer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IntentBasketResponse:
+    return await IntentWorkflow(db).create_basket(current_user.id, intention_id)
