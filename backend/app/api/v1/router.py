@@ -133,6 +133,10 @@ from app.modules.realtime.router import router as realtime_router  # noqa: E402
 
 api_router.include_router(realtime_router)
 
+from app.modules.recurring.router import router as recurring_router  # noqa: E402
+
+api_router.include_router(recurring_router)
+
 
 @api_router.get("/info", tags=["System"])
 async def get_api_info() -> dict:

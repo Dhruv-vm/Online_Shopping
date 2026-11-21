@@ -203,9 +203,15 @@ async def phase3_slow_jobs(session_factory) -> None:
     """Hourly: hot-seller detection, daily price snapshot (idempotent), demand expiry."""
     from app.modules.demand.service import expire_idle_pools
     from app.modules.price_intel.service import snapshot_all_active_listings
+    from app.modules.recurring.service import prepare_due_recurring_baskets
     from app.modules.sale_stream.service import detect_hot_sellers
 
-    for job in (detect_hot_sellers, snapshot_all_active_listings, expire_idle_pools):
+    for job in (
+        detect_hot_sellers,
+        snapshot_all_active_listings,
+        expire_idle_pools,
+        prepare_due_recurring_baskets,
+    ):
         try:
             await run_job(
                 session_factory,

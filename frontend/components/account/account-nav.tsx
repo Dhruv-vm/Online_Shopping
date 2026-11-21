@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-context";
-import { User, MapPin, LogOut, ShieldCheck, Loader2, Package, Sparkles } from "lucide-react";
+import { User, MapPin, LogOut, ShieldCheck, Loader2, Package, Sparkles, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +32,12 @@ export function AccountNav() {
       href: "/account/intent",
       icon: Sparkles,
       active: pathname === "/account/intent",
+    },
+    {
+      title: "Monthly Essentials",
+      href: "/account/recurring",
+      icon: Repeat,
+      active: pathname === "/account/recurring",
     },
     {
       title: "Saved Addresses",
