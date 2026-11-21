@@ -29,8 +29,20 @@ DB_URL="${env_url%/*}/${DB_NAME}"
 
 lan_ip() { ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<this-mac-ip>"; }
 
+demo_origins() {
+  # The browser's Origin is the address the laptops open (LAN or tunnel); the
+  # backend's CSRF/CORS check only accepts origins listed here.
+  # JSON list: pydantic-settings parses list fields from the environment as JSON.
+  local o="\"http://localhost:$WEB_PORT\",\"http://127.0.0.1:$WEB_PORT\""
+  local ip; ip=$(lan_ip)
+  [[ "$ip" != "<this-mac-ip>" ]] && o="$o,\"http://$ip:$WEB_PORT\""
+  [[ -f "$STATE/tunnel.url" ]] && o="$o,\"$(cat "$STATE/tunnel.url")\""
+  echo "[$o]"
+}
+
 api_env() {
   export DATABASE_URL="$DB_URL"
+  export CORS_ORIGINS="$(demo_origins)"
   export OUTBOX_DISPATCH=kafka
   export KAFKA_BOOTSTRAP_SERVERS=localhost:9094 KAFKA_SECURITY_PROTOCOL=PLAINTEXT
   export KAFKA_SASL_USERNAME="" KAFKA_SASL_PASSWORD="" KAFKA_SSL_CA_LOCATION=""
@@ -107,7 +119,10 @@ case "${1:-status}" in
     nohup cloudflared tunnel --no-autoupdate --url "http://localhost:$WEB_PORT" > "$STATE/tunnel.log" 2>&1 &
     echo $! > "$STATE/tunnel.pid"
     for i in {1..30}; do u=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$STATE/tunnel.log" | head -1); [[ -n "$u" ]] && break; sleep 1; done
-    [[ -n "${u:-}" ]] && { echo "$u" > "$STATE/tunnel.url"; urls; } || { echo "Tunnel did not start; see $STATE/tunnel.log"; exit 1; } ;;
+    [[ -n "${u:-}" ]] || { echo "Tunnel did not start; see $STATE/tunnel.log"; exit 1; }
+    echo "$u" > "$STATE/tunnel.url"
+    echo "Restarting the API so it accepts requests from the tunnel address..."
+    stop_pid api; start_api; urls ;;
   restart)
     # Rebuilds the frontend so code changes are served; data is kept.
     "$0" down; REBUILD=1 "$0" up ;;
