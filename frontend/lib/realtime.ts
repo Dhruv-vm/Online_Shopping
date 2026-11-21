@@ -22,6 +22,7 @@ let source: EventSource | null = null;
 let state: LiveState = "offline";
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryDelay = 2000;
+const OFFLINE_REFRESH_MS = 10000;
 
 function streamUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "");
@@ -49,7 +50,14 @@ function open() {
   setState("connecting");
   const es = new EventSource(streamUrl(), { withCredentials: true });
   source = es;
+  // Some networks hold the stream open without delivering it (Cloudflare quick
+  // tunnels do not pass Server-Sent Events). No "ready" within 8 s → treat as
+  // offline so pages switch to the faster refresh below.
+  const readyTimer = setTimeout(() => {
+    if (state !== "live") es.onerror?.call(es, new Event("error"));
+  }, 8000);
   es.addEventListener("ready", () => {
+    clearTimeout(readyTimer);
     retryDelay = 2000;
     setState("live");
   });
@@ -150,9 +158,16 @@ export function useLiveUpdates(
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
+    // Safety-net refresh: every `fallbackMs` while live, at most every
+    // OFFLINE_REFRESH_MS while the stream is unavailable.
+    let lastRun = Date.now();
     const fallback = fallbackMs > 0 ? setInterval(() => {
-      if (document.visibilityState === "visible") cb.current();
-    }, fallbackMs) : null;
+      const every = state === "live" ? fallbackMs : Math.min(fallbackMs, OFFLINE_REFRESH_MS);
+      if (document.visibilityState === "visible" && Date.now() - lastRun >= every) {
+        lastRun = Date.now();
+        cb.current();
+      }
+    }, 2500) : null;
     return () => {
       unsub();
       if (timer) clearTimeout(timer);

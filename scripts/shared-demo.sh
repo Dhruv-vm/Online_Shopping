@@ -118,7 +118,7 @@ case "${1:-status}" in
     command -v cloudflared >/dev/null || { echo "cloudflared not installed (brew install cloudflared)"; exit 1; }
     nohup cloudflared tunnel --no-autoupdate --url "http://localhost:$WEB_PORT" > "$STATE/tunnel.log" 2>&1 &
     echo $! > "$STATE/tunnel.pid"
-    for i in {1..30}; do u=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$STATE/tunnel.log" | head -1); [[ -n "$u" ]] && break; sleep 1; done
+    for i in {1..90}; do u=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$STATE/tunnel.log" 2>/dev/null | head -1 || true); [[ -n "$u" ]] && break; sleep 1; done
     [[ -n "${u:-}" ]] || { echo "Tunnel did not start; see $STATE/tunnel.log"; exit 1; }
     echo "$u" > "$STATE/tunnel.url"
     echo "Restarting the API so it accepts requests from the tunnel address..."
