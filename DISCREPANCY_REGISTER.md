@@ -7,6 +7,20 @@
 
 ---
 
+## V2B. Version 2.0 Phase B (P0-2 discounts) — 2026-11-21
+
+Branch `feature/version-2-development`; details and evidence in `VERSION_2_PHASE_B_REPORT.md`. Migration `0035_discount_codes_redemptions` (additive, verified up/down/re-up).
+
+| ID | Severity | Summary | Fix |
+| :--- | :---: | :--- | :--- |
+| V2B-F1 (audit D2) | High | Discount codes were never checked: a deal with a code applied to every customer automatically | Coded deals apply only with their code (`discount_code` on the quote, exact and case-insensitive); unknown, inactive, not-yet-valid, expired or used-up code → 422 `INVALID_DISCOUNT_CODE`; code uniqueness is case-insensitive |
+| V2B-F2 (audit D3) | High | Every matching deal stacked (two 7 % deals gave 14 %) | Per line: best single platform deal + best single retailer offer, chosen by the customer's final price; applied discount ids stored per quote line and returned |
+| V2B-F3 (audit D3) | High | `min_order_paise` compared with the unit price | Compared with the pre-discount subtotal of the basket lines the discount covers (tax-inclusive item prices, delivery excluded) |
+| V2B-F4 | High | `times_used` was never incremented, so `usage_limit` was never reached | Use reserved at order creation under a row lock (`discount_redemptions`), 409 `DISCOUNT_USAGE_LIMIT_REACHED` beyond the limit; released exactly once on unpaid cancel or payment-window expiry; paid orders keep it |
+| V2B-F5 | Medium | Store-wide retailer offers (no listing) never applied — all six seeded coupons were dead | Apply to that retailer's items; minimum checked against that retailer's lines (approved 2026-11-21) |
+
+Remaining: no checkout code input (deferred); fixed-amount offers are per unit (unchanged); a use is not released when an order is cancelled after a rejected partial capture; codes are not rate-limited.
+
 ## V2A. Version 2.0 Phase A (P0 correctness) — 2026-11-21
 
 Branch `feature/version-2-development`. Defects found by `VERSION_1_FUNCTIONAL_AUDIT.md`; details in `VERSION_2_PHASE_A_REPORT.md`.
