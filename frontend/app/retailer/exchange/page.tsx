@@ -35,7 +35,8 @@ function BidForm({ r, listings, onDone }: { r: ExchangeRequest; listings: { id: 
             });
             onDone();
           } catch (e) { setErr(errorText(e)); }
-        }} className="rounded bg-blue-600 px-3 py-1 text-white">{r.my_bid ? "Revise bid" : "Submit bid"}</button>
+        }} disabled={!Object.values(lines).some((l) => l.listing_id)} className="rounded bg-blue-600 px-3 py-1 text-white disabled:opacity-40">{r.my_bid ? "Revise bid" : "Submit bid"}</button>
+        {!Object.values(lines).some((l) => l.listing_id) && <span className="text-gray-500">Choose one of your listings for at least one item to bid.</span>}
       </div>
       <Notice tone="error" text={err} />
     </div>

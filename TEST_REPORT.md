@@ -3,6 +3,30 @@
 > Date: 2026-11-20 · Branch: `feature/phase-3-advanced-marketplace` (local, based on `audit/stabilisation-and-repair`)
 > Machine: developer Mac (Python 3.12.14, Node 22, PostgreSQL 16 local). All results below were **executed**; nothing is extrapolated.
 
+## Marketplace Completion — final regression (2026-11-21)
+
+Branch `feature/marketplace-completion`, regression started 12:51 IST at `8de5111`; the only failure (formatting) was fixed in `2931e74` and re-checked. Developer Mac: Python 3.12, Node 22, PostgreSQL 16. Backend tests use the isolated `basket_db_test` database (migrated to `0034` at session start). Nothing below is extrapolated.
+
+| Suite | Command | Result |
+| :--- | :--- | :--- |
+| Backend, full | `cd backend && unset DATABASE_URL && .venv/bin/python -m pytest -q -p no:cacheprovider` | **538 passed, 0 failed, 3 skipped** (173 s). Skips are opt-in live-infrastructure tests. |
+| E2E API journeys A–F + role/permission suites | `pytest tests/test_mc_e2e_journeys.py tests/test_multi_role_portals.py tests/test_mc_governance.py` | **14 passed** (re-run after formatting: E2E 6 passed) |
+| Feature audit (16 areas) | `scripts/audit-features.sh` | **All 16 areas passed** — auth 34, checkout isolation 23, onboarding 6, products & images 20, inventory 26, fulfilment & payments 87, governance 4, community buying 7, RFQ 3, Dukaan vs Dukaan 2, negotiator & assistant 7, price intel & sale stream 7, demand 7, OCR fallback 7, multilingual 19, Phase 2 42 |
+| Migration verification | `scripts/verify-migrations.sh` | **All checks passed** — 0031–0034 up/down/re-up identical; sequential rollback to 0030 and re-apply identical; no NOT VALID constraints; all FKs indexed |
+| Ruff lint | `ruff check .` | clean |
+| Ruff format | `ruff format --check app tests alembic` | **failed on 1 file** (`tests/test_mc_e2e_journeys.py`) → formatted in `2931e74` → clean |
+| Frontend unit tests | `npm test` | **125 / 125** (i18n coverage: en 100 %, other 11 languages 46 % of 633 keys) |
+| Frontend type-check | `npm run type-check` | 0 errors |
+| Frontend lint | `npm run lint` | 0 errors; 1 pre-existing `<img>` warning (`retailer/listings/new`) |
+| Frontend production build | `npm run build` | ✅ 63 routes |
+| Browser audit (Playwright, `basket_demo`) | manual scripted journeys | All 15 audited areas exercised; 3 defects found and fixed (see `docs/MARKETPLACE_COMPLETION.md` §2) |
+
+Flaky-test history: `test_budget_shortfall_handling` failed once in three full runs on 2026-11-21 morning and `test_mission_recommendation_personalized_by_intent` failed in the feature audit. Both were caused by shared test-database state (see DISCREPANCY_REGISTER MC-F9), reproduced deterministically, and fixed in `f280d8e` / `ccc466d`. The final full run above has 0 failures.
+
+Not covered by automated or browser tests: a real Razorpay hosted payment (needs test keys), a live OCR provider, multi-instance media storage.
+
+---
+
 ## 1. Summary
 
 | Suite | Result | Notes |

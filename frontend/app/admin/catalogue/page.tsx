@@ -22,6 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
+import { deleteProductImage, fileToBase64, uploadProductImage } from "@/lib/api/marketplace";
+import { errorText } from "@/components/phase3/kit";
 import type {
   AdminCatalogueProductListItem,
   AdminCatalogueProductDetailResponse,
@@ -78,6 +80,38 @@ export default function AdminCataloguePage() {
   } | null>(null);
 
   const [actionLoading, setActionLoading] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  const refreshActive = async (id: string) => setActiveProduct(await apiClient.getAdminCatalogueProduct(id));
+  const onCanonicalImage = async (file: File | undefined, makePrimary: boolean) => {
+    if (!file || !activeProduct) return;
+    setImageError(null);
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) return setImageError("Use a JPEG, PNG or WebP image.");
+    if (file.size > 5 * 1024 * 1024) return setImageError("Image must be 5 MB or smaller.");
+    setImageBusy(true);
+    try {
+      await uploadProductImage(activeProduct.id, await fileToBase64(file), file.type, makePrimary);
+      await refreshActive(activeProduct.id);
+    } catch (e) {
+      setImageError(errorText(e));
+    } finally {
+      setImageBusy(false);
+    }
+  };
+  const onDeleteCanonicalImage = async (imageId: string) => {
+    if (!activeProduct || !confirm("Remove this catalogue image?")) return;
+    setImageBusy(true);
+    setImageError(null);
+    try {
+      await deleteProductImage(imageId);
+      await refreshActive(activeProduct.id);
+    } catch (e) {
+      setImageError(errorText(e));
+    } finally {
+      setImageBusy(false);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -527,6 +561,41 @@ export default function AdminCataloguePage() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
+
+            {/* Canonical images */}
+            <section aria-labelledby="canonical-images">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 id="canonical-images" className="text-sm font-bold tracking-tight text-foreground">
+                  Catalogue images ({activeProduct.images.length})
+                </h3>
+                <label className={`cursor-pointer rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted ${imageBusy ? "pointer-events-none opacity-50" : ""}`}>
+                  {imageBusy ? "Working…" : "Upload image"}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" aria-label="Upload catalogue image"
+                    onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; onCanonicalImage(f, activeProduct.images.length === 0); }} />
+                </label>
+              </div>
+              {imageError && <p className="mb-2 text-xs text-red-600">{imageError}</p>}
+              {activeProduct.images.length === 0 ? (
+                <p className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">
+                  No catalogue image yet. The first image you upload becomes the primary image shown to shoppers.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {activeProduct.images.map((img) => (
+                    <figure key={img.id} className="w-24 text-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.alt_text || activeProduct.name} className="h-24 w-24 rounded-lg border object-cover" />
+                      <figcaption className="mt-1 flex items-center justify-center gap-2 text-[10px]">
+                        {img.is_primary ? <span className="font-semibold text-brand">Primary</span> : null}
+                        <button type="button" className="text-muted-foreground hover:text-red-600" disabled={imageBusy} onClick={() => onDeleteCanonicalImage(img.id)}>
+                          Remove
+                        </button>
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+            </section>
 
             {/* Variants Sub-header */}
             <div className="flex items-center justify-between">

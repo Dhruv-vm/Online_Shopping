@@ -440,3 +440,80 @@ async def get_retailer_analytics(
 ) -> RetailerAnalyticsResponse:
     service = RetailerService(db)
     return await service.get_analytics(retailer)
+
+
+# ================= Onboarding & media =================
+from app.modules.retailer import service as _svc_mod  # noqa: E402
+from app.modules.retailer.schemas import (  # noqa: E402
+    ImageUploadRequest,
+    RetailerDocumentCreateRequest,
+    RetailerDocumentItem,
+)
+
+
+def _doc_item(d) -> RetailerDocumentItem:
+    return RetailerDocumentItem(
+        id=d.id,
+        document_type=d.document_type,
+        document_number=d.document_number,
+        has_file=bool(d.document_url),
+        status=d.status,
+        rejection_reason=d.rejection_reason,
+        created_at=d.created_at,
+    )
+
+
+@router.get("/documents", response_model=list[RetailerDocumentItem])
+async def list_verification_documents(
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[RetailerDocumentItem]:
+    return [_doc_item(d) for d in await _svc_mod.list_documents(db, retailer)]
+
+
+@router.post("/documents", response_model=RetailerDocumentItem, status_code=201)
+async def submit_verification_document(
+    body: RetailerDocumentCreateRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerDocumentItem:
+    """Upload a GSTIN certificate, PAN, licence or address proof for review.
+    Files are stored privately and are visible only to BASKET admins."""
+    doc = await _svc_mod.submit_document(db, retailer, body)
+    await db.commit()
+    await db.refresh(doc)
+    return _doc_item(doc)
+
+
+@router.post("/verification/resubmit", response_model=RetailerProfileResponse)
+async def resubmit_verification(
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> RetailerProfileResponse:
+    r = await _svc_mod.resubmit_for_verification(db, retailer)
+    await db.commit()
+    await db.refresh(r)
+    return RetailerProfileResponse.model_validate(r)
+
+
+@router.put("/listings/{listing_id}/image")
+async def upload_listing_image(
+    listing_id: uuid.UUID,
+    body: ImageUploadRequest,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    url = await _svc_mod.set_listing_image(db, retailer, listing_id, body)
+    await db.commit()
+    return {"listing_id": str(listing_id), "image_url": url}
+
+
+@router.delete("/listings/{listing_id}/image")
+async def remove_listing_image(
+    listing_id: uuid.UUID,
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    await _svc_mod.set_listing_image(db, retailer, listing_id, None)
+    await db.commit()
+    return {"listing_id": str(listing_id), "image_url": None}

@@ -391,14 +391,46 @@ async def test_mission_alternatives_and_replacement(async_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_budget_shortfall_handling(async_client: AsyncClient):
-    """When budget is too small, mission explains shortfall transparently without hiding costs."""
+    """When budget is too small, mission explains shortfall transparently without hiding costs.
+
+    The mission is planned inside a category this test owns. Planning against
+    the whole shared test catalogue made the outcome depend on whether any
+    other test (or an earlier, partial run) had left a listing priced at or
+    below the budget active — the planner would then fit it under budget.
+    """
+    from sqlalchemy import select
+
+    from app.core.database import get_session_factory
+    from app.modules.catalogue.models import Category
+
     user, token = await register_customer(async_client, "low_budget_shopper")
     headers = {"Authorization": f"Bearer {token}"}
+
+    suffix = uuid.uuid4().hex[:8]
+    slug = f"mission-budget-{suffix}"
+    prices = [149900, 249900, 399900]  # every option costs more than the budget
+    listing_ids = set()
+    for price in prices:
+        listing = await create_test_listing(
+            selling_price_paise=price,
+            original_price_paise=price,
+            category_slug=slug,
+            category_name=f"Mission Budget {suffix}",
+        )
+        listing_ids.add(listing["id"])
+    async with get_session_factory()() as session:
+        category_id = (
+            await session.execute(select(Category.id).where(Category.slug == slug))
+        ).scalar_one()
 
     # Set an unrealistically low budget of ₹50 (5000 paise)
     resp = await async_client.post(
         "/api/v1/missions",
-        json={"title": "Luxury Electronics Setup", "budget_paise": 5000},
+        json={
+            "title": "Luxury Electronics Setup",
+            "budget_paise": 5000,
+            "category_id": str(category_id),
+        },
         headers=headers,
     )
     assert resp.status_code == 201
@@ -412,6 +444,11 @@ async def test_budget_shortfall_handling(async_client: AsyncClient):
         "exceeds" in mission["summary_explanation"].lower()
         or "budget" in mission["summary_explanation"].lower()
     )
+    # Costs are not hidden: the plan holds only this category's listings, the
+    # cheapest one is offered, and the shortfall is exactly what it overshoots.
+    assert mission["items"], "an over-budget mission must still propose an option"
+    assert {i["listing_id"] for i in mission["items"]} <= listing_ids
+    assert mission["budget_shortfall_paise"] == min(prices) - 5000
 
 
 @pytest.mark.asyncio

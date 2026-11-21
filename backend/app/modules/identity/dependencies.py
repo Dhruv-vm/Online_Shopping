@@ -115,6 +115,10 @@ async def get_current_user(
             status_code=403,
         )
 
+    # Exposed to middleware (admin audit trail); never used for authorisation.
+    request.state.auth_user_id = user.id
+    request.state.auth_user_email = user.email
+    request.state.auth_role = user.role
     return user
 
 

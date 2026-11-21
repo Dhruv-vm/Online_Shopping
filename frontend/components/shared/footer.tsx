@@ -1,42 +1,82 @@
+"use client";
+
 import Link from "next/link";
-import { ShoppingBasket } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { BasketLogo } from "@/components/brand/logo";
+import { useI18n } from "@/lib/i18n/i18n-context";
+
+const COLUMNS: { title: string; links: { href: string; key: string }[] }[] = [
+  {
+    title: "footer.shop",
+    links: [
+      { href: "/products", key: "nav.catalogue" },
+      { href: "/categories", key: "nav.categories" },
+      { href: "/sale-stream", key: "nav.saleStream" },
+      { href: "/community-buying", key: "nav.communityBuying" },
+      { href: "/auctions", key: "nav.auctions" },
+      { href: "/missions", key: "nav.missions" },
+    ],
+  },
+  {
+    title: "footer.account",
+    links: [
+      { href: "/account", key: "nav.account" },
+      { href: "/orders", key: "nav.orders" },
+      { href: "/account/price-alerts", key: "nav.priceAlerts" },
+      { href: "/account/requests", key: "nav.myRequests" },
+      { href: "/cart", key: "nav.cart" },
+    ],
+  },
+  {
+    title: "footer.sellers",
+    links: [
+      { href: "/register/retailer", key: "nav.sellOnBasket" },
+      { href: "/login?redirect=/retailer", key: "footer.retailerLogin" },
+      { href: "/retailers", key: "nav.retailers" },
+    ],
+  },
+  {
+    title: "footer.policies",
+    links: [
+      { href: "/policies/returns", key: "footer.returns" },
+      { href: "/policies/shipping", key: "footer.shipping" },
+      { href: "/policies/privacy", key: "footer.privacy" },
+      { href: "/policies/terms", key: "footer.terms" },
+    ],
+  },
+];
 
 export function Footer() {
+  const { t } = useI18n();
+  const pathname = usePathname();
+  if (pathname?.startsWith("/admin") || pathname?.startsWith("/retailer/")) return null;
   return (
-    <footer className="w-full border-t bg-muted/20 py-10 text-xs text-muted-foreground mt-16">
-      <div className="container mx-auto px-4 sm:px-6 space-y-6">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-600 text-white">
-              <ShoppingBasket className="h-4 w-4" />
-            </div>
-            <span className="font-bold text-sm text-foreground">BASKET</span>
-            <span className="text-[11px] text-muted-foreground">— Multi-Category Indian Retail Platform</span>
-          </div>
-
-          <div className="flex items-center space-x-6 text-xs font-medium">
-            <Link href="/products" className="hover:text-foreground transition-colors">
-              Catalogue
-            </Link>
-            <Link href="/categories" className="hover:text-foreground transition-colors">
-              Categories
-            </Link>
-            <Link href="/retailers" className="hover:text-foreground transition-colors">
-              Retailers
-            </Link>
-            <Link href="/#status" className="hover:text-foreground transition-colors">
-              System Health
-            </Link>
-          </div>
+    <footer className="mt-16 bg-brand-dark text-white">
+      <div className="container-page grid gap-10 py-12 md:grid-cols-[1.4fr_repeat(4,1fr)]">
+        <div className="space-y-3">
+          <BasketLogo inverted tagline={t("header.tagline")} />
+          <p className="max-w-xs text-sm text-white/75">{t("footer.about")}</p>
+          <p className="text-xs text-white/60">{t("footer.payments")}</p>
         </div>
-
-        <div className="border-t pt-4 flex flex-col sm:flex-row items-center justify-between text-[11px] text-muted-foreground gap-2">
-          <p>
-            Phase 1 Catalogue & Storefront Foundation • PostgreSQL Source of Truth • Strict API Contracts
-          </p>
-          <p>
-            Designed for two-developer engineering workflow in Google Antigravity.
-          </p>
+        {COLUMNS.map((c) => (
+          <div key={c.title}>
+            <h3 className="mb-3 text-sm font-semibold text-brand-yellow">{t(c.title)}</h3>
+            <ul className="space-y-2 text-sm text-white/80">
+              {c.links.map((l) => (
+                <li key={l.href}>
+                  <Link href={l.href} className="hover:text-white hover:underline">
+                    {t(l.key)}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-white/10">
+        <div className="container-page flex flex-col gap-2 py-4 text-xs text-white/60 sm:flex-row sm:items-center sm:justify-between">
+          <span>{t("footer.copyright", { year: new Date().getFullYear() })}</span>
+          <span>{t("footer.demoNotice")}</span>
         </div>
       </div>
     </footer>

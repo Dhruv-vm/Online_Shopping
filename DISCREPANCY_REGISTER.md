@@ -2,10 +2,51 @@
 
 > **Document Version:** 2.0.0  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
-> **Target Audience:** Engineering Leads, System Auditors, Claude Development Team  
-> **Last Updated:** 2026-11-20  
+> **Target Audience:** Engineering Leads, System Auditors, Development Team  
+> **Last Updated:** 2026-11-21  
 
 ---
+
+## MC. Marketplace Completion — 2026-11-21
+
+Branch `feature/marketplace-completion`. "Fixed" items have a commit and a test; "Open" items are known and not done.
+
+### MC — fixed
+
+| ID | Severity | Summary | Fix |
+| :--- | :---: | :--- | :--- |
+| MC-F1 | High | Plain `pytest` ran against `basket_db`, creating 12,850 `@example.com` users, hex-named catalogue rows and unpaid orders in PACKED/SHIPPED | `tests/conftest.py` always uses a `*_test` DB; polluted rows hidden by reversible quarantine batch `q-20261120171941` (`6100eaa`, `ac19553`) |
+| MC-F2 | High | Unpaid orders could be fulfilled; analytics counted them | `409 ORDER_NOT_PAID`; analytics use paid / delivered definitions (`6100eaa`) |
+| MC-F3 | High | Offers saved as 0 % (percent sent where basis points expected) | Units fixed in admin and retailer UI (`6100eaa`) |
+| MC-F4 | High | Retailer/admin sessions could add to cart, quote, reserve, order and start payment via the API | `403 BUSINESS_ACCOUNT_CANNOT_SHOP` on every basket/checkout mutation (`b1a8995`); E2E journey F |
+| MC-F5 | Medium | Store links → `/retailers/<slug>` (404) | Link to `/products?retailer_id=` (`c34b39b`) |
+| MC-F6 | Medium | Stale localStorage language overrode the server cookie | Cookie wins (`c34b39b`) |
+| MC-F7 | Medium | Checkout blank when opened directly; developer copy and raw address-ID input shown to shoppers; refresh lost payment step | (`10a90c4`) |
+| MC-F8 | Medium | 8 FK columns without an index (5 from `0031`, 3 older) | Migration `0034_foreign_key_indexes` |
+| MC-F9 | Low | `test_budget_shortfall_handling` failed intermittently: the planner searched the whole shared test catalogue, so a cheap fixture left active by a targeted run made the plan fit the budget | Test plans inside its own category; stronger assertions (`f280d8e`). Same class found in `test_mission_recommendation_personalized_by_intent` (planner widened to all categories with <3 candidates and kept the 100 cheapest; 154 cheaper fixtures existed) — fixed with a third own-category listing (`ccc466d`) |
+| MC-F10 | Medium | List to Basket offered search hits the database could not sell (stale index / index from another DB); build-cart then refused them | Candidates re-checked against the database before they are offered (`ea556d4`) |
+| MC-F11 | Medium | Admin suspension/RFQ-moderation reasons were required but discarded; audit log kept only the query string | `record_audit_details()`; reasons stored and shown on the audit page (`6b8bc5a`) |
+| MC-F12 | Low | Retailer RFQ bid could be submitted with no item offered (raw 422 shown) | Button disabled until an item is offered (`8de5111`) |
+
+### MC — open
+
+| ID | Severity | Summary | Notes |
+| :--- | :---: | :--- | :--- |
+| MC-01 | **High** | Multilingual is not site-wide. Measured: ≈32 % of visible page strings go through `t()` (501 vs 1,043); dictionaries hold 290 of 633 keys (46 %) per language | Shell, sign-in, homepage and new portal pages switch language; product, catalogue, search, cart, checkout, orders, account, missions, most retailer operations pages and admin catalogue/deals/retailers/passport remain English. Full list in `FRONTEND_BACKEND_STATUS.md`. Translations are machine-assisted and need native review. |
+| MC-02 | Medium | Razorpay hosted payment not exercised end-to-end in a browser | Needs real test keys (`docs/EXTERNAL_CONFIGURATION.md` §1). API journey A verifies with the real signature check and mocked provider calls. |
+| MC-03 | Medium | `basket_db` is at `0033`; `0034` (indexes only) not applied | Deliberately not touched. Run `alembic upgrade head`. |
+| MC-04 | Low | Shared, persistent test database; fixtures are not removed after tests | Catalogue-wide assertions can depend on leftovers from targeted runs (cause of MC-F9). A per-session truncate or per-test transaction rollback would remove the class of problem. |
+| MC-05 | Low | No public store page | Store links open the filtered catalogue. |
+| MC-06 | Medium | Media storage is local disk only | S3-compatible backend not implemented; needed for multi-instance/production. |
+| MC-07 | Low | Deal assistant and negotiator are rule-based; no AI provider integration | Labelled in API and UI. |
+| MC-08 | Low | OCR HTTP adapter not verified against a live service | Contract documented; manual entry works. |
+| MC-09 | Low | Pre-existing Alembic model drift (notifications, reservations, orders, returns, shipments index/constraint naming) | Unchanged by this branch; none involves `0031`–`0034` tables. |
+| MC-10 | Info | Demo catalogue uses representative Unsplash stock photos. `basket_demo` now also holds release-audit data: an approved store "Audit Kirana …", an RFQ with a bid, a 15 % offer, a new listing, stock changes, ended auctions, and the demo order advanced to Delivered for Basket Mart. Two unpaid browser-test orders were auto-cancelled when their payment window expired. | Reset with `scripts/reset-demo-db.sh`. |
+| MC-12 | **High (environment)** | The repo-root `.env` (also loaded by the backend) points `OPENSEARCH_URL` at the shared Aiven index built from `basket_db`. An API started against any other database (e.g. `basket_demo`) then searches `basket_db`'s products. | Start non-`basket_db` APIs with `OPENSEARCH_URL=""` (PostgreSQL search) or a separate `OPENSEARCH_INDEX_PREFIX`. Indexing only happens via the Kafka consumer (Kafka is down), so the shared index was not written to. |
+| MC-11 | Info | `NEXT_PUBLIC_RAZORPAY_KEY_ID` in `frontend/.env.example` is unused | The API returns the key ID at payment initiation. |
+
+---
+
 
 ## P3. Phase 3 Discrepancies & Decisions — 2026-11-20
 
@@ -101,7 +142,7 @@ This register tracks architectural discrepancies, contract gaps between frontend
 ### 3.1 DISC-01: Media & Asset Storage Architecture
 - **Current State:** The database stores `image_url` as `VARCHAR(1024)` in `products`, `product_variants`, and `document_url` in `retailer_documents`. The frontend and tests pass placeholder or external static URLs (e.g. Unsplash or Cloudinary URLs).
 - **Risk:** No validation that uploaded files are genuine images, no antivirus scanning, and retailers can submit broken external links.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   1. Add an S3-compatible client in `backend/app/core/storage.py` (supporting AWS S3, Cloudflare R2, or MinIO).
   2. Expose `POST /api/v1/media/presigned-url` granting time-limited presigned PUT URLs.
   3. Validate image dimensions, content type (`image/jpeg`, `image/png`, `image/webp`), and file size ($\le 5\text{ MB}$).
@@ -109,13 +150,13 @@ This register tracks architectural discrepancies, contract gaps between frontend
 ### 3.2 DISC-02: Razorpay Production Safeguards
 - **Current State:** `backend/app/modules/payments/service.py` provides fallback sandbox verification for automated testing.
 - **Risk:** Accidental deployment to production with mock payments enabled could allow orders to be marked paid without financial settlement.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   1. In `PaymentService.__init__()`, assert that if `settings.is_production` is `True`, `settings.RAZORPAY_KEY_ID` and `settings.RAZORPAY_KEY_SECRET` are non-empty and do not match test prefix `rzp_test_mock`.
   2. Mandate webhook signature verification in production, raising `PaymentVerificationError` if the signature is missing or invalid.
 
 ### 3.3 DISC-05: Kafka & Search Event Idempotency
 - **Current State:** `consumer_inbox` deduplicates duplicate message deliveries by storing `message_id`. However, if event updates for the same listing are processed concurrently across different worker threads, older data could overwrite newer data.
-- **Remediation Plan for Claude:**
+- **Remediation Plan:**
   - In `OpenSearchConsumer`, include `updated_at` or `entity_version` in the OpenSearch document.
   - Use OpenSearch's `version_type=external_gte` to prevent out-of-order overwrites.
 
@@ -134,4 +175,4 @@ To avoid regression or architectural confusion during handoff, the following 9 f
 8. **Bharat Multilingual (Regional Indian languages)**
 9. **Handwritten List to Basket (OCR / vision to cart - optional)**
 
-*None of the above features have database tables, API routes, or backend logic yet.* Claude will implement them starting in Phase 3.
+*None of the above features have database tables, API routes, or backend logic yet.* Planned for implementation starting in Phase 3.

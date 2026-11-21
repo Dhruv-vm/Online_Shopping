@@ -23,17 +23,23 @@ class RetailerProfileResponse(BaseModel):
     business_address: str | None
     contact_phone: str | None
     contact_email: str | None
+    gstin: str | None = None
     business_hours: dict[str, Any] | None
     policies: dict[str, Any] | None
     is_open: bool
     verification_status: str
+    rejection_reason: str | None = None
     is_active: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime | None = None
 
 
+GSTIN_RE = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+
+
 class RetailerProfileUpdateRequest(BaseModel):
     description: str | None = Field(None, max_length=2000)
+    gstin: str | None = Field(None, max_length=15)
     logo_url: str | None = Field(None, max_length=1024)
     business_address: str | None = Field(None, max_length=1000)
     contact_phone: str | None = Field(None, max_length=15)
@@ -111,6 +117,7 @@ class RetailerListingResponse(BaseModel):
     variant_sku: str
     variant_attributes: dict[str, Any]
     seller_sku: str | None
+    listing_image_url: str | None = None
     original_price_paise: int
     selling_price_paise: int
     currency: str
@@ -364,6 +371,15 @@ class RetailerOfferCreateRequest(BaseModel):
     is_active: bool = True
     valid_to: datetime.datetime | None = None
 
+    @model_validator(mode="after")
+    def _check_percentage_range(self) -> "RetailerOfferCreateRequest":
+        # PERCENTAGE values are basis points (2000 = 20%); cap at 90%.
+        if self.discount_type == "PERCENTAGE" and self.discount_value > 9000:
+            raise ValueError(
+                "Percentage discounts are expressed in basis points and may not exceed 9000 (90%)."
+            )
+        return self
+
 
 class RetailerOfferUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=255)
@@ -387,6 +403,25 @@ class RetailerAnalyticsProductItem(BaseModel):
 
 
 class RetailerAnalyticsResponse(BaseModel):
+    """Retailer sales metrics.
+
+    Definitions (all scoped to this retailer's items):
+    * gross_sales_paise: value of non-cancelled items in *paid* orders.
+    * settled_revenue_paise: value of delivered items in paid orders, net of refunds.
+    * paid_orders: distinct paid orders containing a non-cancelled item.
+    * fulfilled_orders: paid orders whose items for this retailer are all delivered.
+    * units_dispatched: units shipped, out for delivery or delivered.
+    * pending_payment_orders: orders still awaiting payment (excluded from sales).
+    Legacy fields total_revenue_paise/total_orders/total_units_sold mirror
+    gross_sales_paise/paid_orders/units sold in paid orders.
+    """
+
+    gross_sales_paise: int = 0
+    settled_revenue_paise: int = 0
+    paid_orders: int = 0
+    fulfilled_orders: int = 0
+    units_dispatched: int = 0
+    pending_payment_orders: int = 0
     total_revenue_paise: int
     total_orders: int
     total_units_sold: int
@@ -396,3 +431,39 @@ class RetailerAnalyticsResponse(BaseModel):
     in_stock_count: int
     low_stock_count: int
     out_of_stock_count: int
+
+
+class RetailerDocumentCreateRequest(BaseModel):
+    """Submit a verification document: a file (base64) and/or its number."""
+
+    document_type: Literal[
+        "GSTIN_CERTIFICATE", "PAN", "TRADE_LICENSE", "ADDRESS_PROOF", "FSSAI", "OTHER"
+    ]
+    document_number: str | None = Field(None, min_length=4, max_length=64)
+    content_base64: str | None = Field(None, max_length=7_200_000)
+    content_type: (
+        Literal["image/jpeg", "image/png", "image/webp", "application/pdf"] | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _has_evidence(self):
+        if not self.content_base64 and not self.document_number:
+            raise ValueError("Provide the document file, its number, or both.")
+        if self.content_base64 and not self.content_type:
+            raise ValueError("content_type is required with content_base64")
+        return self
+
+
+class RetailerDocumentItem(BaseModel):
+    id: uuid.UUID
+    document_type: str
+    document_number: str | None
+    has_file: bool
+    status: str
+    rejection_reason: str | None
+    created_at: datetime.datetime
+
+
+class ImageUploadRequest(BaseModel):
+    content_base64: str = Field(..., min_length=8, max_length=7_200_000)
+    content_type: Literal["image/jpeg", "image/png", "image/webp"]

@@ -26,8 +26,16 @@ from app.modules.community.models import (
     GroupBuyMember,
     GroupBuyMemberStatus,
     GroupBuyStatus,
+    GroupBuyTemplate,
 )
-from app.modules.community.schemas import CampaignItem, ShareResponse
+from app.modules.community.schemas import (
+    CampaignItem,
+    CustomerStartRequest,
+    ShareResponse,
+    TemplateItem,
+    TemplateUpsertRequest,
+)
+from app.modules.identity.models import User
 from app.modules.pricing.awards import issue_award
 
 logger = logging.getLogger(__name__)
@@ -287,6 +295,32 @@ class CommunityBuyingService:
         c.settled_at = now
         if c.current_participants >= c.min_participants:
             c.status = GroupBuyStatus.SUCCESSFUL.value
+            # Never award more units than the store can actually supply: allocate
+            # in join order up to the stock available at settlement.
+            listing = await self._listing(c.listing_id)
+            inv = listing.inventory
+            remaining = (
+                max(0, inv.on_hand_quantity - inv.reserved_quantity) if inv else 0
+            )
+            members = sorted(members, key=lambda mm: mm.joined_at)
+            unfulfilled = []
+            allocated = []
+            for m in members:
+                if m.quantity <= remaining:
+                    remaining -= m.quantity
+                    allocated.append(m)
+                else:
+                    unfulfilled.append(m)
+            for m in unfulfilled:
+                m.status = GroupBuyMemberStatus.NOT_FULFILLED.value
+                notify_customer(
+                    self.session,
+                    customer_id=m.user_id,
+                    title="Group buy sold out",
+                    message=f"'{c.title}' succeeded but the store ran out of stock before your turn. You have not been charged.",
+                    event_type="GROUP_BUY_SOLD_OUT",
+                )
+            members = allocated
             for m in members:
                 award = await issue_award(
                     self.session,
@@ -368,6 +402,26 @@ class CommunityBuyingService:
                 )
             ).scalars():
                 mine[m.campaign_id] = m
+        initials: dict[uuid.UUID, list[str]] = {}
+        for cid, full_name in (
+            await self.session.execute(
+                select(GroupBuyMember.campaign_id, User.full_name)
+                .join(User, User.id == GroupBuyMember.user_id)
+                .where(
+                    GroupBuyMember.campaign_id.in_([c.id for c in campaigns]),
+                    GroupBuyMember.status.in_(
+                        [
+                            GroupBuyMemberStatus.JOINED.value,
+                            GroupBuyMemberStatus.AWARDED.value,
+                            GroupBuyMemberStatus.PURCHASED.value,
+                        ]
+                    ),
+                )
+                .order_by(GroupBuyMember.joined_at)
+            )
+        ).all():
+            letter = (full_name or "?").strip()[:1].upper() or "?"
+            initials.setdefault(cid, []).append(letter)
         now = datetime.now(UTC)
         out = []
         for c in campaigns:
@@ -404,6 +458,8 @@ class CommunityBuyingService:
                     )
                     if c.status == "OPEN"
                     else 0,
+                    started_by_customer=c.template_id is not None,
+                    participant_initials=initials.get(c.id, []),
                     my_membership={
                         "status": m.status,
                         "quantity": m.quantity,
@@ -422,8 +478,22 @@ class CommunityBuyingService:
         retailer_id: uuid.UUID | None,
         limit: int,
         offset: int,
+        public: bool = False,
     ):
         conds = []
+        if public:
+            # Only show campaigns from live, verified stores with active listings.
+            conds.append(
+                GroupBuyCampaign.listing_id.in_(
+                    select(ProductListing.id)
+                    .join(Retailer, Retailer.id == ProductListing.retailer_id)
+                    .where(
+                        ProductListing.is_active.is_(True),
+                        Retailer.is_active.is_(True),
+                        Retailer.verification_status == "VERIFIED",
+                    )
+                )
+            )
         if status:
             conds.append(GroupBuyCampaign.status == status)
         if retailer_id:
@@ -449,6 +519,224 @@ class CommunityBuyingService:
             .all()
         )
         return list(rows), total
+
+    # ------------------------------------------------------------------ templates
+    async def upsert_template(
+        self, retailer: Retailer, req: TemplateUpsertRequest
+    ) -> GroupBuyTemplate:
+        if not retailer.is_active or retailer.verification_status != "VERIFIED":
+            raise AppException(
+                code="RETAILER_NOT_VERIFIED",
+                message="Only verified, active retailers can offer group buys.",
+                status_code=403,
+            )
+        listing = await self._listing(req.listing_id)
+        if listing.retailer_id != retailer.id:
+            raise AppException(
+                code="LISTING_NOT_FOUND",
+                message="Listing not found in your store catalogue.",
+                status_code=404,
+            )
+        if not listing.is_active:
+            raise AppException(
+                code="LISTING_INACTIVE",
+                message="Listing is not active.",
+                status_code=409,
+            )
+        for old in (
+            await self.session.execute(
+                select(GroupBuyTemplate)
+                .where(
+                    GroupBuyTemplate.listing_id == listing.id,
+                    GroupBuyTemplate.is_active.is_(True),
+                )
+                .with_for_update()
+            )
+        ).scalars():
+            old.is_active = False
+        await self.session.flush()
+        t = GroupBuyTemplate(
+            id=uuid.uuid4(),
+            retailer_id=retailer.id,
+            listing_id=listing.id,
+            min_participants=req.min_participants,
+            max_participants=req.max_participants,
+            discount_bps=int(round(req.discount_percent * 100)),
+            duration_hours=req.duration_hours,
+            max_quantity_per_member=req.max_quantity_per_member,
+            max_open_campaigns=req.max_open_campaigns,
+            is_active=True,
+        )
+        self.session.add(t)
+        await self.session.flush()
+        return t
+
+    async def deactivate_template(
+        self, template_id: uuid.UUID, retailer: Retailer
+    ) -> GroupBuyTemplate:
+        t = await self.session.get(GroupBuyTemplate, template_id, with_for_update=True)
+        if t is None or t.retailer_id != retailer.id:
+            raise AppException(
+                code="TEMPLATE_NOT_FOUND",
+                message="Template not found.",
+                status_code=404,
+            )
+        t.is_active = False
+        await self.session.flush()
+        return t
+
+    async def list_templates(
+        self, *, retailer_id: uuid.UUID | None, public: bool
+    ) -> list[GroupBuyTemplate]:
+        stmt = select(GroupBuyTemplate).order_by(GroupBuyTemplate.created_at.desc())
+        if retailer_id:
+            stmt = stmt.where(GroupBuyTemplate.retailer_id == retailer_id)
+        if public:
+            stmt = stmt.where(
+                GroupBuyTemplate.is_active.is_(True),
+                GroupBuyTemplate.listing_id.in_(
+                    select(ProductListing.id)
+                    .join(Retailer, Retailer.id == ProductListing.retailer_id)
+                    .where(
+                        ProductListing.is_active.is_(True),
+                        Retailer.is_active.is_(True),
+                        Retailer.verification_status == "VERIFIED",
+                    )
+                ),
+            )
+        return list((await self.session.execute(stmt.limit(200))).scalars())
+
+    async def serialize_templates(
+        self, templates: list[GroupBuyTemplate]
+    ) -> list[TemplateItem]:
+        out: list[TemplateItem] = []
+        for t in templates:
+            lst = await self._listing(t.listing_id)
+            product = lst.variant.product
+            imgs = sorted(
+                product.images or [], key=lambda i: (not i.is_primary, i.sort_order)
+            )
+            open_count = (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(GroupBuyCampaign)
+                    .where(
+                        GroupBuyCampaign.template_id == t.id,
+                        GroupBuyCampaign.status == GroupBuyStatus.OPEN.value,
+                    )
+                )
+            ).scalar() or 0
+            price = int(lst.selling_price_paise)
+            out.append(
+                TemplateItem(
+                    id=t.id,
+                    listing_id=t.listing_id,
+                    retailer_id=t.retailer_id,
+                    retailer_name=lst.retailer.name,
+                    product_name=product.name,
+                    image_url=imgs[0].url if imgs else None,
+                    min_participants=t.min_participants,
+                    max_participants=t.max_participants,
+                    discount_percent=t.discount_bps / 100,
+                    duration_hours=t.duration_hours,
+                    max_quantity_per_member=t.max_quantity_per_member,
+                    max_open_campaigns=t.max_open_campaigns,
+                    open_campaigns=int(open_count),
+                    list_price_paise=price,
+                    group_price_paise=price - (price * t.discount_bps) // 10000,
+                    is_active=t.is_active,
+                )
+            )
+        return out
+
+    async def start_by_customer(
+        self, user_id: uuid.UUID, req: CustomerStartRequest
+    ) -> GroupBuyCampaign:
+        """A customer starts a group buy on retailer-published terms and joins it."""
+        t = await self.session.get(
+            GroupBuyTemplate, req.template_id, with_for_update=True
+        )
+        if t is None or not t.is_active:
+            raise AppException(
+                code="TEMPLATE_NOT_FOUND",
+                message="This product is not open for customer group buys.",
+                status_code=404,
+            )
+        open_q = (
+            select(func.count())
+            .select_from(GroupBuyCampaign)
+            .where(
+                GroupBuyCampaign.template_id == t.id,
+                GroupBuyCampaign.status == GroupBuyStatus.OPEN.value,
+            )
+        )
+        if ((await self.session.execute(open_q)).scalar() or 0) >= t.max_open_campaigns:
+            raise AppException(
+                code="TOO_MANY_OPEN_GROUPS",
+                message="There are already open groups for this product — join one of them instead.",
+                status_code=409,
+            )
+        mine = (
+            await self.session.execute(
+                open_q.where(GroupBuyCampaign.created_by_user_id == user_id)
+            )
+        ).scalar() or 0
+        if mine:
+            raise AppException(
+                code="ALREADY_STARTED",
+                message="You already have an open group for this product.",
+                status_code=409,
+            )
+        if req.quantity > t.max_quantity_per_member:
+            raise AppException(
+                code="QUANTITY_LIMIT",
+                message=f"At most {t.max_quantity_per_member} units per member.",
+                status_code=422,
+            )
+        listing = await self._listing(t.listing_id)
+        retailer = listing.retailer
+        if (
+            not listing.is_active
+            or not retailer.is_active
+            or retailer.verification_status != "VERIFIED"
+        ):
+            raise AppException(
+                code="LISTING_INACTIVE",
+                message="This product is currently unavailable.",
+                status_code=409,
+            )
+        list_price = int(listing.selling_price_paise)
+        c = GroupBuyCampaign(
+            id=uuid.uuid4(),
+            listing_id=listing.id,
+            retailer_id=listing.retailer_id,
+            created_by_user_id=user_id,
+            template_id=t.id,
+            title=(req.title or f"Group buy: {listing.variant.product.name}")[:160],
+            min_participants=t.min_participants,
+            max_participants=t.max_participants,
+            max_quantity_per_member=t.max_quantity_per_member,
+            discount_bps=t.discount_bps,
+            list_price_paise=list_price,
+            group_price_paise=list_price - (list_price * t.discount_bps) // 10000,
+            status=GroupBuyStatus.OPEN.value,
+            expires_at=datetime.now(UTC) + timedelta(hours=t.duration_hours),
+        )
+        self.session.add(c)
+        await self.session.flush()
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="group_buy.created",
+            aggregate_type="group_buy",
+            aggregate_id=c.id,
+            payload={
+                "campaign_id": c.id,
+                "listing_id": c.listing_id,
+                "group_price_paise": c.group_price_paise,
+                "started_by": "customer",
+            },
+        )
+        return await self.join(c.id, user_id, req.quantity)
 
     async def get(self, campaign_id: uuid.UUID) -> GroupBuyCampaign:
         c = await self.session.get(GroupBuyCampaign, campaign_id)

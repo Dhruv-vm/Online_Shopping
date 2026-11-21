@@ -1,4 +1,50 @@
+# ruff: noqa: E402  -- DATABASE_URL/infra env must be set before app modules import settings.
 import os
+from pathlib import Path as _Path
+from urllib.parse import urlsplit as _urlsplit
+from urllib.parse import urlunsplit as _urlunsplit
+
+
+def _read_env_database_url() -> str | None:
+    """Resolve DATABASE_URL the same way Settings does (env var > .env files)."""
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    backend_dir = _Path(__file__).resolve().parent.parent
+    found = None
+    for env_file in (backend_dir / ".env", backend_dir.parent / ".env"):
+        if not env_file.is_file():
+            continue
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("DATABASE_URL="):
+                found = line.split("=", 1)[1].strip().strip('"').strip("'")
+    return found
+
+
+def _isolated_test_database_url() -> str | None:
+    """Never run the suite against a development or production database.
+
+    The suite creates thousands of fixture rows and resets inventory, so it is
+    pointed at a dedicated database: TEST_DATABASE_URL if given, otherwise the
+    configured DATABASE_URL with ``_test`` appended to its database name.
+    """
+    url = os.environ.get("TEST_DATABASE_URL") or _read_env_database_url()
+    if not url or url.startswith("sqlite"):
+        return url
+    parts = _urlsplit(url)
+    db_name = parts.path.lstrip("/")
+    if "test" not in db_name.lower():
+        if os.environ.get("TEST_DATABASE_URL"):
+            raise RuntimeError(
+                f"TEST_DATABASE_URL must name a test database (got '{db_name}')."
+            )
+        db_name = f"{db_name}_test"
+    return _urlunsplit(parts._replace(path="/" + db_name))
+
+
+_TEST_DATABASE_URL = _isolated_test_database_url()
+if _TEST_DATABASE_URL:
+    os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
 
 # Safety guard: the repository .env may point at live (Aiven) Kafka/OpenSearch.
 # Unit/integration tests must never write to shared infrastructure, so these are
@@ -19,6 +65,48 @@ from app.core.database import get_db_session, get_engine, reset_engine
 from app.main import create_app
 
 _catalogue_seeded = False
+
+
+def _prepare_test_database() -> None:
+    """Create the isolated test database if missing and migrate it to head."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    url = settings.DATABASE_URL
+    if not url or url.startswith("sqlite"):
+        return
+    parts = _urlsplit(url)
+    db_name = parts.path.lstrip("/")
+    assert "test" in db_name.lower(), f"refusing to use non-test database {db_name}"
+    admin_url = _urlunsplit(parts._replace(path="/postgres"))
+
+    async def _ensure() -> None:
+        engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+        try:
+            async with engine.connect() as conn:
+                exists = await conn.scalar(
+                    text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": db_name}
+                )
+                if not exists:
+                    await conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_ensure())
+    if os.environ.get("BASKET_TEST_SKIP_MIGRATE") != "1":
+        from alembic.config import Config
+
+        from alembic import command
+
+        backend_dir = Path(__file__).resolve().parent.parent
+        cfg = Config(str(backend_dir / "alembic.ini"))
+        cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+        command.upgrade(cfg, "head")
+
+
+def pytest_sessionstart(session):  # noqa: ARG001
+    _prepare_test_database()
 
 
 @pytest.fixture(autouse=True)

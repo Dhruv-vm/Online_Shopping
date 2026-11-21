@@ -433,5 +433,6 @@ class IdentityService:
             retailer_id=retailer_id,
             store_name=store_name,
             verification_status=verification_status,
+            preferred_language=getattr(user, "preferred_language", None) or "en",
             created_at=user.created_at,
         )

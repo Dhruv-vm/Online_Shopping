@@ -9,8 +9,8 @@ from app.api.deps import get_db
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
     CartContext,
-    get_cart_context,
     get_current_user_optional,
+    get_shopping_cart_context,
 )
 from app.modules.identity.dependencies import get_current_user, verify_csrf_token
 from app.modules.identity.models import User
@@ -53,7 +53,7 @@ def _extract_ownership_identifiers(
 )
 async def create_quote(
     payload: QuoteCreateRequest,
-    cart_ctx: Annotated[CartContext, Depends(get_cart_context)],
+    cart_ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> QuoteResponse:
     quote_service = QuoteService(db)
@@ -117,7 +117,7 @@ async def validate_quote(
 )
 async def refresh_quote(
     quote_id: uuid.UUID,
-    cart_ctx: Annotated[CartContext, Depends(get_cart_context)],
+    cart_ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> QuoteResponse:

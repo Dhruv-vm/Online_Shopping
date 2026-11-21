@@ -2,6 +2,7 @@ import datetime
 import logging
 import re
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,6 +105,19 @@ class RetailerService:
     async def update_profile(
         self, retailer: Retailer, req: RetailerProfileUpdateRequest
     ) -> RetailerProfileResponse:
+        if req.gstin is not None:
+            import re as _re
+
+            from app.modules.retailer.schemas import GSTIN_RE
+
+            g = req.gstin.strip().upper()
+            if g and not _re.fullmatch(GSTIN_RE, g):
+                raise AppException(
+                    code="INVALID_GSTIN",
+                    message="GSTIN must be 15 characters, e.g. 29ABCDE1234F1Z5.",
+                    status_code=422,
+                )
+            retailer.gstin = g or None
         if req.description is not None:
             retailer.description = req.description.strip() or None
         if req.logo_url is not None:
@@ -559,6 +573,9 @@ class RetailerService:
                 "mrp_paise": int(listing.original_price_paise),
             },
         )
+        from app.modules.price_intel.extras import trigger_price_alerts
+
+        await trigger_price_alerts(self.session, listing.variant_id)
         if (
             previous_selling is not None
             and listing.selling_price_paise < previous_selling
@@ -858,6 +875,7 @@ class RetailerService:
             variant_sku=v.sku,
             variant_attributes=v.attributes or {},
             seller_sku=listing.seller_sku,
+            listing_image_url=getattr(listing, "image_url", None),
             original_price_paise=listing.original_price_paise,
             selling_price_paise=listing.selling_price_paise,
             currency=listing.currency,
@@ -1235,6 +1253,17 @@ class RetailerService:
         newly_cancelled: list = []
 
         target_status = req.status.strip().upper()
+        # Defence in depth: fulfilment requires a captured payment, regardless of
+        # how the order status was reached.
+        if target_status != "CANCELLED" and order.payment_status not in (
+            "SUCCEEDED",
+            "PARTIALLY_REFUNDED",
+        ):
+            raise AppException(
+                code="ORDER_NOT_PAID",
+                message="This order has not been paid yet and cannot be fulfilled.",
+                status_code=409,
+            )
         allowed_statuses = {
             "CONFIRMED",
             "PROCESSING",
@@ -1495,6 +1524,12 @@ class RetailerService:
         if req.description is not None:
             discount.description = req.description.strip() or None
         if req.discount_value is not None:
+            if discount.discount_type == "PERCENTAGE" and req.discount_value > 9000:
+                raise AppException(
+                    code="VALIDATION_ERROR",
+                    message="Percentage discounts may not exceed 9000 basis points (90%).",
+                    status_code=422,
+                )
             discount.discount_value = req.discount_value
         if req.min_order_paise is not None:
             discount.min_order_paise = req.min_order_paise
@@ -1530,7 +1565,10 @@ class RetailerService:
     # ================= Retailer Analytics =================
 
     async def get_analytics(self, retailer: Retailer) -> RetailerAnalyticsResponse:
-        # Aggregated stats from OrderItem across ALL eligible order items
+        paid_states = ("SUCCEEDED", "PARTIALLY_REFUNDED")
+        is_paid = Order.payment_status.in_(paid_states)
+        live_item = OrderItem.fulfillment_status != "CANCELLED"
+        # Top products and gross sales: non-cancelled items in paid orders.
         items_stmt = (
             select(
                 OrderItem.listing_id,
@@ -1540,19 +1578,13 @@ class RetailerService:
                 func.sum(OrderItem.total_selling_price_paise).label("revenue_paise"),
             )
             .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                OrderItem.retailer_id == retailer.id,
-                Order.status != "CANCELLED",
-                OrderItem.fulfillment_status != "CANCELLED",
-            )
+            .where(OrderItem.retailer_id == retailer.id, is_paid, live_item)
             .group_by(OrderItem.listing_id, OrderItem.product_title, OrderItem.sku)
             .order_by(func.sum(OrderItem.total_selling_price_paise).desc())
         )
         top_items_rows = (await self.session.execute(items_stmt)).all()
-
         total_units = sum(int(row.units_sold or 0) for row in top_items_rows)
-        total_rev = sum(int(row.revenue_paise or 0) for row in top_items_rows)
-
+        gross_sales = sum(int(row.revenue_paise or 0) for row in top_items_rows)
         top_selling = [
             RetailerAnalyticsProductItem(
                 listing_id=row.listing_id,
@@ -1564,34 +1596,90 @@ class RetailerService:
             for row in top_items_rows[:10]
         ]
 
-        # Distinct orders count
-        orders_count_stmt = (
-            select(func.count(func.distinct(OrderItem.order_id)))
-            .join(Order, OrderItem.order_id == Order.id)
-            .where(
-                OrderItem.retailer_id == retailer.id,
-                Order.status != "CANCELLED",
-                OrderItem.fulfillment_status != "CANCELLED",
+        totals = (
+            await self.session.execute(
+                select(
+                    func.count(func.distinct(OrderItem.order_id))
+                    .filter(is_paid, live_item)
+                    .label("paid_orders"),
+                    func.count(func.distinct(OrderItem.order_id))
+                    .filter(Order.status == "PENDING_PAYMENT")
+                    .label("pending_payment_orders"),
+                    func.coalesce(
+                        func.sum(OrderItem.quantity).filter(
+                            is_paid,
+                            OrderItem.fulfillment_status.in_(
+                                ("SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED")
+                            ),
+                        ),
+                        0,
+                    ).label("units_dispatched"),
+                    func.coalesce(
+                        func.sum(OrderItem.total_selling_price_paise).filter(
+                            is_paid, OrderItem.fulfillment_status == "DELIVERED"
+                        ),
+                        0,
+                    ).label("delivered_value"),
+                )
+                .select_from(OrderItem)
+                .join(Order, OrderItem.order_id == Order.id)
+                .where(OrderItem.retailer_id == retailer.id)
             )
-        )
-        total_orders = (await self.session.execute(orders_count_stmt)).scalar() or 0
+        ).one()
+        paid_orders = int(totals.paid_orders or 0)
 
-        aov = total_rev // total_orders if total_orders > 0 else 0
+        # Refunded returns attributed to this retailer's items reduce settled revenue.
+        from app.modules.orders.models import OrderReturn, ReturnItem
 
-        # Orders by status (computed per retailer suborder)
-        orders_stmt = (
-            select(Order)
-            .options(selectinload(Order.items))
-            .join(OrderItem, Order.id == OrderItem.order_id)
-            .where(OrderItem.retailer_id == retailer.id)
-            .distinct()
+        refunded_paise = int(
+            (
+                await self.session.execute(
+                    select(func.coalesce(func.sum(ReturnItem.refund_subtotal_paise), 0))
+                    .join(OrderReturn, ReturnItem.return_id == OrderReturn.id)
+                    .join(OrderItem, ReturnItem.order_item_id == OrderItem.id)
+                    .where(
+                        OrderItem.retailer_id == retailer.id,
+                        OrderReturn.status == "REFUNDED",
+                    )
+                )
+            ).scalar()
+            or 0
         )
-        ret_orders = (await self.session.execute(orders_stmt)).scalars().all()
+        settled = max(0, int(totals.delivered_value or 0) - refunded_paise)
+
+        aov = gross_sales // paid_orders if paid_orders > 0 else 0
+
+        # Pipeline by sub-order status, aggregated in SQL (no ORM object loading).
+        status_rows = (
+            await self.session.execute(
+                select(
+                    OrderItem.order_id,
+                    func.array_agg(OrderItem.fulfillment_status).label("statuses"),
+                )
+                .where(OrderItem.retailer_id == retailer.id)
+                .group_by(OrderItem.order_id)
+            )
+        ).all()
         orders_by_status: dict[str, int] = {}
-        for o in ret_orders:
-            my_items = [i for i in o.items if i.retailer_id == retailer.id]
-            st = self._derive_suborder_status(my_items)
+        fulfilled_orders = 0
+        paid_order_ids: set = set()
+        if status_rows:
+            paid_order_ids = set(
+                (
+                    await self.session.execute(
+                        select(Order.id).where(
+                            Order.id.in_([r.order_id for r in status_rows]), is_paid
+                        )
+                    )
+                ).scalars()
+            )
+        for row in status_rows:
+            st = self._derive_suborder_status(
+                [SimpleNamespace(fulfillment_status=x) for x in (row.statuses or [])]
+            )
             orders_by_status[st] = orders_by_status.get(st, 0) + 1
+            if st == "DELIVERED" and row.order_id in paid_order_ids:
+                fulfilled_orders += 1
 
         # Stock health from StoreInventory
         inv_stmt = (
@@ -1626,8 +1714,14 @@ class RetailerService:
         inv_counts = (await self.session.execute(inv_stmt)).one()
 
         return RetailerAnalyticsResponse(
-            total_revenue_paise=total_rev,
-            total_orders=total_orders,
+            gross_sales_paise=gross_sales,
+            settled_revenue_paise=settled,
+            paid_orders=paid_orders,
+            fulfilled_orders=fulfilled_orders,
+            units_dispatched=int(totals.units_dispatched or 0),
+            pending_payment_orders=int(totals.pending_payment_orders or 0),
+            total_revenue_paise=gross_sales,
+            total_orders=paid_orders,
             total_units_sold=total_units,
             average_order_value_paise=aov,
             orders_by_status=orders_by_status,
@@ -1636,3 +1730,107 @@ class RetailerService:
             low_stock_count=int(inv_counts.low_stock or 0),
             out_of_stock_count=int(inv_counts.out_of_stock or 0),
         )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding: verification documents, resubmission, listing photos
+# ---------------------------------------------------------------------------
+async def submit_document(session, retailer: Retailer, req):
+    from app.modules.catalogue.models import RetailerVerificationDocument
+    from app.modules.media.storage import Base64Upload, save_upload
+
+    if retailer.verification_status == "VERIFIED" and retailer.is_active is False:
+        raise AppException(
+            code="RETAILER_SUSPENDED",
+            message="Suspended stores cannot submit documents.",
+            status_code=403,
+        )
+    ref = ""
+    if req.content_base64:
+        ref = save_upload(
+            Base64Upload(
+                content_base64=req.content_base64, content_type=req.content_type
+            ),
+            folder=f"retailer-docs-{retailer.id.hex[:12]}",
+            documents=True,
+            private=True,
+        )
+    doc = RetailerVerificationDocument(
+        id=uuid.uuid4(),
+        retailer_id=retailer.id,
+        document_type=req.document_type,
+        document_url=ref,
+        document_number=(req.document_number or "").strip().upper() or None,
+        status="PENDING",
+    )
+    session.add(doc)
+    await session.flush()
+    return doc
+
+
+async def list_documents(session, retailer: Retailer):
+    from app.modules.catalogue.models import RetailerVerificationDocument
+
+    return list(
+        (
+            await session.execute(
+                select(RetailerVerificationDocument)
+                .where(RetailerVerificationDocument.retailer_id == retailer.id)
+                .order_by(RetailerVerificationDocument.created_at.desc())
+            )
+        ).scalars()
+    )
+
+
+async def resubmit_for_verification(session, retailer: Retailer) -> Retailer:
+    """A REJECTED store may fix its details and ask for review again."""
+    from app.modules.catalogue.models import RetailerVerificationHistory
+
+    if retailer.verification_status != "REJECTED":
+        raise AppException(
+            code="INVALID_VERIFICATION_STATE",
+            message="Only rejected applications can be resubmitted.",
+            status_code=409,
+        )
+    session.add(
+        RetailerVerificationHistory(
+            id=uuid.uuid4(),
+            retailer_id=retailer.id,
+            admin_id=None,
+            action="RESUBMIT",
+            from_status="REJECTED",
+            to_status="PENDING",
+            reason="Resubmitted by retailer",
+        )
+    )
+    retailer.verification_status = "PENDING"
+    retailer.rejection_reason = None
+    await session.flush()
+    return retailer
+
+
+async def set_listing_image(
+    session, retailer: Retailer, listing_id: uuid.UUID, req
+) -> str | None:
+    from app.modules.media.storage import Base64Upload, save_upload
+
+    svc = RetailerService(session)
+    svc._assert_verified_and_active(retailer, "upload listing photos")
+    listing = await session.get(ProductListing, listing_id)
+    if listing is None or listing.retailer_id != retailer.id:
+        raise AppException(
+            code="LISTING_NOT_FOUND",
+            message="Listing not found in your store catalogue.",
+            status_code=404,
+        )
+    if req is None:
+        listing.image_url = None
+    else:
+        listing.image_url = save_upload(
+            Base64Upload(
+                content_base64=req.content_base64, content_type=req.content_type
+            ),
+            folder="listings",
+        )
+    await session.flush()
+    return listing.image_url

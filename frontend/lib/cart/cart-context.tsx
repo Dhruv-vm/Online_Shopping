@@ -58,7 +58,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isMounted = true;
     const syncCart = async () => {
-      if (user) {
+      // Only shopper accounts own a basket to merge into; business sessions just read.
+      if (user && user.role === "customer") {
         try {
           const mergeResult = await apiClient.mergeCart();
           if (isMounted) {

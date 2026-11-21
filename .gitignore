@@ -57,3 +57,7 @@ Thumbs.db
 # Database Backups
 backups/
 *.dump
+
+# Locally stored uploads (development)
+backend/media/
+backend/media_private/

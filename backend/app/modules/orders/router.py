@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
+    ensure_can_shop,
     get_current_user_optional,
 )
 from app.modules.identity.dependencies import (
@@ -69,6 +70,7 @@ async def create_order(
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> OrderResponse:
     user = await get_current_user_optional(request, db)
+    ensure_can_shop(user)
     customer_id, guest_token_hash, _ = _extract_ownership_identifiers(request, user)
 
     effective_key = idempotency_key or payload.idempotency_key

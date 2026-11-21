@@ -41,6 +41,15 @@ const config: Config = {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
         },
+        // BASKET brand palette
+        brand: {
+          DEFAULT: "#009B70",
+          dark: "#064E3B",
+          light: "#E6F5F0",
+          yellow: "#F8CB46",
+        },
+        charcoal: "#202124",
+        surface: "#F8FAFC",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

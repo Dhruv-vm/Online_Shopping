@@ -1,6 +1,6 @@
-# BASKET — Comprehensive Developer Handoff Guide for Claude
+# BASKET — Comprehensive Developer Handoff Guide
 
-> **Target Agent:** Claude (Principal Full-Stack Engineer & Architect)  
+> **Target Audience:** Engineering Leads, Full-Stack Developers & System Architects  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Workspace Path:** `/Users/dhruv/dhruv files/basket/Online_Shopping`  
 > **Current Feature Branch:** `feature/phase-3-advanced-marketplace` (local; Phase 3 on top of `audit/stabilisation-and-repair` @ `95a5de1`)  
@@ -8,6 +8,45 @@
 > **Handoff Date:** 2026-11-20  
 
 ---
+
+## 0. Current handoff — Marketplace Completion (2026-11-21)
+
+Read this section first; the rest of the document describes earlier phases.
+
+### Where things are
+- Branch `feature/marketplace-completion` (local only). Base `integration` @ `2610a1e`. Full report: [`docs/MARKETPLACE_COMPLETION.md`](docs/MARKETPLACE_COMPLETION.md). Configuration: [`docs/EXTERNAL_CONFIGURATION.md`](docs/EXTERNAL_CONFIGURATION.md). Open issues: `DISCREPANCY_REGISTER.md` §MC.
+- Publishing is handled by Antigravity: **do not push, open PRs, merge or deploy** from a working session. Commit as `Dhruv-vm <vmdhruv1@gmail.com>` with no co-author or session trailers.
+
+### Databases — rules
+| Database | Use | Rule |
+| --- | --- | --- |
+| `basket_db` | Owner's development DB | Never reset. Back up before any change (`scripts/backup-database.sh`). At `0033`; `0034` pending. Test fixtures are hidden by quarantine batch `q-20261120171941`. |
+| `basket_demo` | Demo/E2E data | Reset only with `scripts/reset-demo-db.sh` (refuses names not ending `_demo`). |
+| `basket_db_test` | pytest | Created/migrated by `tests/conftest.py`; persistent between sessions (see below). |
+| `*_verify` | Migration checks | Created and dropped by `scripts/verify-migrations.sh`. |
+
+**Search index:** the repo-root `.env` points OpenSearch at a shared index built from `basket_db`. When you run the API against any other database, start it with `OPENSEARCH_URL=""` (PostgreSQL search) — otherwise search returns another database's products (MC-12).
+
+### Tests — what to know
+- Run backend tests with `unset DATABASE_URL` from `backend/`; conftest refuses to use a non-`_test` database. `BASKET_TEST_SKIP_MIGRATE=1` skips the start-of-session migration when the test DB is already at head.
+- **The test database is shared and persistent, and fixtures are not cleaned up.** Tests that query the whole catalogue (mission planning, intent personalisation, search) can be affected by rows other tests left behind — especially after *targeted* runs, because full runs later deactivate fixtures via the phase-1 and master-sync seeds. Write new tests against data they create (own category / own retailer), as `test_budget_shortfall_handling` now does. A structural fix (per-test transaction rollback or per-session truncation) is tracked as MC-04.
+- `scripts/audit-features.sh` runs the API tests per feature and prints a one-line verdict per area.
+- Frontend tests are `node --test` over an explicit file list in `frontend/package.json` — add new test files there.
+
+### i18n — how to extend
+- Languages: `frontend/lib/i18n/languages.ts`; dictionaries `frontend/locales/<code>.json`; core key list `frontend/locales/core-keys.json` (every language must translate these — enforced by `lib/i18n/i18n.test.ts`).
+- Use `const { t, money, number, date } = useI18n()` in components; `tActive()` outside React; error codes map to `errors.<CODE>`.
+- To convert an English page: replace visible strings with `t("area.key")`, add the key to `en.json`, and add translations where available (others fall back to English). Coverage per page is listed in `FRONTEND_BACKEND_STATUS.md`.
+
+### Suggested next work (priority order)
+1. Translate the remaining English pages (MC-01): products/search, cart/checkout, orders, account, retailer listings/inventory/orders/offers, admin catalogue/retailers.
+2. Configure Razorpay test keys and run a real sandbox payment in the browser (MC-02).
+3. Test-database isolation (MC-04).
+4. S3-compatible media storage before any multi-instance deployment (MC-06).
+5. Public store page (MC-05); OCR adapter against a real provider (MC-08); optional LLM for the assistant (MC-07).
+
+---
+
 
 ## 00. Phase 3 status (2026-11-20)
 
@@ -70,9 +109,9 @@ Both backend and frontend test suites are fully automated, completely isolated, 
 
 ---
 
-## 3. What Claude Must Audit First & Critical Checklists
+## 3. What Developers Must Audit First & Critical Checklists
 
-Before writing new features, Claude should complete these three verification checks:
+Before writing new features, developers should complete these three verification checks:
 
 ### 3.1 PR #31 Merge Verification
 - **Branch:** `feature/phase-2d-product-passport` is up-to-date with remote (`026f801`).
@@ -124,7 +163,7 @@ flowchart TD
 
 ## 5. Frontend Redesign Specifications (Blinkit-Inspired Quick-Commerce UI)
 
-Following Phase 3 feature integration, Claude is tasked with executing a comprehensive UI refresh:
+Following Phase 3 feature integration, the development team is tasked with executing a comprehensive UI refresh:
 
 ### 5.1 Design Tokens & Palette
 - **Primary Yellow:** `#F8CB46` / `#FFDE59` (Hero sections, accent badges, delivery tags, quick CTAs).

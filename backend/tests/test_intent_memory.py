@@ -646,6 +646,19 @@ async def test_mission_recommendation_personalized_by_intent(
         selling_price_paise=199900,
         original_price_paise=249900,
     )
+    # Create listing 3: another brand. The mission planner widens to every
+    # category when a category has fewer than three candidates and then keeps
+    # only the 100 cheapest listings, so with two listings this test depended
+    # on how many cheaper fixtures other tests had left in the shared test DB.
+    await create_custom_listing(
+        category_id=cat.id,
+        retailer_id=ret.id,
+        product_name="Basic Blender",
+        brand="BasicHome",
+        attributes={"power": "400W"},
+        selling_price_paise=189900,
+        original_price_paise=199900,
+    )
     # Create listing 2: preferred brand
     fav = await create_custom_listing(
         category_id=cat.id,

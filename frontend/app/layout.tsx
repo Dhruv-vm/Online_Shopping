@@ -1,27 +1,31 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { Header } from "@/components/shared/header";
 import { Footer } from "@/components/shared/footer";
 import { AuthProvider } from "@/lib/auth/auth-context";
 import { CartProvider } from "@/lib/cart/cart-context";
 import { CompareProvider } from "@/lib/compare/compare-context";
 import { I18nProvider } from "@/lib/i18n/i18n-context";
+import { LanguageAccountSync } from "@/lib/i18n/account-sync";
+import { DEFAULT_LANGUAGE, LANG_COOKIE, isLanguageCode, languageMeta } from "@/lib/i18n/languages";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "BASKET — Foundation Platform",
-  description: "BASKET multi-category online retail platform - Phase 0 Engineering Foundation",
+  title: "BASKET — India's multi-store marketplace",
+  description:
+    "Shop electronics, groceries, fashion and home essentials from verified local stores across India.",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const cookieLang = (await cookies()).get(LANG_COOKIE)?.value;
+  const lang = isLanguageCode(cookieLang) ? cookieLang : DEFAULT_LANGUAGE;
+  const { dir } = languageMeta(lang);
   return (
-    <html lang="en">
-      <body className="flex min-h-screen flex-col font-sans antialiased">
-        <I18nProvider>
+    <html lang={lang} dir={dir}>
+      <body className="flex min-h-screen flex-col bg-surface font-sans text-charcoal antialiased">
+        <I18nProvider initialLang={lang}>
           <AuthProvider>
+            <LanguageAccountSync />
             <CartProvider>
               <CompareProvider>
                 <Header />

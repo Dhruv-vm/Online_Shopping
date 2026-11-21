@@ -3,9 +3,60 @@
 > **Document Version:** 2.0.0  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Base Path:** `/api/v1`  
-> **Last Updated:** 2026-11-20  
+> **Last Updated:** 2026-11-21  
 
 ---
+
+## Marketplace Completion endpoints — 2026-11-21
+
+All under `/api/v1`. Auth: **C** customer, **R** verified retailer (pending retailers may only use profile, documents and resubmission), **A** admin, **P** public. Mutations require the CSRF header when cookie-authenticated.
+
+### Customer and public
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/assistant/chat` | P/C | Rule-based deal assistant (`mode=rule_based`, `ai_provider_configured=false`) |
+| GET | `/price-intelligence/variants/{variant_id}/compare` | P | Live prices for a variant across stores |
+| GET / POST | `/price-intelligence/alerts` | C | List / create price alerts |
+| DELETE | `/price-intelligence/alerts/{alert_id}` | C | Cancel an alert |
+| GET | `/community-buying/templates` | P | Retailer-published group-buy terms |
+| POST | `/community-buying/start` | C | Customer starts a group buy on published terms |
+| GET | `/vision/status` | P | OCR availability and manual-fallback flag |
+
+Changed responses: price history adds `contains_demo_data`, `demo_days`, `demo_data_notice` and per-point `source` (`LIVE` / `DEMO_SEED`); group campaigns add `started_by_customer` and `participant_initials`; `/vision/parse-list` adds `ocr_confidence`, `manual_entry` and per-line `ocr_confidence` / `needs_review`; `UserResponse` adds `preferred_language`.
+
+### Retailer
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET / POST | `/retailer/documents` | List / submit verification documents (base64 file and/or number; type and signature checked) |
+| POST | `/retailer/verification/resubmit` | Return a rejected store to review |
+| PUT / DELETE | `/retailer/listings/{listing_id}/image` | Store photo for a listing (`listing_image_url`) |
+| GET / POST | `/retailer/community-buying/templates` | Group-buy terms |
+| POST | `/retailer/community-buying/templates/{template_id}/deactivate` | Withdraw terms |
+| GET | `/retailer/price-insights` | Own prices vs other stores |
+
+Changed: `PUT /retailer/profile` validates `gstin`; profile returns `gstin`, `rejection_reason`; `GET /retailer/analytics` adds `gross_sales_paise`, `settled_revenue_paise`, `paid_orders`, `fulfilled_orders`, `units_dispatched`, `pending_payment_orders`; `PATCH /retailer/orders/{id}/status` returns `409 ORDER_NOT_PAID` for unpaid orders.
+
+### Admin
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/admin/users` | Users with role/status filters (test fixtures excluded by default) |
+| POST | `/admin/users/{user_id}/status` | Suspend / reinstate with reason; revokes sessions; not on self |
+| GET | `/admin/orders` | All orders with payment state |
+| GET | `/admin/audit-logs` | Recorded admin mutations |
+| GET | `/admin/system/health` | PostgreSQL, OpenSearch, Kafka, Razorpay mode (mock / test / live), OCR provider, background-job status |
+| POST | `/admin/exchange/requests/{request_id}/cancel` | RFQ moderation |
+| GET | `/admin/price-intelligence/quality` | Price-data quality report |
+| POST | `/admin/catalogue/products/{product_id}/images` | Upload canonical image (`make_primary`) |
+| DELETE | `/admin/catalogue/images/{image_id}` | Remove canonical image |
+| GET | `/admin/retailers/{retailer_id}/documents/{document_id}/file` | Download a private verification document |
+
+Changed: `GET /admin/overview` adds `paid_orders`, `pending_payment_orders`, `refunded_paise`, `active_retailers`, `excluded_test_records`; `GET /admin/retailers` hides quarantined fixtures unless `include_test_fixtures=true`.
+
+### Behaviour change on existing commerce endpoints
+`POST|PATCH|DELETE /cart/items…`, `POST /cart/merge`, `POST /quotes`, `POST /checkout/quote`, `POST /quotes/{id}/refresh`, `POST /reservations`, `POST /orders`, `POST /orders/{id}/payments` → **`403 BUSINESS_ACCOUNT_CANNOT_SHOP`** for retailer and admin sessions. `GET /cart` stays readable; guests are unaffected.
+
+---
+
 
 ## P3. Phase 3 Endpoints (verified 2026-11-20) — 53 new operations
 

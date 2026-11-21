@@ -106,6 +106,7 @@ async def register_retailer(
         retailer_id=retailer.id,
         store_name=retailer.name,
         verification_status=retailer.verification_status,
+        preferred_language=getattr(user, "preferred_language", None) or "en",
         created_at=user.created_at,
     )
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { ShopperGuard } from "@/components/auth/shopper-guard";
+
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -38,7 +40,7 @@ import type {
   Reservation,
 } from "@/types";
 
-export default function CartPage() {
+function CartPageInner() {
   const {
     cart,
     items,
@@ -842,7 +844,7 @@ export default function CartPage() {
                       )}
                     </div>
                     <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
-                      All cart listings are locked in PostgreSQL for your session. Cannot be oversold to concurrent shoppers.
+                      Your items are held for you during checkout, so they cannot be sold to someone else meanwhile.
                     </p>
                     <div className="flex items-center justify-between pt-1">
                       <Button
@@ -932,7 +934,7 @@ export default function CartPage() {
               <div className="pt-3 border-t space-y-1 text-[11px] text-muted-foreground">
                 <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>Server-authoritative pricing & immutable quote snapshot</span>
+                  <span>Prices confirmed by BASKET and fixed for this checkout</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -956,5 +958,14 @@ export default function CartPage() {
         onReplaced={handleSubstituteReplaced}
       />
     </div>
+  );
+}
+
+
+export default function CartPage() {
+  return (
+    <ShopperGuard>
+      <CartPageInner />
+    </ShopperGuard>
   );
 }

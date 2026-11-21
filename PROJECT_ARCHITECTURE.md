@@ -1,7 +1,7 @@
 # BASKET — Comprehensive System & Marketplace Architecture
 
 > **Document Version:** 2.0.0  
-> **Target Audience:** Engineering Leads, System Architects, Claude Development Team  
+> **Target Audience:** Engineering Leads, System Architects, Development Team  
 > **Repository:** `Rahul2006MILLION/Online_Shopping`  
 > **Last Updated:** 2026-11-20  
 

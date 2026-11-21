@@ -150,3 +150,108 @@ async def test_http_provider_adapter_and_rbac(async_client: AsyncClient):
         and r.json()["provider"] == "http"
     )
     assert r.json()["items"][0]["quantity"] == 2
+
+
+@pytest.mark.asyncio
+async def test_status_and_provider_confidence_passthrough(async_client: AsyncClient):
+    from app.core.config import settings
+    from app.modules.vision import providers
+
+    st = (await async_client.get("/api/v1/vision/status")).json()
+    assert st["ocr_available"] is False and st["manual_fallback"] is True
+
+    _, cust = await make_user()
+
+    async def fake_extract(self, image_base64, content_type):
+        return providers.OCRResult(
+            text="2 x milk\nsugar 1kg",
+            confidence=0.81,
+            line_confidence={"2 x milk": 0.93, "sugar 1kg": 0.42},
+        )
+
+    with (
+        patch.object(settings, "OCR_PROVIDER", "http"),
+        patch.object(settings, "OCR_PROVIDER_URL", "https://ocr.invalid/v1"),
+        patch.object(providers.HttpOCRProvider, "extract", fake_extract),
+    ):
+        assert (await async_client.get("/api/v1/vision/status")).json()["ocr_available"]
+        r = await async_client.post(
+            "/api/v1/vision/parse-list",
+            headers=cust,
+            json={"image_base64": PNG, "content_type": "image/png"},
+        )
+    body = r.json()
+    assert body["ocr_confidence"] == 0.81 and body["manual_entry"] is False
+    by_line = {i["line"]: i for i in body["items"]}
+    assert by_line["2 x milk"]["ocr_confidence"] == 0.93
+    assert by_line["sugar 1kg"]["ocr_confidence"] == 0.42
+    assert by_line["sugar 1kg"]["needs_review"] is True
+
+    typed = await async_client.post(
+        "/api/v1/vision/parse-list", headers=cust, json={"text": "milk"}
+    )
+    assert typed.json()["manual_entry"] is True
+    assert typed.json()["items"][0]["ocr_confidence"] is None
+
+
+@pytest.mark.asyncio
+async def test_stale_search_hits_are_never_offered(async_client: AsyncClient):
+    """Search can return listings the database no longer sells (a lagging index,
+    or an index built from another database). List to Basket must only offer
+    listings that build-cart would accept."""
+    from app.modules.search.schemas import ProductSearchItem, SearchResponseSchema
+    from app.modules.vision import service as vision_service
+
+    tag = uuid.uuid4().hex[:6]
+    real, _ = await make_retailer(
+        product_name=f"Quorx{tag} Rice", selling_price_paise=9000, on_hand_quantity=5
+    )
+    ghost_id = str(uuid.uuid4())  # not in this database
+
+    def retailer(listing_id, price):
+        return {
+            "listing_id": listing_id,
+            "retailer_name": "Some Store",
+            "selling_price_paise": price,
+            "is_in_stock": True,
+            "available_quantity": 50,
+        }
+
+    hits = SearchResponseSchema(
+        items=[
+            ProductSearchItem(
+                product_id=str(uuid.uuid4()),
+                name=f"Quorx{tag} Rice (stale)",
+                slug="stale",
+                brand="Quorx",
+                retailers=[retailer(ghost_id, 100)],
+            ),
+            ProductSearchItem(
+                product_id=real["product_id"],
+                name=f"Quorx{tag} Rice",
+                slug="real",
+                brand="Quorx",
+                retailers=[retailer(real["id"], 9000)],
+            ),
+        ],
+        total=2,
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return hits
+
+    _, cust = await make_user()
+    with patch.object(vision_service._search, "search", fake_search):
+        r = await async_client.post(
+            "/api/v1/vision/parse-list",
+            headers=cust,
+            json={"text": f"2 Quorx{tag} rice\n9 Quorx{tag} rice"},
+        )
+    assert r.status_code == 200, r.text
+    first, second = r.json()["items"]
+    # The cheaper ghost listing is dropped; the real one is suggested.
+    assert [c["listing_id"] for c in first["candidates"]] == [real["id"]]
+    assert first["suggested_listing_id"] == real["id"]
+    # Asking for more than the 5 in stock leaves nothing to offer, flagged for review.
+    assert second["candidates"] == [] and second["suggested_listing_id"] is None
+    assert second["needs_review"] is True

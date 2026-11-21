@@ -9,7 +9,9 @@ from app.core.exceptions import AppException
 from app.modules.cart.dependencies import (
     CartContext,
     clear_guest_cart_cookie,
+    ensure_can_shop,
     get_cart_context,
+    get_shopping_cart_context,
 )
 from app.modules.cart.schemas import (
     CartItemAddRequest,
@@ -56,7 +58,7 @@ async def get_cart(
 )
 async def add_item_to_cart(
     body: CartItemAddRequest,
-    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
 ) -> CartResponse:
     return await ctx.service.add_item(
         cart_id=ctx.cart.id,
@@ -74,7 +76,7 @@ async def add_item_to_cart(
 async def update_cart_item(
     item_id: uuid.UUID,
     body: CartItemUpdateRequest,
-    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
 ) -> CartResponse:
     return await ctx.service.update_item_quantity(
         cart_id=ctx.cart.id,
@@ -91,7 +93,7 @@ async def update_cart_item(
 )
 async def remove_cart_item(
     item_id: uuid.UUID,
-    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
 ) -> CartResponse:
     return await ctx.service.remove_item(
         cart_id=ctx.cart.id,
@@ -106,7 +108,7 @@ async def remove_cart_item(
     summary="Clear all items in cart",
 )
 async def clear_cart(
-    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
 ) -> CartResponse:
     return await ctx.service.clear_cart(cart_id=ctx.cart.id)
 
@@ -162,7 +164,7 @@ async def get_cart_item_substitutes(
 async def replace_cart_item(
     item_id: uuid.UUID,
     body: CartItemReplaceRequest,
-    ctx: Annotated[CartContext, Depends(get_cart_context)],
+    ctx: Annotated[CartContext, Depends(get_shopping_cart_context)],
 ) -> CartItemReplaceResponse:
     updated_cart, old_id, new_id = await ctx.service.replace_item(
         cart_id=ctx.cart.id,
@@ -191,6 +193,7 @@ async def merge_guest_cart(
     db: Annotated[AsyncSession, Depends(get_db)],
     body: CartMergeRequest | None = None,
 ) -> CartMergeResponse:
+    ensure_can_shop(current_user)
     service = CartService(db)
 
     guest_token = (

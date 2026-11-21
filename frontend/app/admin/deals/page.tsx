@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatDiscountBenefit, toStoredDiscountValue, toUiDiscountValue } from "@/lib/pricing/discount";
 import {
   Tag,
   Plus,
@@ -141,10 +142,8 @@ export default function AdminDealsPage() {
     }
 
     // Convert values
-    const valuePaise =
-      p.discount_type === "FIXED_AMOUNT"
-        ? Math.round(p.discount_value * 100)
-        : Math.round(p.discount_value);
+    // PERCENTAGE is stored in basis points, FIXED_AMOUNT in paise (see lib/pricing/discount).
+    const valuePaise = toStoredDiscountValue(p.discount_type, p.discount_value);
     const minOrderPaise = p.min_order_rupees
       ? Math.round(p.min_order_rupees * 100)
       : undefined;
@@ -352,10 +351,7 @@ export default function AdminDealsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredDeals.map((d) => {
-            const discountLabel =
-              d.discount_type === "PERCENTAGE"
-                ? `${d.discount_value}% OFF`
-                : `₹${(d.discount_value / 100).toFixed(0)} FLAT OFF`;
+            const discountLabel = formatDiscountBenefit(d.discount_type, d.discount_value);
 
             return (
               <div
@@ -435,10 +431,10 @@ export default function AdminDealsPage() {
                             description: "",
                             discount_type:
                               d.discount_type === "FIXED_AMOUNT" ? "FIXED_AMOUNT" : "PERCENTAGE",
-                            discount_value:
-                              d.discount_type === "FIXED_AMOUNT"
-                                ? d.discount_value / 100
-                                : d.discount_value,
+                            discount_value: toUiDiscountValue(
+                              d.discount_type === "FIXED_AMOUNT" ? "FIXED_AMOUNT" : "PERCENTAGE",
+                              d.discount_value,
+                            ),
                             scope:
                               d.scope === "CATEGORY" ||
                               d.scope === "PRODUCT" ||

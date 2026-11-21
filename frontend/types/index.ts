@@ -168,6 +168,7 @@ export interface User {
   retailer_id?: string | null;
   store_name?: string | null;
   verification_status?: "PENDING" | "VERIFIED" | "SUSPENDED" | string | null;
+  preferred_language?: string;
   created_at: string;
 }
 
@@ -183,10 +184,12 @@ export interface RetailerProfile {
   business_address: string | null;
   contact_phone: string | null;
   contact_email: string | null;
+  gstin?: string | null;
   business_hours: Record<string, string> | null;
   policies: Record<string, string> | null;
   is_open: boolean;
-  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | string;
+  verification_status: "PENDING" | "VERIFIED" | "SUSPENDED" | "REJECTED" | string;
+  rejection_reason?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at?: string | null;
@@ -257,7 +260,10 @@ export interface RetailerListingItem {
   gst_rate_basis_points: number | null;
   is_tax_verified: boolean;
   is_active: boolean;
+  /** Canonical catalogue image for the product. */
   image_url: string | null;
+  /** Store's own photo for this listing, shown in preference to the catalogue image. */
+  listing_image_url?: string | null;
   inventory: RetailerListingInventory;
   created_at: string;
   updated_at: string;
@@ -328,11 +334,17 @@ export interface RetailerInventoryAdjustmentPayload {
 
 export interface AdminOverview {
   total_orders: number;
+  /** Payable total of orders with captured payment (gross, before refunds). */
   total_revenue_paise: number;
   total_customers: number;
   total_retailers: number;
   pending_verifications: number;
   active_products: number;
+  paid_orders?: number;
+  pending_payment_orders?: number;
+  refunded_paise?: number;
+  active_retailers?: number;
+  excluded_test_records?: number;
 }
 
 export interface AdminRetailerListItem {
@@ -1466,6 +1478,14 @@ export interface RetailerAnalyticsProductItem {
 }
 
 export interface RetailerAnalyticsResponse {
+  /** Non-cancelled items in paid orders. */
+  gross_sales_paise: number;
+  /** Delivered items in paid orders, net of refunds. */
+  settled_revenue_paise: number;
+  paid_orders: number;
+  fulfilled_orders: number;
+  units_dispatched: number;
+  pending_payment_orders: number;
   total_revenue_paise: number;
   total_orders: number;
   total_units_sold: number;

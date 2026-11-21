@@ -130,6 +130,18 @@ class Settings(BaseSettings):
     KAFKA_CONSUMER_MAX_RETRIES: int = 5
     KAFKA_DLQ_TOPIC: str = "basket.events.dead-letter"
 
+    # Media storage. "local" stores validated uploads on disk under MEDIA_ROOT
+    # and serves them at MEDIA_PUBLIC_BASE_URL (development / single node).
+    # "none" disables uploads (the API answers 503 MEDIA_STORAGE_UNAVAILABLE).
+    # Production needs object storage (S3-compatible) — not implemented yet.
+    MEDIA_STORAGE: str = "local"
+    MEDIA_ROOT: str = str(_BACKEND_DIR / "media")
+    # Verification documents: stored outside the public media root and only
+    # downloadable by admins through an authenticated endpoint.
+    MEDIA_PRIVATE_ROOT: str = str(_BACKEND_DIR / "media_private")
+    MEDIA_PUBLIC_BASE_URL: str = "http://localhost:8000/media"
+    MEDIA_MAX_BYTES: int = 5 * 1024 * 1024
+
     # OpenSearch (Aiven OpenSearch)
     OPENSEARCH_URL: str | None = None
     OPENSEARCH_USERNAME: str | None = None

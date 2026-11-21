@@ -20,6 +20,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
+import { fileToBase64, removeListingImage, uploadListingImage } from "@/lib/api/marketplace";
+import { errorText } from "@/components/phase3/kit";
 import type { RetailerListingItem, RetailerListingUpdatePayload } from "@/types";
 
 export default function RetailerListingsPage() {
@@ -29,6 +31,7 @@ export default function RetailerListingsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "LOW_STOCK">("ALL");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [imageBusy, setImageBusy] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Edit Pricing Modal State
@@ -134,6 +137,41 @@ export default function RetailerListingsPage() {
       );
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to toggle listing status.");
+    }
+  };
+
+
+  const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+  const onImage = async (item: RetailerListingItem, file: File | undefined, input: HTMLInputElement) => {
+    input.value = "";
+    if (!file) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    const type = file.type as (typeof IMAGE_TYPES)[number];
+    if (!IMAGE_TYPES.includes(type)) return setErrorMsg("Use a JPEG, PNG or WebP image.");
+    if (file.size > 5 * 1024 * 1024) return setErrorMsg("Image must be 5 MB or smaller.");
+    setImageBusy(item.id);
+    try {
+      const res = await uploadListingImage(item.id, await fileToBase64(file), type);
+      setListings((ls) => ls.map((l) => (l.id === item.id ? { ...l, listing_image_url: res.image_url } : l)));
+      setSuccessMsg(`Photo updated for ${item.product_name}.`);
+    } catch (e) {
+      setErrorMsg(errorText(e));
+    } finally {
+      setImageBusy(null);
+    }
+  };
+  const onRemoveImage = async (item: RetailerListingItem) => {
+    setImageBusy(item.id);
+    setErrorMsg(null);
+    try {
+      await removeListingImage(item.id);
+      setListings((ls) => ls.map((l) => (l.id === item.id ? { ...l, listing_image_url: null } : l)));
+      setSuccessMsg(`Store photo removed for ${item.product_name}; the catalogue image is shown instead.`);
+    } catch (e) {
+      setErrorMsg(errorText(e));
+    } finally {
+      setImageBusy(null);
     }
   };
 
@@ -285,9 +323,10 @@ export default function RetailerListingsPage() {
                     <tr key={item.id} className="hover:bg-muted/30 transition-colors">
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3">
-                          {item.image_url ? (
+                          {(item.listing_image_url || item.image_url) ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={item.image_url}
+                              src={item.listing_image_url || item.image_url || ""}
                               alt={item.product_name}
                               className="h-10 w-10 rounded-md object-cover border bg-muted shrink-0"
                             />
@@ -302,6 +341,23 @@ export default function RetailerListingsPage() {
                             </div>
                             <div className="text-[11px] text-muted-foreground line-clamp-1">
                               {item.variant_name} • <span className="font-medium text-foreground">{item.brand}</span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-[11px]">
+                              <label className={`cursor-pointer font-medium text-brand hover:underline ${imageBusy === item.id ? "pointer-events-none opacity-50" : ""}`}>
+                                {imageBusy === item.id ? "Uploading…" : item.listing_image_url ? "Replace photo" : "Add store photo"}
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  className="sr-only"
+                                  aria-label={`Upload photo for ${item.product_name}`}
+                                  onChange={(e) => onImage(item, e.target.files?.[0], e.currentTarget)}
+                                />
+                              </label>
+                              {item.listing_image_url && (
+                                <button type="button" className="text-muted-foreground hover:text-red-600" disabled={imageBusy === item.id} onClick={() => onRemoveImage(item)}>
+                                  Remove
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
