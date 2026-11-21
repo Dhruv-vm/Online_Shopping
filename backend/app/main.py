@@ -190,7 +190,7 @@ def create_app() -> FastAPI:
     """FastAPI Application Factory."""
     app = FastAPI(
         title=settings.PROJECT_NAME,
-        version="0.1.0",
+        version="2.0.0",
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
         openapi_url=f"{settings.API_V1_STR}/openapi.json"
