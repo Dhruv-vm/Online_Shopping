@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     session_factory=session_factory
                 )
                 await order_consumer.start()
+                order_consumer.start_consuming()
                 logger.info("OrderProjectionConsumer started successfully.")
             except Exception as exc:
                 order_consumer = None
@@ -92,8 +93,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     session_factory=session_factory
                 )
                 await opensearch_consumer.start()
-                set_search_indexer_running(True)
                 logger.info("OpenSearchConsumer started successfully.")
+                # Build this database's index from PostgreSQL before search trusts
+                # it (same bootstrap as direct mode); until then search stays on
+                # PostgreSQL.
+                from app.core.search.index import IndexManager, resolve_index_prefix
+
+                manager = IndexManager(
+                    opensearch_consumer._search_client,
+                    prefix=resolve_index_prefix(settings),
+                )
+                await manager.ensure_index_and_aliases()
+                async with session_factory() as session:
+                    indexed = await manager.reconcile_from_database(session)
+                opensearch_consumer.start_consuming()
+                set_search_indexer_running(True)
+                logger.info(
+                    "Search index '%s' rebuilt from PostgreSQL (%d products); "
+                    "Kafka indexing active.",
+                    manager.write_alias,
+                    indexed,
+                )
             except Exception as exc:
                 opensearch_consumer = None
                 logger.warning(
