@@ -70,7 +70,10 @@ class PriceAlert(Base):
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     variant_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -85,6 +88,7 @@ class PriceAlert(Base):
         Uuid(as_uuid=True),
         ForeignKey("product_listings.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     triggered_price_paise: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     triggered_at: Mapped[Any | None] = mapped_column(

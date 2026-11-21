@@ -46,6 +46,7 @@ class GroupBuyCampaign(Base):
         Uuid(as_uuid=True),
         ForeignKey("product_listings.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     retailer_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
@@ -53,12 +54,16 @@ class GroupBuyCampaign(Base):
         nullable=False,
     )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     template_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("group_buy_templates.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     min_participants: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -151,11 +156,13 @@ class GroupBuyTemplate(Base):
         Uuid(as_uuid=True),
         ForeignKey("retailers.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     listing_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("product_listings.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     min_participants: Mapped[int] = mapped_column(Integer, nullable=False)
     max_participants: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -64,6 +64,7 @@ class Retailer(Base):
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     verified_at: Mapped[Any | None] = mapped_column(
         DateTime(timezone=True), nullable=True
