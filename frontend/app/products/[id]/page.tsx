@@ -1,5 +1,7 @@
 "use client";
 
+import { recordView } from "@/lib/recent";
+
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +82,13 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
       try {
         const data = await apiClient.getProduct(productIdOrSlug);
         setProduct(data);
+        recordView({
+          slug: data.slug,
+          name: data.name,
+          brand: data.brand,
+          image: data.images?.find((i) => i.is_primary)?.url ?? data.images?.[0]?.url ?? null,
+          price_paise: data.min_price_paise,
+        });
         if (data.variants && data.variants.length > 0) {
           setSelectedVariant(data.variants[0]);
         }
@@ -661,7 +670,7 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
 
       {/* Basket Price Intelligence (Phase 3F) */}
       <div className="mt-8">
-        <PriceIntelligencePanel listingId={currentListing?.id} />
+        <PriceIntelligencePanel listingId={currentListing?.id} variantId={selectedVariant?.id} />
       </div>
 
       {/* Product Passport Section (Phase 2D) */}
