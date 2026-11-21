@@ -4,7 +4,7 @@ import { ShopperGuard } from "@/components/auth/shopper-guard";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
@@ -24,9 +24,12 @@ import { apiClient, ApiClientError } from "@/lib/api/client";
 import { createOrder, getOrder } from "@/lib/api/orders";
 import { formatPrice } from "@/lib/utils";
 import type { Address, Order, PaymentVerifyResponse } from "@/types";
+import { useI18n } from "@/lib/i18n/i18n-context";
 
 function CheckoutContent() {
+  const { t } = useI18n();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const reservationIdParam = searchParams.get("reservation_id");
   const quoteIdParam = searchParams.get("quote_id");
   const orderIdParam = searchParams.get("order_id");
@@ -185,6 +188,8 @@ function CheckoutContent() {
         delivery_address_id: trimmedAddressId || undefined,
       });
       setOrder(created);
+      // Keep the order in the URL so a refresh resumes payment instead of starting over.
+      router.replace(`/checkout?order_id=${encodeURIComponent(created.id)}`, { scroll: false });
     } catch (err: unknown) {
       if (err instanceof ApiClientError) {
         if (err.status === 422 && Array.isArray(err.details)) {
@@ -238,7 +243,7 @@ function CheckoutContent() {
             Checkout & Order Payment
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Phase 2F Razorpay sandbox gateway integration with server-side capture verification.
+            Confirm your delivery address and pay securely with Razorpay.
           </p>
         </div>
         <Link href="/cart">
@@ -366,18 +371,30 @@ function CheckoutContent() {
         </Card>
       )}
 
+      {!order && !reservationIdParam && !orderIdParam && !isLoadingOrder && (
+        <Card className="mb-6">
+          <CardContent className="space-y-3 py-8 text-center">
+            <p className="font-semibold">Start checkout from your basket</p>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              Review your items and choose “Checkout” in the basket. Prices are confirmed and stock is held for you before you pay.
+            </p>
+            <Link href="/cart"><Button size="sm">Go to basket</Button></Link>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step 1: Create Order from Reservation if no active order */}
       {!order && reservationIdParam && (
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="h-4 w-4 text-emerald-600" />
-              Step 1: Convert Held Stock to BASKET Order
+              Step 1: Confirm your order
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-xs text-muted-foreground">
-              Your inventory is currently locked in PostgreSQL. Choose a saved delivery address or proceed with standard guest delivery to construct an immutable order snapshot.
+              Your items are held for you while you check out. Choose where they should be delivered.
             </p>
 
             {/* Saved Addresses Dropdown (for authenticated users with saved addresses) */}
@@ -405,45 +422,20 @@ function CheckoutContent() {
                       {addr.is_default ? " (Default)" : ""}
                     </option>
                   ))}
-                  <option value="">Guest / Default Delivery Address</option>
-                </select>
+                                  </select>
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <label htmlFor="addressId" className="text-xs font-medium text-foreground">
-                Delivery Address ID {addresses.length > 0 ? "(Selected UUID)" : "(Optional for Guest/Sandbox)"}
-              </label>
-              <input
-                id="addressId"
-                type="text"
-                placeholder={addresses.length > 0 ? "Address UUID" : "Leave empty for guest checkout or enter saved address UUID"}
-                value={addressId}
-                onChange={(e) => {
-                  setAddressId(e.target.value);
-                  setFieldErrors((prev) => {
-                    const next = { ...prev };
-                    delete next.delivery_address_id;
-                    return next;
-                  });
-                }}
-                className={`w-full text-xs p-2.5 rounded-md border bg-background font-mono focus:outline-none focus:ring-1 ${
-                  fieldErrors.delivery_address_id
-                    ? "border-red-500 focus:ring-red-500"
-                    : "focus:ring-emerald-500"
-                }`}
-              />
-              {fieldErrors.delivery_address_id && (
-                <p className="text-xs text-red-600 dark:text-red-400 mt-1 font-medium">
-                  {fieldErrors.delivery_address_id}
-                </p>
-              )}
-              {addresses.length === 0 && !fieldErrors.delivery_address_id && (
-                <p className="text-[11px] text-muted-foreground">
-                  Guest checkout: Leave this field empty. Standard delivery details will be used automatically.
-                </p>
-              )}
-            </div>
+            {fieldErrors.delivery_address_id && (
+              <p className="text-xs font-medium text-red-600">{fieldErrors.delivery_address_id}</p>
+            )}
+            {!isLoadingAddresses && addresses.length === 0 && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                You have no saved delivery address.{" "}
+                <Link href="/account/addresses" className="font-semibold underline">Add an address</Link>{" "}
+                and return to your basket to continue.
+              </p>
+            )}
 
             <Button
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs h-10"
@@ -476,10 +468,10 @@ function CheckoutContent() {
                   <CardTitle className="text-base">Order Details</CardTitle>
                   <div className="flex items-center gap-2">
                     <Badge variant={order.status === "CONFIRMED" ? "default" : "secondary"} className="text-[10px]">
-                      {order.status}
+                      {t(`status.order.${order.status}`)}
                     </Badge>
                     <Badge variant="outline" className="text-[10px] font-mono">
-                      {order.payment_status}
+                      {t(`status.payment.${order.payment_status}`)}
                     </Badge>
                   </div>
                 </div>
@@ -543,7 +535,7 @@ function CheckoutContent() {
                     <span>{formatPrice(order.delivery_fee_paise ?? 0)}</span>
                   </div>
                   <div className="pt-2 border-t flex justify-between text-sm font-bold text-foreground">
-                    <span>Total Authoritative:</span>
+                    <span>Total payable:</span>
                     <span className="text-emerald-700 dark:text-emerald-400">
                       {formatPrice(order.total_payable_paise)}
                     </span>
@@ -564,7 +556,7 @@ function CheckoutContent() {
                       onDismissOrAmbiguous={startPollingFallback}
                     />
                     <p className="text-[10px] text-center text-muted-foreground mt-2">
-                      Secured by Razorpay Sandbox & HMAC-SHA256 signature verification
+                      Payments are processed by Razorpay and confirmed by the BASKET server.
                     </p>
                   </div>
                 )}
@@ -575,10 +567,10 @@ function CheckoutContent() {
             <div className="p-3 bg-muted/40 rounded-lg border text-[11px] text-muted-foreground space-y-1.5">
               <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
                 <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                <span>Zero Frontend-Trusted Amounts</span>
+                <span>Amounts are set by the server</span>
               </div>
               <p className="text-[10px] leading-relaxed">
-                Payment attempts and gateway orders are durably created by PostgreSQL before checkout modal opens.
+                The amount you pay is calculated and recorded by BASKET before the payment window opens; it cannot be changed in the browser.
               </p>
             </div>
           </div>
