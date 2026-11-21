@@ -1,17 +1,19 @@
-# BASKET — Version 2.0 Remaining Roadmap (after Phase C)
+# BASKET — Version 2.0 Remaining Roadmap (after the final functional cycle — FROZEN)
 
-> Keeps the full remaining scope so later phases lose nothing. Nothing here is started. UI/UX stays frozen until a separate approval. Statuses as in `VERSION_2_FEATURE_TRACKER.md`.
+> Functional freeze declared 2026-11-21: no new features until the owner approves a new cycle. Everything still open is listed here. UI/UX stays frozen until a separate approval. Statuses as in `VERSION_2_FEATURE_TRACKER.md`.
 
 ## Carry-over from Phase C
-- **C1 scenarios 2 and 4** (failure + retry, webhook-only confirmation). *Needs:* `RAZORPAY_WEBHOOK_SECRET` in `.env`, a Razorpay Test-Mode webhook pointing at a `cloudflared` tunnel. Runbook: `docs/RAZORPAY_SANDBOX_VERIFICATION.md`. **BLOCKED — NEEDS PROVIDER CREDENTIALS.**
-- **Live OpenSearch indexing in direct mode.** Implemented and tested with the in-memory client; a run against a real cluster creates a per-database index (`basket_<db>_<hash>_products_v1`). Needs approval to write a new index on the Aiven cluster (or a separate cluster).
+- **C1 Razorpay:** CLOSED BY OWNER in the final cycle; not reopened.
+- **Live OpenSearch indexing:** DONE against a local OpenSearch 2.13 (Kafka mode); Aiven cluster not used.
+- **Order projection on a real order event (Kafka mode):** not observed live (needs a paid checkout); covered by tests.
 
 ## Phase D — Functional completion
-### D1 Multilingual coverage — NOT STARTED
+### D1 Multilingual coverage — PARTIALLY COMPLETED (open)
+Measured 21 Nov: dictionaries 45.8 %, UI wiring 34.2 % (checkout 2 %, orders 0 %). Plan and tool: `BASKET_TRANSLATION_ARCHITECTURE.md`, `scripts/i18n-coverage.py`. Original scope:
 Cart, checkout, orders, account, retailer and admin pages through `t()` without markup/style change; dictionaries for the 11 languages (machine translations marked `needs_native_review`); placeholders preserved; category and demo product translations returned when a language is requested; search lexicon for common nouns; Urdu stays RTL; API error codes stable. *Acceptance:* ≥ 95 % checkout/order pages, ≥ 90 % overall, English screenshot diff zero, Hindi categories returned.
-### D2 Retailer notifications — NEEDS PRODUCT APPROVAL
+### D2 Retailer notifications — COMPLETED (final cycle)
 New RFQ for the store; auction the store can supply; bid outcome; new paid order. Reuse the existing notification system; one notification per eligible recipient per event; correct unread count; check whether the existing bell already shows retailer notifications before touching the frontend. No other notification types without approval.
-### D3 Test-database isolation — NOT STARTED
+### D3 Test-database isolation — COMPLETED (final cycle; `VERSION_2_PHASE_D3_REPORT.md`)
 Clean the test database at session start, migrate, seed the baseline catalogue; never touch `basket_db`. *Acceptance:* full suite passes 3× in a row and after a targeted run; no order-dependent failures. (Phase C hit two order-dependent failures when runs overlapped — evidence that this is needed.)
 
 ## Phase E — Provider integrations (approval + credentials required)
@@ -29,8 +31,17 @@ The rule engine stays the price authority (floor, rounds, platform/deal rules, a
 - **F6 Group-buy commit-to-pay** — NEEDS PRODUCT APPROVAL. New feature; authorisation/capture, cancellation, expiry, refund, consent and UI policies must be approved first. Existing settlement unchanged until then.
 
 ## Other open items recorded in earlier phases
-- Checkout discount-code input (UI approval).
+- Checkout discount-code input — COMPLETED (final cycle).
 - Fixed-amount offers apply per unit (product decision).
 - Partial-capture cancellation keeps the discount use.
 - Admin analytics `total_revenue_paise` does not net out refunds (reported separately as `refunded_paise`).
 - Pre-existing Alembic drift MC-09.
+
+## Open after the final cycle (need a decision, credentials or more time)
+- **Two physical laptops** run-through of `BASKET_TWO_LAPTOP_DEMO_RUNBOOK.md` (only independent browser environments on one Mac were tested).
+- **D1 multilingual** to 95 % checkout/orders and 90 % overall, with native review.
+- **Reward missions** — NEEDS PRODUCT APPROVAL (reward rules, funding, caps, reversal).
+- **Recurring-basket autopay** — NEEDS PRODUCT APPROVAL + provider mandate (Razorpay recurring / UPI AutoPay e-mandate).
+- **Real-time over the internet** — a named Cloudflare tunnel (needs a Cloudflare account) for live SSE; quick tunnels fall back to 10 s refresh.
+- **Main database `basket_db`** is at migration 0033; apply 0034–0039 (`alembic upgrade head`) when you choose — additive and reversible, never run by this cycle.
+- E1, E2, F1–F6 unchanged (see above).

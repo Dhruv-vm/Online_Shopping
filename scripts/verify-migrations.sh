@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND="$ROOT/backend"
 DB="${1:-basket_migration_verify}"
 BASE_REV="0030_dukaan_vs_dukaan"
-REVISIONS=(0031_marketplace_completion 0032_admin_audit_log 0033_retailer_onboarding_media 0034_foreign_key_indexes 0035_discount_codes_redemptions)
+REVISIONS=(0031_marketplace_completion 0032_admin_audit_log 0033_retailer_onboarding_media 0034_foreign_key_indexes 0035_discount_codes_redemptions 0036_intent_workflow 0037_group_buy_invites 0038_recurring_baskets 0039_mission_completion)
 NEW_TABLES="data_quarantine price_alerts group_buy_templates group_buy_campaigns admin_audit_logs price_history_ticks retailers retailer_verification_documents product_listings discount_redemptions checkout_quotes checkout_quote_items"
 
 [[ "$DB" == *_verify ]] || { echo "Refusing: database name must end in _verify (got '$DB')." >&2; exit 2; }

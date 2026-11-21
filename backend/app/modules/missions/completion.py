@@ -43,7 +43,10 @@ async def purchased_listing_ids(
 
 async def complete_missions_for_order(session: AsyncSession, order: Order) -> int:
     """Called after a payment is captured. Returns how many missions completed."""
-    if order.customer_id is None or order.payment_status != PaymentStatus.SUCCEEDED.value:
+    if (
+        order.customer_id is None
+        or order.payment_status != PaymentStatus.SUCCEEDED.value
+    ):
         return 0  # only a paid order can complete a mission
     missions = (
         (
