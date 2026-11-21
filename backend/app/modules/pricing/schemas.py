@@ -103,8 +103,8 @@ class QuoteResponse(BaseModel):
 class QuoteCreateRequest(BaseModel):
     delivery_address_id: uuid.UUID | None = None
     delivery_state: str | None = None
-    # Optional discount code (exact, case-insensitive). Backend only for now:
-    # the checkout page does not send it yet.
+    # Optional discount code (exact, case-insensitive), sent by the cart's coupon field.
+    # Validation and pricing happen only here; the frontend never computes a discount.
     discount_code: str | None = Field(default=None, max_length=50)
 
 

@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SubstituteModal } from "@/components/substitutes/SubstituteModal";
 import { useCart } from "@/lib/cart/cart-context";
 import { createQuote, refreshQuote } from "@/lib/api/quotes";
+import { ApiClientError } from "@/lib/api/client";
 import { reservationApi } from "@/lib/api/reservations";
 import { formatPrice } from "@/lib/utils";
 import { NegotiatorPanel } from "@/components/phase3/negotiator-panel";
@@ -40,6 +41,8 @@ import type {
   Reservation,
 } from "@/types";
 import { useLiveUpdates } from "@/lib/realtime";
+
+const COUPON_KEY = "basket.checkout.coupon";
 
 function CartPageInner() {
   const {
@@ -80,6 +83,27 @@ function CartPageInner() {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  // Coupon: the server validates and prices it; the page only sends the code.
+  const [couponCode, setCouponCode] = useState("");
+  const [couponInput, setCouponInput] = useState("");
+  const [couponRestored, setCouponRestored] = useState(false);
+  useEffect(() => {
+    // Restore after mount (not during render) to avoid a hydration mismatch.
+    try {
+      const saved = window.sessionStorage.getItem(COUPON_KEY) ?? "";
+      if (saved) {
+        setCouponCode(saved);
+        setCouponInput(saved);
+      }
+    } catch {
+      /* storage unavailable */
+    }
+    setCouponRestored(true);
+  }, []);
+  const [couponStatus, setCouponStatus] = useState<
+    "idle" | "applying" | "applied" | "ineligible" | "invalid"
+  >("idle");
+  const [rejectedCode, setRejectedCode] = useState<string | null>(null);
   const [validationIssues, setValidationIssues] = useState<QuoteValidationIssue[]>([]);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false);
@@ -99,15 +123,32 @@ function CartPageInner() {
       return;
     }
 
+    if (!couponRestored) return;
     let isMounted = true;
     const loadQuote = async () => {
       setIsQuoteLoading(true);
       setQuoteError(null);
+      if (couponCode) setCouponStatus("applying");
       try {
-        const newQuote = await createQuote();
+        let newQuote;
+        try {
+          newQuote = await createQuote(couponCode ? { discount_code: couponCode } : {});
+        } catch (err: unknown) {
+          if (couponCode && err instanceof ApiClientError && err.code === "INVALID_DISCOUNT_CODE") {
+            // Unknown/expired code: tell the shopper and keep the cart usable without it.
+            if (isMounted) {
+              setRejectedCode(couponCode);
+              setCouponStatus("invalid");
+              setCouponCode("");
+            }
+            return;
+          }
+          throw err;
+        }
         if (isMounted) {
           setQuote(newQuote);
           setValidationIssues([]);
+          if (couponCode) setCouponStatus(newQuote.discount_code_applied ? "applied" : "ineligible");
         }
       } catch (err: unknown) {
         if (isMounted) {
@@ -127,7 +168,37 @@ function CartPageInner() {
     return () => {
       isMounted = false;
     };
-  }, [items]);
+  }, [items, couponCode, couponRestored]);
+
+  // Keep the coupon across page refreshes in this tab (never stored server-side here).
+  useEffect(() => {
+    if (!couponRestored) return;
+    try {
+      if (couponCode) window.sessionStorage.setItem(COUPON_KEY, couponCode);
+      else window.sessionStorage.removeItem(COUPON_KEY);
+    } catch {
+      /* storage unavailable: the coupon simply is not remembered */
+    }
+  }, [couponCode, couponRestored]);
+
+  const applyCoupon = () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setRejectedCode(null);
+    // A new code replaces the old one; the reservation is for the old quote.
+    setReservation(null);
+    setReservationTimeRemaining(null);
+    if (code === couponCode) setCouponStatus("applying");
+    setCouponCode(code);
+  };
+  const removeCoupon = () => {
+    setRejectedCode(null);
+    setCouponStatus("idle");
+    setCouponInput("");
+    setReservation(null);
+    setReservationTimeRemaining(null);
+    setCouponCode("");
+  };
 
   // TTL Countdown Timer for the active quote (15-minute guarantee)
   useEffect(() => {
@@ -697,6 +768,36 @@ function CartPageInner() {
                   <span className="font-semibold text-foreground">
                     {formatPrice(quote ? quote.subtotal_paise : subtotalPaise)}
                   </span>
+                </div>
+
+                <div className="space-y-1" aria-label="Coupon">
+                  <div className="flex gap-2">
+                    <input
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyCoupon();
+                      }}
+                      placeholder="Coupon code"
+                      aria-label="Coupon code"
+                      maxLength={50}
+                      className="h-8 min-w-0 flex-1 rounded border px-2 text-xs uppercase"
+                    />
+                    <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={!couponInput.trim() || couponStatus === "applying"} onClick={applyCoupon}>
+                      {couponCode && couponInput.trim() !== couponCode ? "Replace" : "Apply"}
+                    </Button>
+                    {couponCode && (
+                      <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={removeCoupon}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs" role="status" aria-live="polite">
+                    {couponStatus === "applying" && <span className="text-muted-foreground">Checking coupon…</span>}
+                    {couponStatus === "applied" && <span className="text-emerald-700">Coupon {couponCode.toUpperCase()} applied — included in the discounts below.</span>}
+                    {couponStatus === "ineligible" && <span className="text-amber-700">Coupon {couponCode.toUpperCase()} is valid but does not apply to this basket (for example a minimum order value or a store/product it is limited to).</span>}
+                    {couponStatus === "invalid" && rejectedCode && <span className="text-red-600">Coupon {rejectedCode.toUpperCase()} is not valid or has expired.</span>}
+                  </p>
                 </div>
 
                 {quote && quote.discount_total_paise > 0 && (

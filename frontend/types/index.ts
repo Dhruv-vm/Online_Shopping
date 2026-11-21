@@ -779,6 +779,9 @@ export interface QuoteItem {
 
 export interface Quote {
   id: string;
+  /** The coupon that applied to at least one line (null if none or not applicable). */
+  discount_code?: string | null;
+  discount_code_applied?: boolean;
   customer_id?: string | null;
   cart_id?: string | null;
   delivery_address_id?: string | null;
@@ -806,6 +809,8 @@ export interface Quote {
 export interface QuoteCreatePayload {
   delivery_address_id?: string | null;
   delivery_state?: string | null;
+  /** Optional coupon; validated and priced by the server only. */
+  discount_code?: string | null;
 }
 
 export interface QuoteValidationIssue {
