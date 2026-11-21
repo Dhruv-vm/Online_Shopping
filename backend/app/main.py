@@ -70,19 +70,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             from app.modules.orders.consumer import OrderProjectionConsumer
 
             session_factory = get_session_factory()
-            order_consumer = OrderProjectionConsumer(session_factory=session_factory)
-            await order_consumer.start()
-            logger.info("OrderProjectionConsumer started successfully.")
-
-            opensearch_consumer = OpenSearchConsumer(session_factory=session_factory)
-            await opensearch_consumer.start()
-            set_search_indexer_running(True)
-            logger.info("OpenSearchConsumer started successfully.")
         except Exception as exc:
-            logger.warning(
-                "Background consumer could not start at lifespan startup: %s. Continuing in degraded mode.",
-                exc,
-            )
+            logger.warning("Kafka consumers not started: %s", exc)
+            session_factory = None
+        # Started independently: one failing must not silently disable the other.
+        if session_factory is not None:
+            try:
+                order_consumer = OrderProjectionConsumer(
+                    session_factory=session_factory
+                )
+                await order_consumer.start()
+                logger.info("OrderProjectionConsumer started successfully.")
+            except Exception as exc:
+                order_consumer = None
+                logger.warning(
+                    "OrderProjectionConsumer could not start: %s. Continuing in degraded mode.",
+                    exc,
+                )
+            try:
+                opensearch_consumer = OpenSearchConsumer(
+                    session_factory=session_factory
+                )
+                await opensearch_consumer.start()
+                set_search_indexer_running(True)
+                logger.info("OpenSearchConsumer started successfully.")
+            except Exception as exc:
+                opensearch_consumer = None
+                logger.warning(
+                    "OpenSearchConsumer could not start: %s. Search uses PostgreSQL.",
+                    exc,
+                )
 
     # Live change notices for browsers (Kafka mode; direct mode feeds the hub
     # from the dispatcher).
@@ -188,6 +205,18 @@ def create_app() -> FastAPI:
             from app.modules.governance.audit import record_admin_mutation
 
             await record_admin_mutation(request, response)
+        return response
+
+    # API responses are per-user and change constantly: never let a browser, the
+    # Next.js proxy or a tunnel/CDN cache them unless an endpoint says otherwise.
+    @app.middleware("http")
+    async def api_no_store_middleware(request: Request, call_next) -> Response:
+        response: Response = await call_next(request)
+        if (
+            request.url.path.startswith("/api/")
+            and "cache-control" not in response.headers
+        ):
+            response.headers["Cache-Control"] = "private, no-store"
         return response
 
     # Prometheus Metrics Middleware (Bounded Labels)

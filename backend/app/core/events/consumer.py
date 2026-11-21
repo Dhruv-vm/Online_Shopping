@@ -348,7 +348,10 @@ class BaseKafkaConsumer(EventConsumer):
             await self._producer.start()
 
         if self._consumer is None:
-            # Build real AIOKafkaConsumer with cooperative sticky assignor
+            # Real AIOKafkaConsumer. aiokafka takes assignor *classes*; the Java/librdkafka
+            # name "cooperative-sticky" made every group join fail on a real broker
+            # (AttributeError: 'str' object has no attribute 'metadata'), so the default
+            # range assignor is used. Per-key ordering comes from partitioning, not the assignor.
             consumer_kwargs: dict[str, Any] = {
                 "bootstrap_servers": self._settings.KAFKA_BOOTSTRAP_SERVERS,
                 "group_id": self._consumer_group,
@@ -357,7 +360,6 @@ class BaseKafkaConsumer(EventConsumer):
                 if hasattr(self._settings, "KAFKA_CONSUMER_AUTO_OFFSET_RESET")
                 else "earliest",
                 "max_poll_records": 50,
-                "partition_assignment_strategy": ["cooperative-sticky"],
                 **build_kafka_auth_kwargs(self._settings),
             }
             self._consumer = AIOKafkaConsumer(
@@ -1034,7 +1036,6 @@ def get_kafka_consumer(
         "enable_auto_commit": False,
         "auto_offset_reset": "earliest",
         "max_poll_records": 50,
-        "partition_assignment_strategy": ["cooperative-sticky"],
         **build_kafka_auth_kwargs(active_settings),
     }
     return AIOKafkaConsumer(
