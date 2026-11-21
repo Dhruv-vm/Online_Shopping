@@ -589,6 +589,19 @@ class OrderService:
             self.session, quote_id=quote.id, order_id=order_id
         )
 
+        # Version 2.0: reserve one use of each discount priced into the quote,
+        # under row locks; 409 (whole order rolls back) if a limit is reached.
+        from app.modules.pricing.redemptions import (
+            applied_discount_ids,
+            reserve_discount_usage,
+        )
+
+        await reserve_discount_usage(
+            self.session,
+            discount_ids=applied_discount_ids(quote.items),
+            order_id=order_id,
+        )
+
         # 9. Selective Cart Reconciliation
         if quote.cart_id:
             cart_items = await self.repo.get_cart_items_for_update(quote.cart_id)
@@ -943,6 +956,17 @@ class OrderService:
                     order.id,
                     e,
                 )
+
+        # Version 2.0: an unpaid order gives its discount uses back (once).
+        if (
+            from_status == OrderStatus.PENDING_PAYMENT.value
+            and order.fulfilling_capture_id is None
+        ):
+            from app.modules.pricing.redemptions import release_discount_usage
+
+            await release_discount_usage(
+                self.session, order_id=order.id, reason="ORDER_CANCELLED_UNPAID"
+            )
 
         # Payment refund handling:
         refund_status: str | None = None

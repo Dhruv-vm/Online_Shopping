@@ -508,6 +508,15 @@ class ReconciliationService:
             locked_order.status = OrderStatus.CANCELLED.value
             locked_order.payment_status = PaymentStatus.FAILED.value
 
+            # Version 2.0: payment window expired unpaid → discount uses back.
+            from app.modules.pricing.redemptions import release_discount_usage
+
+            await release_discount_usage(
+                self.session,
+                order_id=locked_order.id,
+                reason="PAYMENT_WINDOW_EXPIRED",
+            )
+
             history = OrderStatusHistory(
                 order_id=locked_order.id,
                 from_status=OrderStatus.PENDING_PAYMENT.value,
