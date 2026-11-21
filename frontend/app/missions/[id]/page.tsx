@@ -254,6 +254,18 @@ export default function MissionDetailPage({
               {mission.description}
             </p>
           )}
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {mission.status === "COMPLETED" && mission.completed_order_id ? (
+              <>
+                Completed{mission.completed_at ? ` on ${new Date(mission.completed_at).toLocaleDateString()}` : ""} ·{" "}
+                <Link href={`/orders/${mission.completed_order_id}`} className="underline">view order</Link>
+              </>
+            ) : mission.carted_at ? (
+              `Progress: ${mission.purchased_items_count ?? 0} of ${mission.items_count} items bought in paid orders. The mission completes when one paid order has them all.`
+            ) : (
+              "Add the mission to your cart and check out to complete it."
+            )}
+          </p>
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">

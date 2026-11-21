@@ -570,6 +570,9 @@ async def process_payment_capture_and_fulfillment(
             message="Payment is confirmed. Open Orders to pack and dispatch it.",
             event_type="retailer.order_paid",
         )
+        from app.modules.missions.completion import complete_missions_for_order
+
+        await complete_missions_for_order(session, order)
         await session.commit()
         await session.refresh(order)
         await session.refresh(capture)

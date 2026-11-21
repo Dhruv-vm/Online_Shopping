@@ -1538,6 +1538,11 @@ export interface MissionGroup {
 }
 
 export interface MissionSummary {
+  /** Backend-verified progress and completion (from paid orders). */
+  purchased_items_count?: number;
+  carted_at?: string | null;
+  completed_at?: string | null;
+  completed_order_id?: string | null;
   id: string;
   title: string;
   description?: string | null;
@@ -1555,6 +1560,11 @@ export interface MissionSummary {
 }
 
 export interface MissionDetail {
+  /** Backend-verified progress and completion (from paid orders). */
+  purchased_items_count?: number;
+  carted_at?: string | null;
+  completed_at?: string | null;
+  completed_order_id?: string | null;
   id: string;
   customer_id: string;
   title: string;
@@ -1593,7 +1603,8 @@ export interface MissionUpdatePayload {
   title?: string;
   description?: string;
   budget_paise?: number;
-  status?: "ACTIVE" | "SAVED" | "COMPLETED" | "ARCHIVED";
+  /** COMPLETED is set by the backend from a paid order, never by the client. */
+  status?: "ACTIVE" | "SAVED" | "ARCHIVED";
   people_count?: number;
   preferences?: string[];
   excluded_brands?: string[];

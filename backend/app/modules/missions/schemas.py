@@ -21,7 +21,8 @@ class MissionUpdateRequest(BaseModel):
     title: str | None = Field(None, min_length=2, max_length=255)
     description: str | None = Field(None, max_length=2000)
     budget_paise: int | None = Field(None, gt=0)
-    status: str | None = Field(None, pattern="^(ACTIVE|SAVED|COMPLETED|ARCHIVED)$")
+    # COMPLETED is set only by the backend when a paid order contains every item.
+    status: str | None = Field(None, pattern="^(ACTIVE|SAVED|ARCHIVED)$")
     people_count: int | None = Field(None, ge=1, le=50)
     preferences: list[str] | None = None
     excluded_brands: list[str] | None = None
@@ -112,6 +113,11 @@ class MissionSummaryResponse(BaseModel):
     category_id: uuid.UUID | None = None
     category_name: str | None = None
     people_count: int
+    # Completion is verified from a paid order (never self-declared).
+    purchased_items_count: int = 0
+    carted_at: datetime | None = None
+    completed_at: datetime | None = None
+    completed_order_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +145,11 @@ class MissionDetailResponse(BaseModel):
     summary_explanation: str
     groups: list[MissionGroupResponse]
     items: list[MissionItemResponse]
+    # Completion is verified from a paid order (never self-declared).
+    purchased_items_count: int = 0
+    carted_at: datetime | None = None
+    completed_at: datetime | None = None
+    completed_order_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
