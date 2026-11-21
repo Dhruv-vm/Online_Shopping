@@ -26,6 +26,10 @@ from app.core.metrics import (
     normalize_metric_path,
 )
 from app.core.search.client import get_opensearch_client
+from app.core.search.index_health import (
+    evaluate_search_engine,
+    set_search_indexer_running,
+)
 
 
 @asynccontextmanager
@@ -70,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             opensearch_consumer = OpenSearchConsumer(session_factory=session_factory)
             await opensearch_consumer.start()
+            set_search_indexer_running(True)
             logger.info("OpenSearchConsumer started successfully.")
         except Exception as exc:
             logger.warning(
@@ -101,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("Error stopping background workers: %s", exc)
 
     if opensearch_consumer is not None:
+        set_search_indexer_running(False)
         try:
             logger.info("Stopping OpenSearchConsumer...")
             await opensearch_consumer.stop()
@@ -245,6 +251,20 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 opensearch_check = {"status": "degraded", "error": str(exc)}
 
+        # Which engine search uses now, and why (Version 2.0 A3).
+        search_check: dict[str, object]
+        try:
+            from app.core.database import get_session_factory
+
+            sf = get_session_factory() if db_check["status"] == "connected" else None
+            if sf is not None:
+                async with sf() as s:
+                    search_check = (await evaluate_search_engine(s)).as_dict()
+            else:
+                search_check = (await evaluate_search_engine(None)).as_dict()
+        except Exception as exc:  # readiness must never crash
+            search_check = {"engine": "unknown", "error": type(exc).__name__}
+
         if db_check["status"] == "connected":
             overall_status = "ready"
             response.status_code = status.HTTP_200_OK
@@ -265,6 +285,7 @@ def create_app() -> FastAPI:
                 "database": db_check,
                 "kafka": kafka_check,
                 "opensearch": opensearch_check,
+                "search": search_check,
             },
         }
 

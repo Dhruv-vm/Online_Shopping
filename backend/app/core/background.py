@@ -26,6 +26,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from app.core.config import Settings, settings
+from app.core.search.index_health import register_outbox_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,7 @@ class BackgroundWorkerSupervisor:
             try:
                 await worker.start()
                 self._outbox_worker = worker
+                register_outbox_publisher(worker)
                 logger.info("Outbox publisher running (Kafka connected).")
                 return
             except asyncio.CancelledError:
@@ -255,6 +257,7 @@ class BackgroundWorkerSupervisor:
                 await task
         self._tasks.clear()
         if self._outbox_worker is not None:
+            register_outbox_publisher(None)
             with contextlib.suppress(Exception):
                 await self._outbox_worker.stop()
             self._outbox_worker = None

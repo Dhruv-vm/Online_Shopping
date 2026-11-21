@@ -318,6 +318,8 @@ class SystemHealth(BaseModel):
     background_jobs: dict
     quarantined_test_records: int
     checked_at: datetime.datetime
+    # Active search engine and the reason for any fallback (Version 2.0 A3).
+    search_engine: dict = Field(default_factory=dict)
 
 
 @router.get("/system/health", response_model=SystemHealth)
@@ -367,14 +369,16 @@ async def system_health(db: Annotated[AsyncSession, Depends(get_db)]) -> SystemH
                 detail=f"{pending} event(s) awaiting publish",
             )
         )
-    os_url = (getattr(settings, "OPENSEARCH_URL", "") or "").strip()
-    comps.append(
-        ComponentHealth(
-            name="OpenSearch",
-            status="ok" if os_url else "not_configured",
-            detail="Configured" if os_url else "Search uses PostgreSQL",
-        )
-    )
+    from app.core.search.index_health import evaluate_search_engine
+
+    search_status = await evaluate_search_engine(db)
+    if search_status.engine == "postgres":
+        os_status, os_detail = "not_configured", "Search uses PostgreSQL"
+    elif search_status.engine == "postgres_fallback":
+        os_status, os_detail = "degraded", search_status.detail
+    else:
+        os_status, os_detail = "ok", "Configured; index in sync"
+    comps.append(ComponentHealth(name="OpenSearch", status=os_status, detail=os_detail))
     rzp_secret = getattr(settings, "RAZORPAY_KEY_ID", None)
     rzp = rzp_secret.get_secret_value() if rzp_secret else ""
     if not rzp or "mock" in rzp:
@@ -411,4 +415,5 @@ async def system_health(db: Annotated[AsyncSession, Depends(get_db)]) -> SystemH
         background_jobs=dict(JOB_STATUS),
         quarantined_test_records=int(quarantined),
         checked_at=now,
+        search_engine=search_status.as_dict(),
     )

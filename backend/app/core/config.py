@@ -152,6 +152,9 @@ class Settings(BaseSettings):
     OPENSEARCH_MAX_RETRIES: int = 3
     OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
     OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
+    # Search uses PostgreSQL while the oldest unpublished outbox event is older
+    # than this (the OpenSearch index would be stale).
+    SEARCH_INDEX_MAX_LAG_SECONDS: int = 300
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
