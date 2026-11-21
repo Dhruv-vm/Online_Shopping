@@ -70,3 +70,6 @@ frontend/.next-shared/
 Hack UI/
 .claude/
 
+
+.ui-shots/
+frontend/.next-ui/

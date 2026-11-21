@@ -1,0 +1,326 @@
+/* Basket loading screen — copied unchanged from "Hack UI/loader/basket-loader.css". */
+/* ==========================================================================
+   Basket loading screen
+   Pure black, no glow, no background gradients. Only transform/opacity animate.
+   ========================================================================== */
+
+:root {
+  --bl-black: #000000;
+  --bl-yellow: #fdcd1e; /* sampled from the Basket logo */
+  --bl-green: #007e1c;  /* sampled from the Basket logo wheels */
+  --bl-white: #ffffff;
+
+  /* One size drives the whole cart scene so it scales cleanly on every screen */
+  --bl-cart-w: clamp(116px, 30vw, 172px);
+  --bl-logo-w: clamp(150px, 42vw, 232px);
+
+  --bl-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --bl-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --bl-gravity: cubic-bezier(0.5, 0, 0.9, 0.55);
+}
+
+html.bl-is-loading,
+html.bl-is-loading body {
+  overflow: hidden;
+  background: var(--bl-black);
+}
+
+.bl {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(20px, 4.5vh, 40px);
+  padding: 24px 16px;
+  background: var(--bl-black);
+  color: var(--bl-white);
+  font-family: "Montserrat", "Gilroy", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  transition: opacity 420ms var(--bl-ease-out), visibility 0s linear 420ms;
+}
+
+.bl.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.bl.is-done .bl-inner {
+  transform: scale(1.03);
+}
+
+.bl-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(20px, 4.5vh, 40px);
+  width: 100%;
+  transition: transform 420ms var(--bl-ease-out);
+}
+
+/* ---------- Logo: fade + settle once, then stays perfectly still ---------- */
+
+.bl-logo {
+  display: block;
+  width: var(--bl-logo-w);
+  height: auto;
+  margin-bottom: clamp(8px, 3vh, 28px);
+  animation: bl-logo-in 700ms var(--bl-ease-out) both;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+@keyframes bl-logo-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------- Cart scene ---------- */
+
+.bl-scene {
+  position: relative;
+  width: var(--bl-cart-w);
+  /* headroom for the product arcs + cart body + wheels */
+  padding-top: calc(var(--bl-cart-w) * 0.62);
+}
+
+.bl-cart {
+  position: relative;
+  animation: bl-cart-in 800ms var(--bl-ease-out) 250ms both;
+}
+
+@keyframes bl-cart-in {
+  from { opacity: 0; transform: translateX(-36px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Body + products bounce together; wheels stay on the ground */
+.bl-cart-top {
+  position: relative;
+  animation: bl-bounce 1400ms var(--bl-ease-in-out) 1050ms infinite;
+  will-change: transform;
+}
+
+@keyframes bl-bounce {
+  0%, 100% { transform: translateY(0); }
+  45%      { transform: translateY(calc(var(--bl-cart-w) * -0.035)); }
+  70%      { transform: translateY(calc(var(--bl-cart-w) * 0.008)); }
+}
+
+.bl-cart-body,
+.bl-cart-wheels {
+  display: block;
+  width: 100%;
+  height: auto;
+  position: relative;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.bl-cart-body { z-index: 2; }
+
+.bl-cart-wheels {
+  animation: bl-wheels 1400ms var(--bl-ease-in-out) 1050ms infinite;
+  transform-origin: 50% 100%;
+}
+
+/* subtle suspension: the wheels compress a touch when the body comes down */
+@keyframes bl-wheels {
+  0%, 100% { transform: scaleY(1); }
+  70%      { transform: scaleY(0.9); }
+}
+
+/* Speed lines: crisp strokes (no blur, no glow) */
+.bl-lines {
+  position: absolute;
+  top: 18%;
+  width: 18%;
+  height: 40%;
+  color: var(--bl-yellow);
+  opacity: 0;
+  animation: bl-lines 2800ms var(--bl-ease-out) 2050ms infinite;
+}
+
+.bl-lines--l { right: 104%; transform: scaleX(-1); }
+.bl-lines--r { left: 104%; }
+
+.bl-lines svg { width: 100%; height: 100%; overflow: visible; }
+
+/* Entry whoosh on the right while the cart rolls in */
+.bl-lines--enter {
+  left: auto;
+  right: 104%;
+  transform: scaleX(-1);
+  animation: bl-whoosh 900ms var(--bl-ease-out) 250ms both;
+}
+
+@keyframes bl-whoosh {
+  0%   { opacity: 0; translate: 0 0; }
+  25%  { opacity: 0.9; }
+  100% { opacity: 0; translate: -14px 0; }
+}
+
+@keyframes bl-lines {
+  0%   { opacity: 0; translate: -6px 0; }
+  12%  { opacity: 0.9; translate: 0 0; }
+  32%  { opacity: 0; translate: 4px 0; }
+  100% { opacity: 0; }
+}
+
+/* ---------- Products: parabolic arcs into the cart ----------
+   X travels with ease-out on the outer node, Y falls with an ease-in
+   ("gravity") on the inner node: together they trace a natural arc. */
+
+.bl-products {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 9%; /* the cart's top rim */
+  height: 0;
+  z-index: 1; /* behind the cart body so the rim overlaps them */
+}
+
+.bl-prod {
+  --s: calc(var(--bl-cart-w) * 0.28);
+  position: absolute;
+  bottom: calc(var(--s) * -0.28);
+  left: var(--x);
+  width: var(--s);
+  height: var(--s);
+  margin-left: calc(var(--s) * -0.5);
+  animation: bl-fly-x 760ms cubic-bezier(0.3, 0.5, 0.5, 1) var(--d) both;
+}
+
+.bl-prod-y {
+  width: 100%;
+  height: 100%;
+  animation: bl-fly-y 760ms var(--bl-gravity) var(--d) both;
+}
+
+.bl-prod svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation:
+    bl-spin 760ms var(--bl-ease-out) var(--d) both,
+    bl-settle 380ms var(--bl-ease-out) calc(var(--d) + 760ms) forwards;
+  transform-origin: 50% 85%;
+}
+
+@keyframes bl-fly-x {
+  0%   { opacity: 0; transform: translateX(calc(var(--bl-cart-w) * var(--fx))); }
+  18%  { opacity: 1; }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes bl-fly-y {
+  from { transform: translateY(calc(var(--bl-cart-w) * var(--fy))); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes bl-spin {
+  from { transform: rotate(var(--r)); }
+  to   { transform: rotate(0deg); }
+}
+
+@keyframes bl-settle {
+  0%   { transform: scale(1, 1); }
+  35%  { transform: scale(1.06, 0.92); }
+  100% { transform: scale(1, 1); }
+}
+
+.bl-prod--apple  { --x: 37%; --d: 1000ms; --fx: -0.95; --fy: -0.62; --r: -50deg; }
+.bl-prod--box    { --x: 53%; --d: 1160ms; --fx: -0.4;  --fy: -0.78; --r: 28deg; }
+.bl-prod--milk   { --x: 68%; --d: 1320ms; --fx: 0.42;  --fy: -0.8;  --r: -24deg; }
+.bl-prod--greens { --x: 84%; --d: 1480ms; --fx: 0.9;   --fy: -0.6;  --r: 46deg; }
+
+/* ---------- Status text ---------- */
+
+.bl-text {
+  margin: 0;
+  font-size: clamp(15px, 2.2vw, 19px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--bl-white);
+  animation: bl-fade-up 600ms var(--bl-ease-out) 400ms both;
+}
+
+@keyframes bl-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------- Progress bar ---------- */
+
+.bl-bar {
+  position: relative;
+  width: min(420px, 100%);
+  height: 16px;
+  padding: 3px;
+  border: 1.5px solid var(--bl-white);
+  border-radius: 999px;
+  background: transparent;
+  animation: bl-fade-up 600ms var(--bl-ease-out) 500ms both;
+}
+
+.bl-bar-track {
+  position: relative;
+  height: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+  /* isolate + clip so the translating fill stays rounded on both ends */
+  isolation: isolate;
+}
+
+.bl-bar-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--bl-yellow);
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
+}
+
+/* Small green accent riding the leading edge */
+.bl-bar-fill::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--bl-green);
+}
+
+/* ---------- Visually hidden live status for screen readers ---------- */
+
+.bl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Small / short screens ---------- */
+
+@media (max-height: 560px) {
+  .bl, .bl-inner { gap: 14px; }
+  .bl-logo { margin-bottom: 4px; }
+  :root { --bl-cart-w: clamp(96px, 20vh, 140px); }
+}
+
+/* ---------- Reduced motion: keep it calm, keep the progress ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .bl-logo, .bl-cart, .bl-text, .bl-bar { animation-duration: 1ms; animation-delay: 0ms; }
+  .bl-cart-top, .bl-cart-wheels, .bl-lines { animation: none; }
+  .bl-lines { display: none; }
+  .bl-prod, .bl-prod-y, .bl-prod svg { animation: none; }
+  .bl-inner { transition: none; }
+}
