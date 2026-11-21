@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
+import { useLiveUpdates } from "@/lib/realtime";
 
 function ProductsView() {
   const router = useRouter();
@@ -61,8 +62,8 @@ function ProductsView() {
   }, []);
 
   // Fetch products matching filters
-  const loadProducts = useCallback(async () => {
-    setIsLoading(true);
+  const loadProducts = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setIsLoading(true);
     setError(null);
     try {
       const minPricePaise = currentMinPrice ? parseInt(currentMinPrice, 10) * 100 : undefined;
@@ -99,6 +100,7 @@ function ProductsView() {
     currentSort,
     currentPage,
   ]);
+  useLiveUpdates(["product.", "catalogue.", "listing.", "variant.", "price.", "inventory.", "store_inventory.", "offer.", "sale_stream."], () => void loadProducts({ quiet: true }));
 
   useEffect(() => {
     loadProducts();

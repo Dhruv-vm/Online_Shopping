@@ -181,7 +181,11 @@ class MissionService:
                 status_code=404,
             )
         items = await self.repo.get_mission_items(mission_id)
-        return self._format_mission_detail(mission, items)
+        detail = self._format_mission_detail(mission, items)
+        detail.purchased_items_count = await self._purchased_count(
+            mission, [i for i in items if i.is_selected]
+        )
+        return detail
 
     async def list_missions(
         self, customer_id: uuid.UUID
@@ -208,11 +212,27 @@ class MissionService:
                     category_id=m.category_id,
                     category_name=m.category.name if m.category else None,
                     people_count=m.people_count,
+                    carted_at=m.carted_at,
+                    completed_at=m.completed_at,
+                    completed_order_id=m.completed_order_id,
+                    purchased_items_count=await self._purchased_count(
+                        m, selected_items
+                    ),
                     created_at=m.created_at,
                     updated_at=m.updated_at,
                 )
             )
         return summaries
+
+    async def _purchased_count(self, mission, selected_items) -> int:
+        from app.modules.missions.completion import purchased_listing_ids
+
+        if mission.status == "COMPLETED":
+            return len(selected_items)
+        bought = await purchased_listing_ids(
+            self.session, mission.customer_id, mission.carted_at
+        )
+        return len([i for i in selected_items if i.listing_id in bought])
 
     async def update_mission(
         self,
@@ -235,6 +255,12 @@ class MissionService:
         if payload.budget_paise is not None:
             mission.budget_paise = payload.budget_paise
         if payload.status is not None:
+            if mission.status == "COMPLETED" and payload.status != "ARCHIVED":
+                raise AppException(
+                    code="MISSION_ALREADY_COMPLETED",
+                    message="A completed mission can only be archived.",
+                    status_code=409,
+                )
             mission.status = payload.status
         if payload.people_count is not None:
             mission.people_count = payload.people_count
@@ -564,6 +590,13 @@ class MissionService:
                 skipped_count += 1
                 warnings.append(f"Failed to add '{product.name}': {exc}")
 
+        if added_count:
+            from datetime import UTC, datetime
+
+            # Completion is later verified against paid orders created after this.
+            mission.carted_at = datetime.now(UTC)
+            await self.session.flush()
+
         # Refresh cart
         cart_items = await self.cart_service.repo.get_cart_items(cart.id)
         cart_resp = self.cart_service.format_cart_response(cart, cart_items)
@@ -702,6 +735,14 @@ class MissionService:
             summary_explanation=custom_explanation,
             groups=groups,
             items=item_responses,
+            carted_at=mission.carted_at,
+            completed_at=mission.completed_at,
+            completed_order_id=mission.completed_order_id,
+            purchased_items_count=(
+                len([i for i in item_responses if i.is_selected])
+                if mission.status == "COMPLETED"
+                else 0
+            ),
             created_at=mission.created_at,
             updated_at=mission.updated_at,
         )

@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/marketplace";
 import { retailerCampaigns, retailerCancelCampaign, retailerCreateCampaign } from "@/lib/api/phase3";
 import { useI18n } from "@/lib/i18n/i18n-context";
+import { useLiveUpdates } from "@/lib/realtime";
 
 type Form = { listing_id: string; min: string; max: string; pct: string; hours: string; perMember: string; openCap: string };
 const START: Form = { listing_id: "", min: "3", max: "10", pct: "10", hours: "48", perMember: "2", openCap: "3" };
@@ -40,6 +41,7 @@ function Inputs({ f, setF, withCap }: { f: Form; setF: (f: Form) => void; withCa
 export default function RetailerCommunityBuyingPage() {
   const { t, money } = useI18n();
   const camps = useLoad(() => retailerCampaigns());
+  useLiveUpdates(["group_buy."], () => void camps.refresh());
   const templates = useLoad(() => listMyGroupBuyTemplates());
   const listings = useLoad(() => loadMyListings());
   const [camp, setCamp] = useState<Form>(START);

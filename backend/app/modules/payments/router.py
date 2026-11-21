@@ -65,7 +65,8 @@ async def initiate_payment(
     db: Annotated[AsyncSession, Depends(get_db)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> PaymentInitiateResponse:
-    effective_key = idempotency_key or str(uuid.uuid4())
+    # No key: the service reuses the order's open PENDING attempt (see service).
+    effective_key = idempotency_key or None
 
     user = await get_current_user_optional(request, db)
     ensure_can_shop(user)

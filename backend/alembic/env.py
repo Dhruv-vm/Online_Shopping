@@ -32,6 +32,7 @@ import app.modules.passport.models  # noqa: F401
 import app.modules.payments.models  # noqa: F401
 import app.modules.price_intel.models  # noqa: F401
 import app.modules.pricing.models  # noqa: F401
+import app.modules.recurring.models  # noqa: F401
 import app.modules.sale_stream.models  # noqa: F401
 from app.core.config import settings
 from app.core.database import Base

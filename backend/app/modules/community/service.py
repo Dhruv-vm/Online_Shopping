@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
-from urllib.parse import quote
+from datetime import UTC, datetime, timedelta, timezone
+from urllib.parse import quote, urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,7 @@ from app.modules.catalogue.models import (
 )
 from app.modules.community.models import (
     GroupBuyCampaign,
+    GroupBuyInvite,
     GroupBuyMember,
     GroupBuyMemberStatus,
     GroupBuyStatus,
@@ -31,6 +34,8 @@ from app.modules.community.models import (
 from app.modules.community.schemas import (
     CampaignItem,
     CustomerStartRequest,
+    InvitePreview,
+    InviteResponse,
     ShareResponse,
     TemplateItem,
     TemplateUpsertRequest,
@@ -203,6 +208,13 @@ class CommunityBuyingService:
             )
         c.current_participants += 1
         c.total_quantity += quantity
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="group_buy.member_joined",
+            aggregate_type="group_buy_campaign",
+            aggregate_id=c.id,
+            payload={"campaign_id": c.id, "participants": c.current_participants},
+        )
         await self.session.flush()
         if c.current_participants >= c.max_participants:
             await self._settle(c)
@@ -236,6 +248,13 @@ class CommunityBuyingService:
         member.status = GroupBuyMemberStatus.LEFT.value
         c.current_participants -= 1
         c.total_quantity -= member.quantity
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="group_buy.member_left",
+            aggregate_type="group_buy_campaign",
+            aggregate_id=c.id,
+            payload={"campaign_id": c.id, "participants": c.current_participants},
+        )
         await self.session.flush()
         return c
 
@@ -748,28 +767,185 @@ class CommunityBuyingService:
             )
         return c
 
-    async def share(self, campaign_id: uuid.UUID, user_id: uuid.UUID) -> ShareResponse:
+    async def share(
+        self, campaign_id: uuid.UUID, user_id: uuid.UUID, origin: str | None = None
+    ) -> ShareResponse:
+        """Kept for existing clients: now backed by a secure, expiring invite."""
+        inv = await self.create_invite(campaign_id, user_id, origin)
+        return ShareResponse(
+            url=inv.url,
+            message=inv.message,
+            whatsapp_url=inv.whatsapp_url,
+            sms_url=inv.sms_url,
+        )
+
+    # ------------------------------------------------------------ invitations
+    async def create_invite(
+        self, campaign_id: uuid.UUID, user_id: uuid.UUID, origin: str | None = None
+    ) -> InviteResponse:
         c = await self.get(campaign_id)
-        if c.status != GroupBuyStatus.OPEN.value:
+        if c.status != GroupBuyStatus.OPEN.value or _aware(
+            c.expires_at
+        ) <= datetime.now(UTC):
             raise AppException(
                 code="CAMPAIGN_CLOSED",
                 message="This group buy is closed.",
                 status_code=409,
             )
-        url = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/community-buying/{c.id}?ref={str(user_id)[:8]}"
-        needed = max(0, c.min_participants - c.current_participants)
-        msg = (
-            f"Join my BASKET group buy '{c.title}' and pay ₹{c.group_price_paise / 100:.2f} "
-            f"instead of ₹{c.list_price_paise / 100:.2f}"
-            + (f" — {needed} more people needed!" if needed else "!")
-            + f" {url}"
+        now = datetime.now(UTC)
+        active = (
+            await self.session.execute(
+                select(func.count())
+                .select_from(GroupBuyInvite)
+                .where(
+                    GroupBuyInvite.campaign_id == c.id,
+                    GroupBuyInvite.created_by_user_id == user_id,
+                    GroupBuyInvite.revoked_at.is_(None),
+                    GroupBuyInvite.expires_at > now,
+                )
+            )
+        ).scalar() or 0
+        if active >= MAX_ACTIVE_INVITES_PER_USER:
+            raise AppException(
+                code="TOO_MANY_INVITES",
+                message="You already have several active invitations for this group buy.",
+                status_code=429,
+            )
+        token = secrets.token_urlsafe(24)
+        expires = min(_aware(c.expires_at), now + INVITE_TTL)
+        self.session.add(
+            GroupBuyInvite(
+                id=uuid.uuid4(),
+                campaign_id=c.id,
+                created_by_user_id=user_id,
+                token_hash=_hash_token(token),
+                expires_at=expires,
+            )
         )
-        return ShareResponse(
+        await self.session.flush()
+        base = _safe_origin(origin) or settings.FRONTEND_BASE_URL.rstrip("/")
+        url = f"{base}/community-buying/invite/{token}"
+        product = await self._product_name(c)
+        needed = max(0, c.min_participants - c.current_participants)
+        # Campaign facts only: no name, phone, address or id of the person sharing.
+        msg = (
+            f"Join the BASKET group buy '{c.title}' ({product}): "
+            f"₹{c.group_price_paise / 100:,.2f} instead of ₹{c.list_price_paise / 100:,.2f}. "
+            f"{c.current_participants} of {c.min_participants} joined"
+            + (f", {needed} more needed" if needed else ", target reached")
+            + f". Invite valid until {_ist(expires)}. {url}"
+        )
+        return InviteResponse(
+            token=token,
             url=url,
+            expires_at=expires,
             message=msg,
             whatsapp_url=f"https://wa.me/?text={quote(msg)}",
             sms_url=f"sms:?&body={quote(msg)}",
         )
+
+    async def _product_name(self, c: GroupBuyCampaign) -> str:
+        listing = (
+            await self.session.execute(
+                select(ProductListing)
+                .options(
+                    selectinload(ProductListing.variant).selectinload(
+                        ProductVariant.product
+                    )
+                )
+                .where(ProductListing.id == c.listing_id)
+            )
+        ).scalar_one_or_none()
+        return listing.variant.product.name if listing else c.title
+
+    async def _valid_invite(
+        self, token: str
+    ) -> tuple[GroupBuyInvite, GroupBuyCampaign]:
+        inv = (
+            await self.session.execute(
+                select(GroupBuyInvite).where(
+                    GroupBuyInvite.token_hash == _hash_token(token)
+                )
+            )
+        ).scalar_one_or_none()
+        if inv is None:
+            raise AppException(
+                code="INVITE_INVALID",
+                message="This invitation link is not valid.",
+                status_code=404,
+            )
+        if inv.revoked_at is not None or _aware(inv.expires_at) <= datetime.now(UTC):
+            raise AppException(
+                code="INVITE_EXPIRED",
+                message="This invitation has expired. Ask for a new link.",
+                status_code=410,
+            )
+        return inv, await self.get(inv.campaign_id)
+
+    async def preview_invite(self, token: str) -> InvitePreview:
+        inv, c = await self._valid_invite(token)
+        reason = None
+        if c.status != GroupBuyStatus.OPEN.value or _aware(
+            c.expires_at
+        ) <= datetime.now(UTC):
+            reason = "This group buy is closed."
+        elif c.current_participants >= c.max_participants:
+            reason = "This group buy is full."
+        return InvitePreview(
+            campaign_id=c.id,
+            title=c.title,
+            product_name=await self._product_name(c),
+            list_price_paise=c.list_price_paise,
+            group_price_paise=c.group_price_paise,
+            discount_bps=c.discount_bps,
+            current_participants=c.current_participants,
+            min_participants=c.min_participants,
+            max_participants=c.max_participants,
+            campaign_expires_at=c.expires_at,
+            invite_expires_at=inv.expires_at,
+            can_join=reason is None,
+            reason=reason,
+        )
+
+    async def join_via_invite(
+        self, token: str, user_id: uuid.UUID, quantity: int
+    ) -> GroupBuyCampaign:
+        inv, c = await self._valid_invite(token)
+        joined = await self.join(
+            c.id, user_id, quantity
+        )  # every normal join rule applies
+        inv.uses += 1
+        await self.session.flush()
+        return joined
+
+
+INVITE_TTL = timedelta(hours=72)
+MAX_ACTIVE_INVITES_PER_USER = 10
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _safe_origin(origin: str | None) -> str | None:
+    """The page the person is sharing from (LAN address or tunnel), if well formed."""
+    if not origin:
+        return None
+    parsed = urlparse(origin)
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+        or parsed.path not in ("", "/")
+    ):
+        return None
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _ist(dt: datetime) -> str:
+    ist = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    return ist.strftime("%d %b %Y, %I:%M %p IST")
 
 
 async def settle_expired_campaigns(session: AsyncSession, limit: int = 50) -> int:
@@ -782,6 +958,8 @@ async def settle_expired_campaigns(session: AsyncSession, limit: int = 50) -> in
                     GroupBuyCampaign.expires_at <= datetime.now(UTC),
                 )
                 .limit(limit)
+                # Claim rows; ones being settled elsewhere wait for the next cycle.
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()

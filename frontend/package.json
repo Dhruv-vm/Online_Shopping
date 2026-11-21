@@ -1,6 +1,6 @@
 {
   "name": "basket-frontend",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test lib/api/client.test.ts lib/api/auth-address.test.ts lib/api/cart.test.ts lib/api/quotes.test.ts lib/api/reservations.test.ts lib/api/orders.test.ts lib/api/payments.test.ts lib/api/portals.test.ts lib/api/missions.test.ts lib/api/substitutes.test.ts lib/api/intent.test.ts lib/api/passport.test.ts lib/api/phase3.test.ts lib/pricing/discount.test.ts lib/auth/roles.test.ts lib/i18n/i18n.test.ts"
+    "test": "node --experimental-strip-types --test lib/api/client.test.ts lib/api/auth-address.test.ts lib/api/cart.test.ts lib/api/quotes.test.ts lib/api/reservations.test.ts lib/api/orders.test.ts lib/api/payments.test.ts lib/api/portals.test.ts lib/api/missions.test.ts lib/api/substitutes.test.ts lib/api/intent.test.ts lib/api/passport.test.ts lib/api/phase3.test.ts lib/pricing/discount.test.ts lib/auth/roles.test.ts lib/i18n/i18n.test.ts lib/payments/idempotency.test.ts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

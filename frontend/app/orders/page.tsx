@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth/auth-context";
 import { apiClient } from "@/lib/api/client";
 import type { OrderListItem, OrderStatus } from "@/types/index";
+import { useLiveUpdates } from "@/lib/realtime";
 
 function formatPrice(paise: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -79,8 +80,8 @@ export default function OrdersPage() {
   const [guestLookupLoading, setGuestLookupLoading] = useState(false);
   const [guestLookupError, setGuestLookupError] = useState<string | null>(null);
 
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  const fetchOrders = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true);
     setError(null);
     try {
       const res = await apiClient.listOrders(
@@ -100,6 +101,7 @@ export default function OrdersPage() {
       setLoading(false);
     }
   }, [limit, page, statusFilter, searchQuery, fromDate, toDate]);
+  useLiveUpdates(["order.", "payment.", "fulfilment."], () => void fetchOrders({ quiet: true }), { enabled: isAuthenticated });
 
   useEffect(() => {
     if (!authLoading) {
@@ -311,7 +313,7 @@ export default function OrdersPage() {
       ) : error ? (
         <div className="p-8 text-center rounded-xl border border-red-200 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-300">
           <p className="text-sm font-semibold">{error}</p>
-          <Button size="sm" variant="outline" onClick={fetchOrders} className="mt-3 text-xs">
+          <Button size="sm" variant="outline" onClick={() => void fetchOrders()} className="mt-3 text-xs">
             Try Again
           </Button>
         </div>

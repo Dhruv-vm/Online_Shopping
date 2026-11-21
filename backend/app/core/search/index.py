@@ -100,20 +100,52 @@ PRODUCT_INDEX_MAPPINGS: dict[str, Any] = {
 }
 
 
+def resolve_index_prefix(config_settings=None) -> str:
+    """Index prefix for this environment (Version 2.0 C2).
+
+    ``<OPENSEARCH_INDEX_PREFIX>_<database name>_<6-hex hash of host:port/name>``
+    when ``OPENSEARCH_INDEX_PER_DATABASE`` is on and a database is configured,
+    so a demo, test or second database can never read or write another
+    database's index. Only the database name and a hash are used: never the
+    user name or password.
+    """
+    import hashlib
+    import re
+
+    from sqlalchemy.engine import make_url
+
+    cfg = config_settings or settings
+    base = cfg.OPENSEARCH_INDEX_PREFIX
+    if not getattr(cfg, "OPENSEARCH_INDEX_PER_DATABASE", False) or not cfg.has_database:
+        return base
+    try:
+        url = make_url(cfg.DATABASE_URL)
+    except Exception:
+        return base
+    name = (url.database or "").rsplit("/", 1)[-1]
+    if not name:
+        return base
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:40] or "db"
+    digest = hashlib.sha256(
+        f"{url.host or ''}:{url.port or ''}/{name}".encode()
+    ).hexdigest()[:6]
+    return f"{base}_{slug}_{digest}".lower()
+
+
 def get_versioned_index_name(
     prefix: str | None = None, version: str = DEFAULT_INDEX_VERSION
 ) -> str:
-    p = prefix or settings.OPENSEARCH_INDEX_PREFIX
+    p = prefix or resolve_index_prefix()
     return f"{p}_products_{version}"
 
 
 def get_search_alias_name(prefix: str | None = None) -> str:
-    p = prefix or settings.OPENSEARCH_INDEX_PREFIX
+    p = prefix or resolve_index_prefix()
     return f"{p}_products_search"
 
 
 def get_write_alias_name(prefix: str | None = None) -> str:
-    p = prefix or settings.OPENSEARCH_INDEX_PREFIX
+    p = prefix or resolve_index_prefix()
     return f"{p}_products_write"
 
 
@@ -122,7 +154,7 @@ class IndexManager:
 
     def __init__(self, client: BaseSearchClient, prefix: str | None = None) -> None:
         self.client = client
-        self.prefix = prefix or settings.OPENSEARCH_INDEX_PREFIX
+        self.prefix = prefix or resolve_index_prefix()
         self.search_alias = get_search_alias_name(self.prefix)
         self.write_alias = get_write_alias_name(self.prefix)
 

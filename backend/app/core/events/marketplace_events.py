@@ -22,6 +22,11 @@ MARKETPLACE_EVENT_PREFIXES = (
     "auction.",
     "sale_stream.",
     "price.",
+    # Final cycle (live updates): retailer fulfilment steps and offer changes.
+    # Kept off the order topic so the order projection's version sequence is
+    # untouched.
+    "fulfilment.",
+    "offer.",
 )
 
 

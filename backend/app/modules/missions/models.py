@@ -64,6 +64,19 @@ class ShoppingMission(Base):
     status: Mapped[str] = mapped_column(
         String(32), default="ACTIVE", nullable=False, index=True
     )
+    # Final cycle (0039): completion is verified by the backend from a paid order.
+    carted_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[Any] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import type { RetailerOfferItem, RetailerOfferCreatePayload } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 export default function RetailerOffersPage() {
   const [offers, setOffers] = useState<RetailerOfferItem[]>([]);
@@ -36,8 +37,8 @@ export default function RetailerOffersPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const loadOffers = useCallback(async () => {
-    setIsLoading(true);
+  const loadOffers = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setIsLoading(true);
     setErrorMsg(null);
     try {
       const data = await apiClient.listRetailerOffers();
@@ -48,6 +49,7 @@ export default function RetailerOffersPage() {
       setIsLoading(false);
     }
   }, []);
+  useLiveUpdates(["offer."], () => void loadOffers({ quiet: true }));
 
   useEffect(() => {
     loadOffers();
@@ -128,7 +130,7 @@ export default function RetailerOffersPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadOffers}
+            onClick={() => void loadOffers()}
             disabled={isLoading}
             className="gap-2"
           >

@@ -23,6 +23,12 @@ What the marketplace-completion branch added on top of the Phase 3 implementatio
 | 3H Bharat Multilingual | 12 languages incl. Malayalam, Punjabi, Odia, Urdu (RTL); cookie + localStorage + account persistence | ⚠ partial | Infrastructure complete; ≈32 % of visible page strings translated — core shopping and retailer operations pages still English (MC-01) |
 | 3I List to Basket (OCR) | Provider-reported confidence (overall and per line), "please check" flags, labelled manual entry when no provider | ✅ manual / ⚠ OCR | OCR needs a configured provider; adapter unverified live (MC-08) |
 
+**Version 2.0 Phase B (2026-11-21) — core offers & discounts** (not a Phase 3 feature; recorded here as the current tracker):
+
+| Feature | Change | Status | Open items |
+| :--- | :--- | :---: | :--- |
+| Offers & discounts | Discount codes checked (backend `discount_code` on quotes, 422 `INVALID_DISCOUNT_CODE`); best single platform deal + best single retailer offer; store-wide retailer offers apply; minimum order on the basket subtotal; usage limits reserved per order under row locks and released on unpaid cancel/expiry (`VERSION_2_PHASE_B_REPORT.md`) | ✅ backend | Checkout has no code input yet (deferred, needs UI approval); fixed-amount offers are per unit |
+
 ---
 
 

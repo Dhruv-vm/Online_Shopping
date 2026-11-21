@@ -54,6 +54,9 @@ class SearchResponseSchema(BaseModel):
     page_size: int = 20
     total_pages: int = 1
     engine: Literal["opensearch", "postgres_fallback"] = "opensearch"
+    # Why PostgreSQL served this search instead of OpenSearch (None = not a fallback
+    # or OpenSearch not configured).
+    engine_reason: str | None = None
     facets: SearchFacets | None = None
     took_ms: float = 0.0
     # Phase 3H Bharat Multilingual: how the query was interpreted.

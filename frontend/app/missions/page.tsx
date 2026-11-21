@@ -576,6 +576,11 @@ export default function MissionsPage() {
                             {m.status}
                           </Badge>
                         </div>
+                        {m.carted_at && m.status !== "COMPLETED" && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {m.purchased_items_count ?? 0} of {m.items_count} bought
+                          </p>
+                        )}
 
                         <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground bg-muted/40 p-2 rounded-lg">
                           <div>

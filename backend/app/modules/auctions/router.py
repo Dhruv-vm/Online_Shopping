@@ -146,6 +146,19 @@ async def retailer_live_auctions(
     return AuctionList(items=items, total=len(items))
 
 
+@retailer_router.get("/recent", response_model=AuctionList)
+async def retailer_recent_auctions(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    retailer: Annotated[Retailer, Depends(get_current_retailer)],
+) -> AuctionList:
+    """Auctions you bid in during the last 24 hours whose bidding has ended,
+    with your final position and outcome (won / not selected / awaiting choice)."""
+    svc = AuctionService(db)
+    rows = await svc.recent_for_retailer(retailer)
+    items = [await svc.view(a, include_bids=False, retailer=retailer) for a in rows]
+    return AuctionList(items=items, total=len(items))
+
+
 @retailer_router.post(
     "/{auction_id}/bid", response_model=AuctionBidView, status_code=201
 )

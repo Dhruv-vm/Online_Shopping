@@ -36,7 +36,7 @@ from app.modules.negotiation.schemas import (
     RuleItem,
 )
 from app.modules.pricing.awards import issue_award
-from app.modules.pricing.discount_service import DiscountService
+from app.modules.pricing.discount_service import DiscountLine, DiscountService
 
 SESSION_TTL = timedelta(minutes=15)
 DAILY_SESSION_LIMIT = 10
@@ -184,16 +184,30 @@ class NegotiationService:
                 )
             ).scalars()
         )
-        discounts = DiscountService(self.session)
+        # Same public price the quote would give (Version 2.0 discount policy,
+        # no discount code).
+        priced = await DiscountService(self.session).resolve_basket_discounts(
+            [
+                DiscountLine(
+                    listing_id=lst.id,
+                    retailer_id=lst.retailer_id,
+                    product_id=lst.variant.product_id if lst.variant else None,
+                    category_id=(
+                        lst.variant.product.category_id
+                        if lst.variant and lst.variant.product
+                        else None
+                    ),
+                    unit_price_paise=lst.selling_price_paise,
+                    quantity=item.quantity,
+                )
+                for item in cart_items
+                for lst in [listings[item.listing_id]]
+            ]
+        )
         lines = []
         for item in cart_items:
             lst = listings[item.listing_id]
-            applicable = await discounts.get_applicable_discounts_for_listing(
-                listing_id=lst.id, selling_price_paise=lst.selling_price_paise
-            )
-            _, list_unit = discounts.calculate_unit_discount(
-                lst.selling_price_paise, applicable
-            )
+            list_unit = priced.lines[lst.id].unit_price_paise
             rule = next((r for r in rules if r.listing_id == lst.id), None) or next(
                 (
                     r

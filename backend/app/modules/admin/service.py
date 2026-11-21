@@ -1208,7 +1208,7 @@ class AdminService:
             code_clean = req.code.strip().upper()
             existing = (
                 await self.session.execute(
-                    select(Discount.id).where(Discount.code == code_clean)
+                    select(Discount.id).where(func.upper(Discount.code) == code_clean)
                 )
             ).scalar_one_or_none()
             if existing:
@@ -1282,6 +1282,9 @@ class AdminService:
         from app.modules.sale_stream.service import record_flash_deal
 
         await record_flash_deal(self.session, discount=deal)
+        from app.modules.retailer.service import _offer_event
+
+        await _offer_event(self.session, deal, "offer.created")
 
         return await self.get_deal(deal.id)
 
@@ -1306,7 +1309,8 @@ class AdminService:
                 existing = (
                     await self.session.execute(
                         select(Discount.id).where(
-                            Discount.code == code_clean, Discount.id != deal_id
+                            func.upper(Discount.code) == code_clean,
+                            Discount.id != deal_id,
                         )
                     )
                 ).scalar_one_or_none()
@@ -1343,6 +1347,9 @@ class AdminService:
         if req.is_active is not None:
             deal.is_active = req.is_active
 
+        from app.modules.retailer.service import _offer_event
+
+        await _offer_event(self.session, deal, "offer.updated")
         await self.session.flush()
         return await self.get_deal(deal_id)
 

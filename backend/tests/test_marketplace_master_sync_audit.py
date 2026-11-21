@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import get_session_factory
 from app.core.search.client import get_opensearch_client
-from app.core.search.index import DEFAULT_SEARCH_ALIAS
+from app.core.search.index import get_search_alias_name
 from app.modules.catalogue.models import (
     ProductListing,
     ProductVariant,
@@ -116,7 +116,7 @@ async def test_b_price_synchronization(async_client: AsyncClient):
     # 2. Verify in OpenSearch document
     os_client = get_opensearch_client(settings)
     if await os_client.ping():
-        doc = await os_client.get_document(DEFAULT_SEARCH_ALIAS, product_id)
+        doc = await os_client.get_document(get_search_alias_name(), product_id)
         assert doc is not None
         # Check retailer listing price inside doc
         ret_entries = doc.get("retailers", [])

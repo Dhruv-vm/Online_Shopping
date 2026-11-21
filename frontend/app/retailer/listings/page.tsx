@@ -23,6 +23,7 @@ import { apiClient } from "@/lib/api/client";
 import { fileToBase64, removeListingImage, uploadListingImage } from "@/lib/api/marketplace";
 import { errorText } from "@/components/phase3/kit";
 import type { RetailerListingItem, RetailerListingUpdatePayload } from "@/types";
+import { useLiveUpdates } from "@/lib/realtime";
 
 export default function RetailerListingsPage() {
   const [listings, setListings] = useState<RetailerListingItem[]>([]);
@@ -43,8 +44,8 @@ export default function RetailerListingsPage() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const loadListings = useCallback(async () => {
-    setIsLoading(true);
+  const loadListings = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setIsLoading(true);
     setErrorMsg(null);
     try {
       const data = await apiClient.listRetailerListings({
@@ -60,6 +61,7 @@ export default function RetailerListingsPage() {
       setIsLoading(false);
     }
   }, [searchQuery, statusFilter]);
+  useLiveUpdates(["listing.", "inventory.", "store_inventory.", "price.", "variant.", "order.", "fulfilment."], () => void loadListings({ quiet: true }));
 
   useEffect(() => {
     loadListings();
@@ -193,7 +195,7 @@ export default function RetailerListingsPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={loadListings}
+            onClick={() => void loadListings()}
             disabled={isLoading}
             className="gap-2"
           >

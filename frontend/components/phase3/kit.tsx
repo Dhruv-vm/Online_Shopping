@@ -33,10 +33,19 @@ export function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
       setLoading(false);
     }
   }, [run]);
+  /** Background refetch for live updates: no loading flash, keeps old data on error. */
+  const refresh = useCallback(async () => {
+    try {
+      setData(await run());
+      setError(null);
+    } catch {
+      /* keep showing the last good data */
+    }
+  }, [run]);
   useEffect(() => {
     void reload();
   }, [reload]);
-  return { data, setData, error, setError, loading, reload };
+  return { data, setData, error, setError, loading, reload, refresh };
 }
 
 export function Status({ loading, error, onRetry }: { loading: boolean; error: string | null; onRetry?: () => void }) {

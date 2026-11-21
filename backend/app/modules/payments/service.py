@@ -561,6 +561,18 @@ async def process_payment_capture_and_fulfillment(
             status=OutboxStatus.PENDING.value,
         )
         session.add(outbox_event)
+        from app.core.notify import notify_retailer_users
+
+        await notify_retailer_users(
+            session,
+            retailer_ids=[i.retailer_id for i in order.items],
+            title=f"New paid order {order.order_number}",
+            message="Payment is confirmed. Open Orders to pack and dispatch it.",
+            event_type="retailer.order_paid",
+        )
+        from app.modules.missions.completion import complete_missions_for_order
+
+        await complete_missions_for_order(session, order)
         await session.commit()
         await session.refresh(order)
         await session.refresh(capture)
@@ -589,14 +601,67 @@ class PaymentService:
         self.client = client or RazorpayClient()
         self.reservation_service = ReservationService(session)
 
+    async def _reusable_keyless_attempt(
+        self, order_id: uuid.UUID, amount_paise: int, currency: str
+    ) -> Payment | None:
+        """For a request without an Idempotency-Key, return the order's open PENDING
+        attempt (same amount and currency) instead of creating another Razorpay
+        order. The caller holds the order row lock (SELECT ... FOR UPDATE)."""
+
+        def reusable(p: Payment | None) -> bool:
+            return (
+                p is not None
+                and p.status == PaymentAttemptStatus.PENDING.value
+                and bool(p.provider_order_id)
+                and p.amount_paise == amount_paise
+                and p.currency == currency
+            )
+
+        active = await self.repo.get_active_or_ambiguous_attempt_for_order(order_id)
+        if active is None:
+            return None
+        if active.status == PaymentAttemptStatus.CREATION_AMBIGUOUS.value:
+            raise PaymentAttemptAmbiguousError()
+        if active.status == PaymentAttemptStatus.CREATING.value:
+            # Another request is creating the provider order right now: wait for it.
+            active_id = active.id
+            for _ in range(50):
+                await asyncio.sleep(0.05)
+                await self.session.rollback()
+                active = await self.repo.get_payment_by_id(active_id)
+                if (
+                    active is None
+                    or active.status != PaymentAttemptStatus.CREATING.value
+                ):
+                    break
+            else:
+                raise PaymentAttemptAmbiguousError(
+                    "Concurrent payment attempt is currently in progress"
+                )
+            if reusable(active):
+                return active
+            # The rollbacks above released the order lock: take it again and re-check
+            # before the caller creates a new attempt.
+            await self.repo.get_order_by_id_for_update(order_id)
+            active = await self.repo.get_active_or_ambiguous_attempt_for_order(order_id)
+            if active is not None and active.status in (
+                PaymentAttemptStatus.CREATING.value,
+                PaymentAttemptStatus.CREATION_AMBIGUOUS.value,
+            ):
+                raise PaymentAttemptAmbiguousError()
+        return active if reusable(active) else None
+
     async def initiate_payment(
         self,
         order_id: uuid.UUID,
-        idempotency_key: str,
+        idempotency_key: str | None,
         customer_id: uuid.UUID | None = None,
         guest_token_hash: str | None = None,
     ) -> PaymentInitiateResponse:
-        """Initiates a payment attempt using the pre-gateway two-transaction pattern."""
+        """Initiates a payment attempt using the pre-gateway two-transaction pattern.
+
+        Without an ``idempotency_key`` the order's open PENDING attempt is reused, so
+        repeated "Pay" clicks never create a second Razorpay order."""
         # ----------------------------------------------------------------------
         # TRANSACTION 1: Validate order and persist local CREATING payment attempt
         # ----------------------------------------------------------------------
@@ -654,6 +719,26 @@ class PaymentService:
             exp = exp.replace(tzinfo=UTC)
         if exp <= now:
             raise PaymentWindowExpiredError()
+
+        if idempotency_key is None:
+            reusable = await self._reusable_keyless_attempt(
+                order_id, order_total_payable, order_currency
+            )
+            if reusable is not None:
+                return PaymentInitiateResponse(
+                    payment_id=reusable.id,
+                    order_id=order_id_val,
+                    order_number=order_number_val,
+                    provider=reusable.provider,
+                    provider_order_id=reusable.provider_order_id,
+                    razorpay_key_id=self.client.key_id,
+                    amount_paise=reusable.amount_paise,
+                    currency=reusable.currency,
+                    status=reusable.status,
+                    attempt_number=reusable.attempt_number,
+                    payment_window_expires_at=order_expires_at,
+                )
+            idempotency_key = f"auto-{uuid.uuid4()}"
 
         # Check existing payment attempt with identical idempotency key
         existing_attempt = await self.repo.get_payment_by_order_and_idempotency(

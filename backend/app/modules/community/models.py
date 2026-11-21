@@ -195,3 +195,45 @@ class GroupBuyTemplate(Base):
             postgresql_where=text("is_active"),
         ),
     )
+
+
+class GroupBuyInvite(Base):
+    """A shareable invitation to one group buy (final cycle, Part 9).
+
+    Only a SHA-256 hash of the token is stored. The invite expires at the
+    earlier of the campaign end and ``INVITE_TTL``; joining through it still
+    requires a signed-in customer and every normal join rule.
+    """
+
+    __tablename__ = "group_buy_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("group_buy_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    uses: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    revoked_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_group_buy_invites_token_hash"),
+    )

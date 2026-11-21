@@ -26,6 +26,10 @@ from app.core.metrics import (
     normalize_metric_path,
 )
 from app.core.search.client import get_opensearch_client
+from app.core.search.index_health import (
+    evaluate_search_engine,
+    set_search_indexer_running,
+)
 
 
 @asynccontextmanager
@@ -57,25 +61,81 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     order_consumer = None
     opensearch_consumer = None
 
-    if settings.has_kafka:
+    # With OUTBOX_DISPATCH=direct the same handlers run in-process (background
+    # supervisor), so Kafka consumers are never started alongside (C2).
+    if settings.has_kafka and settings.OUTBOX_DISPATCH == "kafka":
         try:
             from app.core.database import get_session_factory
             from app.core.search.consumer import OpenSearchConsumer
             from app.modules.orders.consumer import OrderProjectionConsumer
 
             session_factory = get_session_factory()
-            order_consumer = OrderProjectionConsumer(session_factory=session_factory)
-            await order_consumer.start()
-            logger.info("OrderProjectionConsumer started successfully.")
-
-            opensearch_consumer = OpenSearchConsumer(session_factory=session_factory)
-            await opensearch_consumer.start()
-            logger.info("OpenSearchConsumer started successfully.")
         except Exception as exc:
-            logger.warning(
-                "Background consumer could not start at lifespan startup: %s. Continuing in degraded mode.",
-                exc,
+            logger.warning("Kafka consumers not started: %s", exc)
+            session_factory = None
+        # Started independently: one failing must not silently disable the other.
+        if session_factory is not None:
+            try:
+                order_consumer = OrderProjectionConsumer(
+                    session_factory=session_factory
+                )
+                await order_consumer.start()
+                order_consumer.start_consuming()
+                logger.info("OrderProjectionConsumer started successfully.")
+            except Exception as exc:
+                order_consumer = None
+                logger.warning(
+                    "OrderProjectionConsumer could not start: %s. Continuing in degraded mode.",
+                    exc,
+                )
+            try:
+                opensearch_consumer = OpenSearchConsumer(
+                    session_factory=session_factory
+                )
+                await opensearch_consumer.start()
+                logger.info("OpenSearchConsumer started successfully.")
+                # Build this database's index from PostgreSQL before search trusts
+                # it (same bootstrap as direct mode); until then search stays on
+                # PostgreSQL.
+                from app.core.search.index import IndexManager, resolve_index_prefix
+
+                manager = IndexManager(
+                    opensearch_consumer._search_client,
+                    prefix=resolve_index_prefix(settings),
+                )
+                await manager.ensure_index_and_aliases()
+                async with session_factory() as session:
+                    indexed = await manager.reconcile_from_database(session)
+                opensearch_consumer.start_consuming()
+                set_search_indexer_running(True)
+                logger.info(
+                    "Search index '%s' rebuilt from PostgreSQL (%d products); "
+                    "Kafka indexing active.",
+                    manager.write_alias,
+                    indexed,
+                )
+            except Exception as exc:
+                opensearch_consumer = None
+                logger.warning(
+                    "OpenSearchConsumer could not start: %s. Search uses PostgreSQL.",
+                    exc,
+                )
+
+    # Live change notices for browsers (Kafka mode; direct mode feeds the hub
+    # from the dispatcher).
+    realtime_listener = None
+    if settings.has_kafka and settings.OUTBOX_DISPATCH == "kafka":
+        try:
+            from app.modules.realtime.hub import RealtimeKafkaListener
+
+            realtime_listener = RealtimeKafkaListener()
+            await realtime_listener.start()
+            logger.info(
+                "Realtime listener started (group %s).", realtime_listener.group_id
             )
+        except Exception as exc:
+            logger.warning("Realtime listener not started: %s", exc)
+            realtime_listener = None
 
     # Background workers: outbox publisher, reservation expiry, reconciliation.
     supervisor = None
@@ -94,6 +154,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Shutdown logic
+    if realtime_listener is not None:
+        await realtime_listener.stop()
     if supervisor is not None:
         try:
             await supervisor.stop()
@@ -101,6 +163,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("Error stopping background workers: %s", exc)
 
     if opensearch_consumer is not None:
+        set_search_indexer_running(False)
         try:
             logger.info("Stopping OpenSearchConsumer...")
             await opensearch_consumer.stop()
@@ -127,7 +190,7 @@ def create_app() -> FastAPI:
     """FastAPI Application Factory."""
     app = FastAPI(
         title=settings.PROJECT_NAME,
-        version="0.1.0",
+        version="2.0.0",
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
         openapi_url=f"{settings.API_V1_STR}/openapi.json"
@@ -140,6 +203,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
+        allow_origin_regex=settings.cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -162,6 +226,18 @@ def create_app() -> FastAPI:
             from app.modules.governance.audit import record_admin_mutation
 
             await record_admin_mutation(request, response)
+        return response
+
+    # API responses are per-user and change constantly: never let a browser, the
+    # Next.js proxy or a tunnel/CDN cache them unless an endpoint says otherwise.
+    @app.middleware("http")
+    async def api_no_store_middleware(request: Request, call_next) -> Response:
+        response: Response = await call_next(request)
+        if (
+            request.url.path.startswith("/api/")
+            and "cache-control" not in response.headers
+        ):
+            response.headers["Cache-Control"] = "private, no-store"
         return response
 
     # Prometheus Metrics Middleware (Bounded Labels)
@@ -206,7 +282,16 @@ def create_app() -> FastAPI:
         kafka_check: dict[str, object] = {"status": "unconfigured"}
         supervisor = getattr(request.app.state, "background_supervisor", None)
         worker = getattr(supervisor, "_outbox_worker", None) if supervisor else None
-        if settings.has_kafka:
+        if settings.OUTBOX_DISPATCH == "direct":
+            # Events are delivered in-process; Kafka is not used by this instance.
+            kafka_check = {
+                "status": "not_used",
+                "dispatch": "direct",
+                "dispatcher": "running"
+                if worker is not None and worker.is_running
+                else "stopped",
+            }
+        elif settings.has_kafka:
             kafka_check = {
                 "status": "connected"
                 if worker is not None and worker.producer.is_connected
@@ -245,6 +330,20 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 opensearch_check = {"status": "degraded", "error": str(exc)}
 
+        # Which engine search uses now, and why (Version 2.0 A3).
+        search_check: dict[str, object]
+        try:
+            from app.core.database import get_session_factory
+
+            sf = get_session_factory() if db_check["status"] == "connected" else None
+            if sf is not None:
+                async with sf() as s:
+                    search_check = (await evaluate_search_engine(s)).as_dict()
+            else:
+                search_check = (await evaluate_search_engine(None)).as_dict()
+        except Exception as exc:  # readiness must never crash
+            search_check = {"engine": "unknown", "error": type(exc).__name__}
+
         if db_check["status"] == "connected":
             overall_status = "ready"
             response.status_code = status.HTTP_200_OK
@@ -265,6 +364,7 @@ def create_app() -> FastAPI:
                 "database": db_check,
                 "kafka": kafka_check,
                 "opensearch": opensearch_check,
+                "search": search_check,
             },
         }
 

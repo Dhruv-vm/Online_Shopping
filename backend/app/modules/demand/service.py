@@ -194,7 +194,6 @@ class DemandService:
                     payload={
                         "pool_id": pool.id,
                         "name": pool.normalized_product_name,
-                        "pincode": pool.pincode,
                         "unique_users": pool.unique_users_count,
                     },
                 )
@@ -240,7 +239,8 @@ class DemandService:
             event_type="demand.pool_created",
             aggregate_type="demand_pool",
             aggregate_id=pool.id,
-            payload={"pool_id": pool.id, "name": normalized, "pincode": pincode},
+            # No pincode: customer location is PII and the envelope rejects it.
+            payload={"pool_id": pool.id, "name": normalized},
         )
         return pool
 

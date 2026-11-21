@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     func,
@@ -110,6 +112,22 @@ class RecurringIntention(Base):
     budget_paise: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Intent workflow (0036): what was asked for, where, by when, and the last match.
+    items: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB(astext_type=Text()).with_variant(JSON(), "sqlite"),
+        default=list,
+        server_default="[]",
+        nullable=False,
+    )
+    pincode: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    purchase_by: Mapped[Any | None] = mapped_column(Date, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_analysis: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(astext_type=Text()).with_variant(JSON(), "sqlite"), nullable=True
+    )
+    analyzed_at: Mapped[Any | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_executed_at: Mapped[Any | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -124,6 +142,14 @@ class RecurringIntention(Base):
     )
 
     user: Mapped[User] = relationship("User", foreign_keys=[customer_id])
+
+    __table_args__ = (
+        Index(
+            "ix_customer_recurring_intentions_customer_dedupe",
+            "customer_id",
+            "dedupe_key",
+        ),
+    )
 
 
 class IntentMemoryItem(Base):

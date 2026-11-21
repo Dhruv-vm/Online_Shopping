@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import type { Order, OrderStatus, ReturnStatus } from "@/types/index";
+import { useLiveUpdates } from "@/lib/realtime";
 
 function formatPrice(paise: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -87,12 +88,13 @@ export default function OrderDetailsPage({
   const [returnLoading, setReturnLoading] = useState(false);
   const [returnError, setReturnError] = useState<string | null>(null);
 
-  const fetchOrderDetails = useCallback(async () => {
-    setLoading(true);
+  const fetchOrderDetails = useCallback(async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true);
     setError(null);
     try {
       const data = await apiClient.getOrder(orderId, accessToken);
       setOrder(data);
+      if (opts?.quiet) return;
       // Initialize return quantities
       const initialQuantities: Record<string, number> = {};
       data.items.forEach((item) => {
@@ -106,6 +108,7 @@ export default function OrderDetailsPage({
       setLoading(false);
     }
   }, [orderId, accessToken]);
+  useLiveUpdates(["order.", "payment.", "fulfilment."], () => void fetchOrderDetails({ quiet: true }));
 
   useEffect(() => {
     fetchOrderDetails();

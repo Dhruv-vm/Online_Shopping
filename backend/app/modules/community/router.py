@@ -12,6 +12,9 @@ from app.modules.community.schemas import (
     CampaignItem,
     CampaignListResponse,
     CustomerStartRequest,
+    InviteJoinRequest,
+    InvitePreview,
+    InviteResponse,
     JoinRequest,
     ShareResponse,
     TemplateItem,
@@ -131,10 +134,52 @@ async def leave_campaign(
 @router.get("/campaigns/{campaign_id}/share", response_model=ShareResponse)
 async def share_campaign(
     campaign_id: uuid.UUID,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(require_customer)],
 ) -> ShareResponse:
-    return await CommunityBuyingService(db).share(campaign_id, user.id)
+    """Compatibility endpoint; prefer POST /campaigns/{id}/invites."""
+    return await CommunityBuyingService(db).share(
+        campaign_id, user.id, request.headers.get("origin")
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/invites", response_model=InviteResponse, status_code=201
+)
+async def create_invite(
+    campaign_id: uuid.UUID,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(require_customer)],
+) -> InviteResponse:
+    """A secure, expiring WhatsApp/SMS invitation. The message holds campaign
+    facts only; the link opens /community-buying/invite/{token}."""
+    return await CommunityBuyingService(db).create_invite(
+        campaign_id, user.id, request.headers.get("origin")
+    )
+
+
+@router.get("/invites/{token}", response_model=InvitePreview)
+async def preview_invite(
+    token: str, db: Annotated[AsyncSession, Depends(get_db)]
+) -> InvitePreview:
+    """Public: validates the token (404 invalid, 410 expired) and shows the offer."""
+    return await CommunityBuyingService(db).preview_invite(token[:64])
+
+
+@router.post("/invites/{token}/join", response_model=CampaignItem)
+async def join_via_invite(
+    token: str,
+    payload: InviteJoinRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(require_customer)],
+) -> CampaignItem:
+    """Join through a valid invitation; all normal join rules still apply."""
+    svc = CommunityBuyingService(db)
+    return await _one(
+        svc, await svc.join_via_invite(token[:64], user.id, payload.quantity), user.id
+    )
 
 
 @retailer_router.get("/campaigns", response_model=CampaignListResponse)

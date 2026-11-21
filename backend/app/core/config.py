@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Application
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
+    # Log every SQL statement (SQLAlchemy echo). Independent of DEBUG; off by
+    # default because it floods the logs (Version 2.0 C4).
+    SQL_ECHO: bool = False
     PROJECT_NAME: str = "BASKET Backend"
     API_V1_STR: str = "/api/v1"
     HOST: str = "0.0.0.0"
@@ -47,6 +50,7 @@ class Settings(BaseSettings):
     # ignored unless this is > 0 (prevents rate-limit bypass via spoofed headers).
     TRUSTED_PROXY_COUNT: int = 0
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGIN_REGEX: str | None = None
 
     # Database (Aiven PostgreSQL)
     DATABASE_URL: str | None = None
@@ -68,6 +72,12 @@ class Settings(BaseSettings):
     # payment reconciliation). Disable when running dedicated worker processes.
     BACKGROUND_WORKERS_ENABLED: bool = True
     OUTBOX_PUBLISHER_ENABLED: bool = True
+    # How outbox events reach their consumers (Version 2.0 C2):
+    #   "kafka"  – publish to Kafka; consumers read from Kafka (multi-instance).
+    #   "direct" – deliver in-process to the same consumer handlers (single
+    #              instance, no broker). Kafka consumers are not started.
+    # Never switched automatically.
+    OUTBOX_DISPATCH: str = "kafka"
     RESERVATION_CLEANUP_INTERVAL_SECONDS: float = 60.0
     PAYMENT_RECONCILE_INTERVAL_SECONDS: float = 120.0
     PAYMENT_SLA_ESCALATION_INTERVAL_SECONDS: float = 300.0
@@ -147,11 +157,17 @@ class Settings(BaseSettings):
     OPENSEARCH_USERNAME: str | None = None
     OPENSEARCH_PASSWORD: SecretStr | None = None
     OPENSEARCH_INDEX_PREFIX: str = "basket"
+    # Append the database identity (name + short hash of host:port/name) to the
+    # index prefix so two databases can never share an index (Version 2.0 C2).
+    OPENSEARCH_INDEX_PER_DATABASE: bool = True
     OPENSEARCH_VERIFY_CERTS: bool = True
     OPENSEARCH_TIMEOUT_SECONDS: float = 5.0
     OPENSEARCH_MAX_RETRIES: int = 3
     OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
     OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS: float = 30.0
+    # Search uses PostgreSQL while the oldest unpublished outbox event is older
+    # than this (the OpenSearch index would be stale).
+    SEARCH_INDEX_MAX_LAG_SECONDS: int = 300
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -270,6 +286,14 @@ class Settings(BaseSettings):
                 f"KAFKA_SECURITY_PROTOCOL cannot be '{protocol}' in production; SSL or SASL_SSL is required."
             )
         return protocol
+
+    @field_validator("OUTBOX_DISPATCH", mode="after")
+    @classmethod
+    def validate_outbox_dispatch(cls, value: str) -> str:
+        mode = (value or "").strip().lower()
+        if mode not in ("kafka", "direct"):
+            raise ValueError("OUTBOX_DISPATCH must be 'kafka' or 'direct'")
+        return mode
 
     @field_validator("KAFKA_PRODUCER_ACKS", mode="after")
     @classmethod
@@ -415,6 +439,20 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        if self.CORS_ORIGIN_REGEX is not None:
+            return self.CORS_ORIGIN_REGEX
+        if not self.is_production:
+            return (
+                r"^https?://(localhost|127\.0\.0\.1|"
+                r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+                r"192\.168\.\d{1,3}\.\d{1,3}|"
+                r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|"
+                r"[a-zA-Z0-9-]+\.trycloudflare\.com)(:\d+)?$"
+            )
+        return None
 
     @property
     def has_database(self) -> bool:

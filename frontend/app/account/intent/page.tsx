@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { apiClient, ApiClientError } from "@/lib/api/client";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { AccountNav } from "@/components/account/account-nav";
+import { IntentWorkflowCard } from "@/components/intent/intent-workflow-card";
 import {
   Card,
   CardContent,
@@ -450,6 +451,9 @@ export default function IntentMemoryPage() {
               </div>
             ) : (
               <>
+                {/* 0. Intent workflow: submit, understood, real matches, demand, next steps */}
+                <IntentWorkflowCard />
+
                 {/* 1. Shopping Preference Profile */}
                 <Card className="border shadow-xs">
                   <CardHeader className="pb-4 border-b">

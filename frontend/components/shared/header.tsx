@@ -26,6 +26,7 @@ import { useCompare } from "@/lib/compare/compare-context";
 import { LanguageSwitcher, useI18n } from "@/lib/i18n/i18n-context";
 import { getPincode, isValidPincode, PINCODE_EVENT, setPincode } from "@/lib/location";
 import type { CustomerNotification } from "@/types/index";
+import { useLiveUpdates } from "@/lib/realtime";
 
 type NavItem = { href: string; key: string; badge?: string };
 
@@ -139,6 +140,12 @@ function Notifications() {
   const [items, setItems] = useState<CustomerNotification[]>([]);
   const [unread, setUnread] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  const [liveTick, setLiveTick] = useState(0);
+  useLiveUpdates(
+    ["order.", "payment.", "fulfilment.", "auction.", "demand.", "negotiation.", "group_buy.", "exchange."],
+    () => setLiveTick((n) => n + 1),
+    { fallbackMs: 0 },
+  );
 
   useEffect(() => {
     let alive = true;
@@ -153,7 +160,7 @@ function Notifications() {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [liveTick]);
 
   useEffect(() => {
     if (!open) return;

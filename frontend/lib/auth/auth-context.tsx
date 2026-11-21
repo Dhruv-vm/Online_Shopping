@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { apiClient, ApiClientError } from "@/lib/api/client";
 import type { RetailerRegisterPayload, User } from "@/types";
+import { reconnectLive } from "@/lib/realtime";
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +25,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    // Re-open the live stream under the new identity after sign-in / sign-out.
+    reconnectLive();
+  }, [userId]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refreshProfile = useCallback(async (): Promise<User | null> => {

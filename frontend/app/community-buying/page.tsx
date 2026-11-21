@@ -10,11 +10,13 @@ import { listGroupBuyTemplates, startGroupBuy } from "@/lib/api/marketplace";
 import { listCampaigns } from "@/lib/api/phase3";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useI18n } from "@/lib/i18n/i18n-context";
+import { useLiveUpdates } from "@/lib/realtime";
 
 export default function CommunityBuyingPage() {
   const { t, money } = useI18n();
   const { user } = useAuth();
   const camps = useLoad(() => listCampaigns({ limit: 50 }));
+  useLiveUpdates(["group_buy."], () => void camps.refresh());
   const templates = useLoad(() => listGroupBuyTemplates());
   const [msg, setMsg] = useState<{ text: string; tone: "error" | "success" } | null>(null);
 

@@ -7,6 +7,46 @@
 
 ---
 
+## V2C. Version 2.0 Phase C (payments verification & infrastructure) — 2026-11-21
+
+Branch `feature/version-2-development`; details in `VERSION_2_PHASE_C_REPORT.md`. No migration.
+
+| ID | Severity | Summary | Fix / status |
+| :--- | :---: | :--- | :--- |
+| V2C-F1 (audit D5, P1-2) | High | Outbox events only reached consumers through Kafka; with no broker, search and order projections never updated | `OUTBOX_DISPATCH=direct` delivers through the same publisher (claims, leases, retries, backoff) to the existing consumer handlers in-process; `consumer_inbox` deduplicates by event id. Default stays `kafka`; never switched automatically |
+| V2C-F2 (MC-12) | High | One OpenSearch index name for every database (`basket_products_*`): a demo/test database could read or write `basket_db`'s index | Index prefix now includes the database identity (`basket_<db>_<hash of host:port/db>`, no credentials); `OPENSEARCH_INDEX_PER_DATABASE` (default on); in direct mode the index is rebuilt from PostgreSQL before search trusts it |
+| V2C-F3 | High | Six event producers wrote payloads the envelope rejects, so those events could never be published in any mode: `order.created` (customer_id), `exchange.request_created`, `demand.pool_created`, `demand.pool_threshold_reached`, `auction.started` (pincode — PII), `price.changed` (no product_id) | Payloads corrected; PII guard unchanged. Existing FAILED/PENDING rows created before the fix are not rewritten |
+| V2C-F4 (audit D6) | Medium | Periodic jobs could run concurrently on several instances; overlapping auction closers notified the customer twice | Per-job `pg_try_advisory_xact_lock`; `FOR UPDATE SKIP LOCKED` claims in auction closing and group-buy settlement; notification only on this run's ACTIVE → COMPLETED transition |
+| V2C-F5 (audit D8) | Low | SQL echo tied to DEBUG flooded logs; the log "sanitizer" redacted nothing | `SQL_ECHO` flag (default off); one structured `job_run` line per job run; formatter masks URL credentials and password/secret/token values |
+| V2C-O1 | — | Razorpay failure+retry and webhook-only confirmation not verified | **Blocked**: needs webhook secret + public tunnel (runbook in `docs/RAZORPAY_SANDBOX_VERIFICATION.md`) |
+| V2C-O2 | Info | Admin overview `total_revenue_paise` does not subtract refunds (shown separately as `refunded_paise`) | Recorded, unchanged (v1.0 behaviour) |
+
+## V2B. Version 2.0 Phase B (P0-2 discounts) — 2026-11-21
+
+Branch `feature/version-2-development`; details and evidence in `VERSION_2_PHASE_B_REPORT.md`. Migration `0035_discount_codes_redemptions` (additive, verified up/down/re-up).
+
+| ID | Severity | Summary | Fix |
+| :--- | :---: | :--- | :--- |
+| V2B-F1 (audit D2) | High | Discount codes were never checked: a deal with a code applied to every customer automatically | Coded deals apply only with their code (`discount_code` on the quote, exact and case-insensitive); unknown, inactive, not-yet-valid, expired or used-up code → 422 `INVALID_DISCOUNT_CODE`; code uniqueness is case-insensitive |
+| V2B-F2 (audit D3) | High | Every matching deal stacked (two 7 % deals gave 14 %) | Per line: best single platform deal + best single retailer offer, chosen by the customer's final price; applied discount ids stored per quote line and returned |
+| V2B-F3 (audit D3) | High | `min_order_paise` compared with the unit price | Compared with the pre-discount subtotal of the basket lines the discount covers (tax-inclusive item prices, delivery excluded) |
+| V2B-F4 | High | `times_used` was never incremented, so `usage_limit` was never reached | Use reserved at order creation under a row lock (`discount_redemptions`), 409 `DISCOUNT_USAGE_LIMIT_REACHED` beyond the limit; released exactly once on unpaid cancel or payment-window expiry; paid orders keep it |
+| V2B-F5 | Medium | Store-wide retailer offers (no listing) never applied — all six seeded coupons were dead | Apply to that retailer's items; minimum checked against that retailer's lines (approved 2026-11-21) |
+
+Remaining: no checkout code input (deferred); fixed-amount offers are per unit (unchanged); a use is not released when an order is cancelled after a rejected partial capture; codes are not rate-limited.
+
+## V2A. Version 2.0 Phase A (P0 correctness) — 2026-11-21
+
+Branch `feature/version-2-development`. Defects found by `VERSION_1_FUNCTIONAL_AUDIT.md`; details in `VERSION_2_PHASE_A_REPORT.md`.
+
+| ID | Severity | Summary | Fix |
+| :--- | :---: | :--- | :--- |
+| V2A-F1 (audit D1) | Critical | Accepting a Dukaan vs Dukaan bid returned 500 (`uq_cart_listing`) when the winning listing was already in the basket; a listing repeated in List to Basket did the same | Update kept lines in place; never insert twice; residual conflict → 409 `CART_CONFLICT` (`dfed80a`) |
+| V2A-F2 (audit D4) | High | Each "Pay" press without an `Idempotency-Key` created a new Razorpay order | Keyless requests reuse the open PENDING attempt under the order lock; checkout sends one key per order (`bf6919e`) |
+| V2A-F3 (audit D5) | High | Search read the OpenSearch index while Kafka/outbox delivery was down (stale or foreign data) | PostgreSQL fallback with a reason, reported in `/ready` and admin system health (`654343c`). MC-12's per-database index prefix is still open (P1-2) |
+
+Open from the audit (not in Phase A): D2/D3 discount codes, stacking and minimum order (Phase B, needs policy decisions); D6 periodic-job locks; D7 retailer notifications; D8 SQL echo.
+
 ## MC. Marketplace Completion — 2026-11-21
 
 Branch `feature/marketplace-completion`. "Fixed" items have a commit and a test; "Open" items are known and not done.

@@ -57,7 +57,7 @@ def get_engine() -> AsyncEngine | None:
             connect_args["ssl"] = ssl_ctx
 
     engine_kwargs: dict[str, Any] = {
-        "echo": settings.DEBUG,
+        "echo": settings.SQL_ECHO,
         "connect_args": connect_args,
     }
 

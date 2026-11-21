@@ -62,6 +62,23 @@ def _slugify(text: str) -> str:
     return cleaned or "product"
 
 
+async def _offer_event(session, discount, event_type: str) -> None:
+    """Live-update notice that an offer changed (no customer data)."""
+    from app.core.events.marketplace_events import enqueue_marketplace_event
+
+    await enqueue_marketplace_event(
+        session,
+        event_type=event_type,
+        aggregate_type="discount",
+        aggregate_id=discount.id,
+        payload={
+            "discount_id": discount.id,
+            "listing_id": discount.listing_id,
+            "is_active": bool(discount.is_active),
+        },
+    )
+
+
 class RetailerService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -561,12 +578,21 @@ class RetailerService:
             selling_price_paise=listing.selling_price_paise,
             mrp_paise=listing.original_price_paise,
         )
+        # Listing events must carry product_id (envelope partitioning rule).
+        product_id = (
+            await self.session.execute(
+                select(ProductVariant.product_id).where(
+                    ProductVariant.id == listing.variant_id
+                )
+            )
+        ).scalar_one()
         await enqueue_marketplace_event(
             self.session,
             event_type="price.changed",
             aggregate_type="listing",
             aggregate_id=listing.id,
             payload={
+                "product_id": product_id,
                 "listing_id": listing.id,
                 "previous_price_paise": previous_selling,
                 "price_paise": int(listing.selling_price_paise),
@@ -1363,6 +1389,20 @@ class RetailerService:
             )
             self.session.add(notif)
 
+        from app.core.events.marketplace_events import enqueue_marketplace_event
+
+        await enqueue_marketplace_event(
+            self.session,
+            event_type="fulfilment.status_changed",
+            aggregate_type="order_fulfilment",
+            aggregate_id=order.id,
+            payload={
+                "order_id": order.id,
+                "retailer_id": retailer.id,
+                "status": target_status,
+                "order_status": order.status,
+            },
+        )
         await self.session.flush()
         if newly_cancelled:
             await self._compensate_cancelled_items(order, retailer, newly_cancelled)
@@ -1468,7 +1508,9 @@ class RetailerService:
         if req.code and req.code.strip():
             existing_code = (
                 await self.session.execute(
-                    select(Discount.id).where(Discount.code == req.code.strip())
+                    select(Discount.id).where(
+                        func.upper(Discount.code) == req.code.strip().upper()
+                    )
                 )
             ).scalar_one_or_none()
             if existing_code:
@@ -1499,6 +1541,7 @@ class RetailerService:
         from app.modules.sale_stream.service import record_flash_deal
 
         await record_flash_deal(self.session, discount=discount)
+        await _offer_event(self.session, discount, "offer.created")
         return RetailerOfferItem.model_validate(discount)
 
     async def update_offer(
@@ -1540,6 +1583,7 @@ class RetailerService:
         if req.valid_to is not None:
             discount.valid_to = req.valid_to
 
+        await _offer_event(self.session, discount, "offer.updated")
         await self.session.flush()
         return RetailerOfferItem.model_validate(discount)
 

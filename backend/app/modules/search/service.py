@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from sqlalchemy import and_, false, func, or_, select
@@ -20,7 +21,8 @@ from app.core.search.client import (
     get_opensearch_client,
 )
 from app.core.search.document import build_product_document
-from app.core.search.index import DEFAULT_SEARCH_ALIAS
+from app.core.search.index import get_search_alias_name, resolve_index_prefix
+from app.core.search.index_health import SearchEngineStatus, current_search_engine
 from app.modules.catalogue.models import (
     Category,
     Product,
@@ -57,9 +59,22 @@ class SearchService:
         search_client: BaseSearchClient | None = None,
         circuit_breaker: SearchCircuitBreaker | None = None,
         config_settings: Settings | None = None,
-        search_alias: str = DEFAULT_SEARCH_ALIAS,
+        search_alias: str | None = None,
+        index_health: Callable[[AsyncSession], Awaitable[SearchEngineStatus]]
+        | None = None,
     ) -> None:
         self.settings = config_settings or settings
+        # The configured cluster is trusted only while its index is kept in sync
+        # (Version 2.0 A3). An explicitly injected client (tests) is not gated
+        # unless a health check is injected too.
+        if index_health is None and search_client is None:
+            # Cached check against the global settings; uncached for a custom config.
+            health_cfg = None if self.settings is settings else self.settings
+
+            async def index_health(session: AsyncSession) -> SearchEngineStatus:
+                return await current_search_engine(session, health_cfg)
+
+        self._index_health = index_health
         # Only talk to a real cluster when one is configured. Previously an empty
         # in-memory mock index was used whenever OPENSEARCH_URL was unset, so every
         # search in development/sandbox returned 0 results instead of falling back
@@ -73,7 +88,10 @@ class SearchService:
             failure_threshold=self.settings.OPENSEARCH_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
             recovery_seconds=self.settings.OPENSEARCH_CIRCUIT_BREAKER_RECOVERY_SECONDS,
         )
-        self.search_alias = search_alias
+        # Default: this database's search alias (Version 2.0 C2).
+        self.search_alias = search_alias or get_search_alias_name(
+            resolve_index_prefix(self.settings)
+        )
 
     async def search(
         self,
@@ -141,8 +159,12 @@ class SearchService:
     ) -> SearchResponseSchema:
         start_time = time.monotonic()
 
-        # Circuit breaker / force fallback check
+        fallback_reason: str | None = None
         if not force_fallback and self.client is not None:
+            fallback_reason = await self._untrusted_index_reason(db_session)
+
+        # Circuit breaker / force fallback check
+        if not force_fallback and self.client is not None and fallback_reason is None:
             try:
                 return await self.circuit_breaker.call(
                     self._search_opensearch,
@@ -164,9 +186,10 @@ class SearchService:
                     type(exc).__name__,
                     exc,
                 )
+                fallback_reason = "OPENSEARCH_UNAVAILABLE"
 
         # Fallback to PostgreSQL
-        return await self._search_postgres_fallback(
+        result = await self._search_postgres_fallback(
             session=db_session,
             query_str=query_str,
             category_slug=category_slug,
@@ -181,6 +204,19 @@ class SearchService:
             start_time=start_time,
             original_query=original_query,
         )
+        result.engine_reason = fallback_reason
+        return result
+
+    async def _untrusted_index_reason(self, db_session: AsyncSession) -> str | None:
+        """Why the OpenSearch index must not be used now (None = it can be)."""
+        if self._index_health is None:
+            return None
+        try:
+            status = await self._index_health(db_session)
+        except Exception as exc:  # the check must never break search
+            logger.warning("Search index health check failed: %s", exc)
+            return "INDEX_HEALTH_CHECK_FAILED"
+        return None if status.use_opensearch else status.reason
 
     async def get_suggestions(
         self,
@@ -193,9 +229,14 @@ class SearchService:
         if not clean_q:
             return SuggestionsResponse(query="", suggestions=[])
 
-        # Try OpenSearch prefix / match query if circuit allows
+        # Try OpenSearch prefix / match query if circuit allows and the index is
+        # trusted (a stale index would suggest products that no longer exist).
         try:
-            if self.client is not None and await self.circuit_breaker.allow_request():
+            if (
+                self.client is not None
+                and await self._untrusted_index_reason(db_session) is None
+                and await self.circuit_breaker.allow_request()
+            ):
                 dsl = {
                     "query": {
                         "bool": {
