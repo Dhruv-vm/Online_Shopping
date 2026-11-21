@@ -192,3 +192,66 @@ async def test_status_and_provider_confidence_passthrough(async_client: AsyncCli
     )
     assert typed.json()["manual_entry"] is True
     assert typed.json()["items"][0]["ocr_confidence"] is None
+
+
+@pytest.mark.asyncio
+async def test_stale_search_hits_are_never_offered(async_client: AsyncClient):
+    """Search can return listings the database no longer sells (a lagging index,
+    or an index built from another database). List to Basket must only offer
+    listings that build-cart would accept."""
+    from app.modules.search.schemas import ProductSearchItem, SearchResponseSchema
+    from app.modules.vision import service as vision_service
+
+    tag = uuid.uuid4().hex[:6]
+    real, _ = await make_retailer(
+        product_name=f"Quorx{tag} Rice", selling_price_paise=9000, on_hand_quantity=5
+    )
+    ghost_id = str(uuid.uuid4())  # not in this database
+
+    def retailer(listing_id, price):
+        return {
+            "listing_id": listing_id,
+            "retailer_name": "Some Store",
+            "selling_price_paise": price,
+            "is_in_stock": True,
+            "available_quantity": 50,
+        }
+
+    hits = SearchResponseSchema(
+        items=[
+            ProductSearchItem(
+                product_id=str(uuid.uuid4()),
+                name=f"Quorx{tag} Rice (stale)",
+                slug="stale",
+                brand="Quorx",
+                retailers=[retailer(ghost_id, 100)],
+            ),
+            ProductSearchItem(
+                product_id=real["product_id"],
+                name=f"Quorx{tag} Rice",
+                slug="real",
+                brand="Quorx",
+                retailers=[retailer(real["id"], 9000)],
+            ),
+        ],
+        total=2,
+    )
+
+    async def fake_search(*_args, **_kwargs):
+        return hits
+
+    _, cust = await make_user()
+    with patch.object(vision_service._search, "search", fake_search):
+        r = await async_client.post(
+            "/api/v1/vision/parse-list",
+            headers=cust,
+            json={"text": f"2 Quorx{tag} rice\n9 Quorx{tag} rice"},
+        )
+    assert r.status_code == 200, r.text
+    first, second = r.json()["items"]
+    # The cheaper ghost listing is dropped; the real one is suggested.
+    assert [c["listing_id"] for c in first["candidates"]] == [real["id"]]
+    assert first["suggested_listing_id"] == real["id"]
+    # Asking for more than the 5 in stock leaves nothing to offer, flagged for review.
+    assert second["candidates"] == [] and second["suggested_listing_id"] is None
+    assert second["needs_review"] is True

@@ -70,6 +70,13 @@ class VisionListService:
                         break
                 if len(candidates) >= 3:
                     break
+            # Search results come from an index that can lag behind (or, in a
+            # misconfigured environment, belong to another database). Offer only
+            # listings that build_cart would accept right now.
+            buyable = await self._purchasable([c.listing_id for c in candidates])
+            candidates = [
+                c for c in candidates if buyable.get(c.listing_id, 0) >= p.quantity
+            ]
             items.append(
                 ParsedListItem(
                     line=p.line,
@@ -102,6 +109,34 @@ class VisionListService:
             ocr_confidence=ocr.confidence if ocr else None,
             manual_entry=source == "TEXT",
         )
+
+    async def _purchasable(self, listing_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """Available quantity per listing that is active and sold by an active,
+        verified retailer — the same rules build_cart applies."""
+        if not listing_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(ProductListing)
+                .options(
+                    selectinload(ProductListing.inventory),
+                    selectinload(ProductListing.retailer),
+                )
+                .where(ProductListing.id.in_(listing_ids))
+            )
+        ).scalars()
+        out: dict[uuid.UUID, int] = {}
+        for lst in rows:
+            r, inv = lst.retailer, lst.inventory
+            if (
+                lst.is_active
+                and r is not None
+                and r.is_active
+                and r.verification_status == "VERIFIED"
+                and inv is not None
+            ):
+                out[lst.id] = max(0, inv.on_hand_quantity - inv.reserved_quantity)
+        return out
 
     async def build_cart(
         self, user_id: uuid.UUID, items
