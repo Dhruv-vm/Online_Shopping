@@ -223,6 +223,7 @@
   "docStatus.VERIFIED": "Verified",
   "errors.ALREADY_JOINED": "You already joined this group.",
   "errors.ALREADY_STARTED": "You already have an open group for this product.",
+  "errors.BUSINESS_ACCOUNT_CANNOT_SHOP": "Retailer and administrator accounts cannot place customer orders. Sign in with a customer account to shop.",
   "errors.CAMPAIGN_CLOSED": "This group buy has closed.",
   "errors.CAMPAIGN_FULL": "This group is full.",
   "errors.CANNOT_MODIFY_SELF": "You can't change your own account status.",

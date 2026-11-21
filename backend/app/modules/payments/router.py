@@ -9,6 +9,7 @@ from app.api.deps import get_db
 from app.core.exceptions import AppException
 from app.modules.cart.dependencies import (
     GUEST_CART_COOKIE_NAME,
+    ensure_can_shop,
     get_current_user_optional,
 )
 from app.modules.identity.dependencies import (
@@ -67,6 +68,7 @@ async def initiate_payment(
     effective_key = idempotency_key or str(uuid.uuid4())
 
     user = await get_current_user_optional(request, db)
+    ensure_can_shop(user)
     customer_id, guest_token_hash = _extract_ownership_identifiers(request, user)
     if not customer_id and not guest_token_hash:
         raise AppException(
