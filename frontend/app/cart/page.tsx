@@ -139,7 +139,6 @@ function CartPageInner() {
             if (isMounted) {
               setRejectedCode(couponCode);
               setCouponStatus("invalid");
-              setCouponCode("");
             }
             return;
           }
