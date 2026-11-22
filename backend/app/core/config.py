@@ -54,8 +54,8 @@ class Settings(BaseSettings):
 
     # Database (Aiven PostgreSQL)
     DATABASE_URL: str | None = None
-    DATABASE_POOL_SIZE: int = 10
-    DATABASE_MAX_OVERFLOW: int = 5
+    DATABASE_POOL_SIZE: int = 20
+    DATABASE_MAX_OVERFLOW: int = 15
     DATABASE_SSL_MODE: str = "require"
 
     # Commerce Delivery Policy (Configurable in Phase 2C)
