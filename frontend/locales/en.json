@@ -695,9 +695,9 @@
   "home.v2.svc.delivery": "Fast Delivery",
   "home.v2.svc.deliveryb": "Across India",
   "home.v2.svc.payments": "Secure Payments",
-  "home.v2.svc.paymentsb": "Razorpay, cards never stored",
+  "home.v2.svc.paymentsb": "100% Encrypted",
   "home.v2.svc.returns": "Easy Returns",
-  "home.v2.svc.returnsb": "Window shown on each product",
+  "home.v2.svc.returnsb": "15-Day Policy",
   "home.v2.prev": "Previous",
   "home.v2.next": "Next",
   "home.v2.edit.beauty": "Beauty Shelf",
@@ -826,5 +826,6 @@
   "catalogue.specifications": "Specifications",
   "catalogue.customerReviews": "Customer Reviews",
   "catalogue.buyNow": "Buy Now",
-  "catalogue.soldBy": "Sold by"
+  "catalogue.soldBy": "Sold by",
+  "home.v2.heroArtAlt": "Headphones, smartphone, sneakers, perfume and a smartwatch on display — explore new arrivals"
 }
