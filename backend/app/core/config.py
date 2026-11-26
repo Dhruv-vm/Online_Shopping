@@ -169,6 +169,23 @@ class Settings(BaseSettings):
     # than this (the OpenSearch index would be stale).
     SEARCH_INDEX_MAX_LAG_SECONDS: int = 300
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url(cls, v: object) -> object:
+        """Accept plain Postgres URLs from managed hosts (Render, Railway, Heroku).
+
+        Hosting providers hand out ``postgres://`` or ``postgresql://`` URLs, which
+        SQLAlchemy would route to the psycopg2 driver. The app runs on asyncpg, so
+        rewrite the scheme. URLs that already name a driver are left untouched.
+        """
+        if isinstance(v, str):
+            url = v.strip()
+            for prefix in ("postgres://", "postgresql://"):
+                if url.startswith(prefix):
+                    return "postgresql+asyncpg://" + url[len(prefix) :]
+            return url
+        return v
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: object) -> list[str]:
