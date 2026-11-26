@@ -827,5 +827,6 @@
   "catalogue.customerReviews": "Customer Reviews",
   "catalogue.buyNow": "Buy Now",
   "catalogue.soldBy": "Sold by",
-  "home.v2.heroArtAlt": "Headphones, smartphone, sneakers, perfume and a smartwatch on display — explore new arrivals"
+  "home.v2.heroArtAlt": "Headphones, smartphone, sneakers, perfume and a smartwatch on display — explore new arrivals",
+  "system.backendWaking": "Waking up the Basket server — this can take up to a minute. Hang tight…"
 }
