@@ -392,6 +392,9 @@ Online_Shopping/
 ├── deploy/                   Docker Compose stacks for sandbox and shared demos
 ├── scripts/                  Setup, feature audit, migration checks, backup and restore
 ├── docs/
+│   ├── ARCHITECTURE.md, API_INVENTORY.md, DEVELOPER_HANDOFF.md …
+│   ├── demos/                Docker, local and shared two-laptop demo runbooks
+│   ├── audits/               Historical audit logs, discrepancy registers and trackers
 │   ├── images/               Application screenshots
 │   └── branding/             README banner, identity boards, bands, icons and team portraits
 └── render.yaml               Render Blueprint for the API
@@ -445,7 +448,7 @@ Storefront at <http://localhost:3000> · Retailer Centre at `/retailer` · Admin
 
 #### Demo accounts
 
-The seed script creates `customer@basket.demo`, `retailer1@basket.demo` … `retailer4@basket.demo` and `admin@basket.demo`. Their shared demo password is listed in [`BASKET_V2_DEMO_GUIDE.md`](BASKET_V2_DEMO_GUIDE.md).
+The seed script creates `customer@basket.demo`, `retailer1@basket.demo` … `retailer4@basket.demo` and `admin@basket.demo`. Their shared demo password is listed in [`docs/BASKET_V2_DEMO_GUIDE.md`](docs/BASKET_V2_DEMO_GUIDE.md).
 
 <details>
 <summary><b>Run with Docker Compose instead</b></summary>
