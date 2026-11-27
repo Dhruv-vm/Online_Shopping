@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
+import { Analytics } from "@vercel/analytics/next";
 import { Header } from "@/components/shared/header";
 import { Footer } from "@/components/shared/footer";
 import { AuthProvider } from "@/lib/auth/auth-context";
@@ -57,6 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </CartProvider>
           </AuthProvider>
         </I18nProvider>
+        <Analytics />
       </body>
     </html>
   );
