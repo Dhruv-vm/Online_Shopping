@@ -486,7 +486,9 @@ class OrderService:
         )
 
         if quote.status != QuoteStatus.ACTIVE.value:
-            if not (quote.status == QuoteStatus.SUPERSEDED.value and is_reservation_active):
+            if not (
+                quote.status == QuoteStatus.SUPERSEDED.value and is_reservation_active
+            ):
                 raise AppException(
                     code="QUOTE_INVALID_STATUS",
                     message=f"Quote status is {quote.status}. Only active quotes can be ordered.",

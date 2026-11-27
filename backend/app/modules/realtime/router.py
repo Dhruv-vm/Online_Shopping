@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncGenerator
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.modules.identity.dependencies import get_current_user
-from app.modules.identity.models import User
 from app.modules.realtime.hub import hub
 
 router = APIRouter(prefix="/realtime", tags=["Realtime"])
